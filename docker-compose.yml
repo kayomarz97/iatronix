@@ -1,0 +1,100 @@
+services:
+  iatronix-proxy:
+    image: traefik:v3.0
+    restart: unless-stopped
+    networks: [iatronix-net]
+    ports:
+      - "443:443"
+      - "80:80"
+    volumes:
+      - ./traefik:/etc/traefik
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  iatronix-db:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    networks: [iatronix-net]
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - iatronix-pgdata:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  iatronix-redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    networks: [iatronix-net]
+    volumes:
+      - iatronix-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  iatronix-backend:
+    build: ./backend
+    restart: unless-stopped
+    networks: [iatronix-net]
+    depends_on:
+      iatronix-db:
+        condition: service_healthy
+      iatronix-redis:
+        condition: service_healthy
+    env_file: .env
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.backend.rule=Host(`iatronix.local`) && PathPrefix(`/api`)"
+      - "traefik.http.routers.backend.entrypoints=websecure"
+      - "traefik.http.routers.backend.tls=true"
+      - "traefik.http.services.backend.loadbalancer.server.port=8000"
+      - "traefik.http.routers.backend-http.rule=Host(`iatronix.local`) && PathPrefix(`/api`)"
+      - "traefik.http.routers.backend-http.entrypoints=web"
+      - "traefik.http.services.backend-http.loadbalancer.server.port=8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  iatronix-frontend:
+    build: ./frontend
+    restart: unless-stopped
+    networks: [iatronix-net]
+    depends_on:
+      iatronix-backend:
+        condition: service_healthy
+    environment:
+      INTERNAL_API_URL: ${INTERNAL_API_URL}
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.frontend.rule=Host(`iatronix.local`)"
+      - "traefik.http.routers.frontend.entrypoints=websecure"
+      - "traefik.http.routers.frontend.tls=true"
+      - "traefik.http.services.frontend.loadbalancer.server.port=3000"
+      - "traefik.http.routers.frontend-http.rule=Host(`iatronix.local`)"
+      - "traefik.http.routers.frontend-http.entrypoints=web"
+      - "traefik.http.services.frontend-http.loadbalancer.server.port=3000"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+networks:
+  iatronix-net:
+    name: iatronix-net
+    external: false
+
+volumes:
+  iatronix-pgdata: {}
+  iatronix-redis-data: {}

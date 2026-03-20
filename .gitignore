@@ -1,0 +1,44 @@
+# Environment
+.env
+.env.local
+.env.production
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Node
+node_modules/
+.next/
+out/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Certs (keep example, ignore real)
+traefik/certs/*.pem
+traefik/certs/*.key
+!traefik/certs/.gitkeep
+
+# Docker
+docker-compose.local.yml
+
+# Logs
+*.log
+logs/
+
+# Database
+*.sql.bak
