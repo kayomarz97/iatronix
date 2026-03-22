@@ -5,29 +5,33 @@ import Link from "next/link";
 import { API_KEY_STORAGE_KEY } from "@/lib/constants";
 
 export function Header() {
-  const [apiKey, setApiKey] = useState("");
-  const [showKeyInput, setShowKeyInput] = useState(false);
   const [darkMode, setDarkMode] = useState(false);
   const [email, setEmail] = useState("");
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
 
   useEffect(() => {
     const stored = localStorage.getItem(API_KEY_STORAGE_KEY);
-    if (stored) setApiKey(stored);
+    setIsLoggedIn(!!stored);
     setEmail(localStorage.getItem("iatronix_email") || "");
-    if (document.documentElement.classList.contains("dark")) setDarkMode(true);
+
+    // Restore dark mode from localStorage
+    const savedDark = localStorage.getItem("iatronix_dark") === "true";
+    if (savedDark) {
+      document.documentElement.classList.add("dark");
+      setDarkMode(true);
+    }
   }, []);
 
-  const saveKey = () => {
-    localStorage.setItem(API_KEY_STORAGE_KEY, apiKey);
-    setShowKeyInput(false);
-  };
-
   const toggleDark = () => {
-    document.documentElement.classList.toggle("dark");
-    setDarkMode(!darkMode);
+    const next = !darkMode;
+    if (next) {
+      document.documentElement.classList.add("dark");
+    } else {
+      document.documentElement.classList.remove("dark");
+    }
+    localStorage.setItem("iatronix_dark", String(next));
+    setDarkMode(next);
   };
-
-  const isLoggedIn = !!apiKey;
 
   return (
     <header className="border-b border-border bg-surface-alt">
@@ -60,16 +64,16 @@ export function Header() {
             className="p-2 rounded-md hover:bg-surface-hover min-h-[44px] min-w-[44px] flex items-center justify-center"
             aria-label="Toggle dark mode"
           >
-            {darkMode ? "☀" : "☾"}
+            {darkMode ? "\u2600" : "\u263E"}
           </button>
 
           {isLoggedIn ? (
-            <button
-              onClick={() => setShowKeyInput(!showKeyInput)}
-              className="px-3 py-2 text-sm rounded-md border border-border hover:bg-surface-hover min-h-[44px]"
+            <Link
+              href="/settings"
+              className="px-3 py-2 text-sm rounded-md border border-border hover:bg-surface-hover min-h-[44px] flex items-center"
             >
-              {email || "Key Set"}
-            </button>
+              {email || "Account"}
+            </Link>
           ) : (
             <Link
               href="/login"
@@ -80,24 +84,6 @@ export function Header() {
           )}
         </div>
       </div>
-
-      {showKeyInput && (
-        <div className="max-w-5xl mx-auto px-4 pb-3 flex gap-2">
-          <input
-            type="password"
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            placeholder="iatx.key_id.secret"
-            className="flex-1 px-3 py-2 rounded-md border border-border bg-surface text-sm min-h-[44px]"
-          />
-          <button
-            onClick={saveKey}
-            className="px-4 py-2 bg-primary text-white rounded-md text-sm min-h-[44px]"
-          >
-            Save
-          </button>
-        </div>
-      )}
     </header>
   );
 }
