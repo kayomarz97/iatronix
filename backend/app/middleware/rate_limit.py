@@ -19,7 +19,9 @@ class InMemorySlidingWindow:
         self._windows: dict[str, list[float]] = defaultdict(list)
         self._lock = Lock()
 
-    def is_rate_limited(self, key: str, max_requests: int, window_seconds: int = 60) -> bool:
+    def is_rate_limited(
+        self, key: str, max_requests: int, window_seconds: int = 60
+    ) -> bool:
         now = time.time()
         cutoff = now - window_seconds
         with self._lock:
@@ -33,7 +35,9 @@ class InMemorySlidingWindow:
 _fallback_limiter = InMemorySlidingWindow()
 
 
-async def _check_redis_rate_limit(redis_client, key: str, max_requests: int, window: int = 60) -> bool:
+async def _check_redis_rate_limit(
+    redis_client, key: str, max_requests: int, window: int = 60
+) -> bool:
     try:
         pipe = redis_client.pipeline()
         now = time.time()
@@ -82,6 +86,4 @@ async def check_per_key_rate_limit(request: Request, key_id: str) -> bool:
         return await _check_redis_rate_limit(
             redis_client, key, settings.rate_limit_key_per_minute
         )
-    return _fallback_limiter.is_rate_limited(
-        key, settings.rate_limit_key_per_minute
-    )
+    return _fallback_limiter.is_rate_limited(key, settings.rate_limit_key_per_minute)

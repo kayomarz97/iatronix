@@ -23,7 +23,9 @@ def load_drug_dictionary(path: str | None = None):
     global _drug_dict, _drug_names_lower, _brand_to_generic, _abbreviation_to_generic
 
     if path is None:
-        path = os.path.join(os.path.dirname(__file__), "..", "..", "data", "drug_dictionary.json")
+        path = os.path.join(
+            os.path.dirname(__file__), "..", "..", "data", "drug_dictionary.json"
+        )
 
     try:
         with open(path) as f:
@@ -71,7 +73,11 @@ def _fuzzy_match(word: str) -> tuple[str, float] | None:
     if w_len < 5:
         return None
 
-    max_dist = settings.fuzzy_max_distance_short if w_len <= 8 else settings.fuzzy_max_distance_long
+    max_dist = (
+        settings.fuzzy_max_distance_short
+        if w_len <= 8
+        else settings.fuzzy_max_distance_long
+    )
 
     best_match = None
     best_score = 0.0
@@ -130,12 +136,14 @@ def process_text_nodes(response_data: dict, query_type: str) -> list[TextNode]:
                 if current_text:
                     text_nodes.append(TextNode(type="text", content=current_text))
                     current_text = ""
-                text_nodes.append(TextNode(
-                    type="drug_link",
-                    content=word,
-                    drug_query=exact,
-                    match_score=1.0,
-                ))
+                text_nodes.append(
+                    TextNode(
+                        type="drug_link",
+                        content=word,
+                        drug_query=exact,
+                        match_score=1.0,
+                    )
+                )
                 continue
 
             # Fuzzy only for words from drug fields
@@ -145,12 +153,14 @@ def process_text_nodes(response_data: dict, query_type: str) -> list[TextNode]:
                     if current_text:
                         text_nodes.append(TextNode(type="text", content=current_text))
                         current_text = ""
-                    text_nodes.append(TextNode(
-                        type="drug_link",
-                        content=word,
-                        drug_query=fuzzy[0],
-                        match_score=fuzzy[1],
-                    ))
+                    text_nodes.append(
+                        TextNode(
+                            type="drug_link",
+                            content=word,
+                            drug_query=fuzzy[0],
+                            match_score=fuzzy[1],
+                        )
+                    )
                     continue
 
             current_text += word

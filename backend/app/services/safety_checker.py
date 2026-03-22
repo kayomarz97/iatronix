@@ -5,17 +5,37 @@ logger = logging.getLogger(__name__)
 
 # Dangerous drug/dose combinations that warrant warnings
 HIGH_RISK_DRUGS = {
-    "warfarin", "heparin", "enoxaparin", "methotrexate", "lithium",
-    "digoxin", "theophylline", "phenytoin", "carbamazepine", "valproic acid",
-    "cyclosporine", "tacrolimus", "colchicine", "opioid", "morphine",
-    "fentanyl", "hydromorphone", "insulin",
+    "warfarin",
+    "heparin",
+    "enoxaparin",
+    "methotrexate",
+    "lithium",
+    "digoxin",
+    "theophylline",
+    "phenytoin",
+    "carbamazepine",
+    "valproic acid",
+    "cyclosporine",
+    "tacrolimus",
+    "colchicine",
+    "opioid",
+    "morphine",
+    "fentanyl",
+    "hydromorphone",
+    "insulin",
 }
 
 CONTRAINDICATION_PAIRS = [
     ({"methotrexate"}, {"trimethoprim", "nsaid"}),
     ({"warfarin"}, {"aspirin", "nsaid", "ibuprofen"}),
-    ({"ace inhibitor", "lisinopril", "enalapril", "ramipril"}, {"potassium", "spironolactone"}),
-    ({"maoi", "phenelzine", "tranylcypromine"}, {"ssri", "snri", "meperidine", "tramadol"}),
+    (
+        {"ace inhibitor", "lisinopril", "enalapril", "ramipril"},
+        {"potassium", "spironolactone"},
+    ),
+    (
+        {"maoi", "phenelzine", "tranylcypromine"},
+        {"ssri", "snri", "meperidine", "tramadol"},
+    ),
     ({"lithium"}, {"nsaid", "ibuprofen", "ace inhibitor", "thiazide"}),
 ]
 

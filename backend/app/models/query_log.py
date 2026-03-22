@@ -24,6 +24,4 @@ class QueryLog(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
-    __table_args__ = (
-        Index("ix_query_logs_created_at", "created_at"),
-    )
+    __table_args__ = (Index("ix_query_logs_created_at", "created_at"),)

@@ -33,9 +33,7 @@ async def lifespan(app: FastAPI):
 
     # Redis
     try:
-        app.state.redis = aioredis.from_url(
-            settings.redis_url, decode_responses=True
-        )
+        app.state.redis = aioredis.from_url(settings.redis_url, decode_responses=True)
         await app.state.redis.ping()
         logger.info("Redis connected")
     except Exception:

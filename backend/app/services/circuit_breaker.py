@@ -9,7 +9,9 @@ logger = logging.getLogger(__name__)
 
 class LoggingListener(pybreaker.CircuitBreakerListener):
     def state_change(self, cb, old_state, new_state):
-        logger.warning(f"Circuit breaker '{cb.name}': {old_state.name} → {new_state.name}")
+        logger.warning(
+            f"Circuit breaker '{cb.name}': {old_state.name} → {new_state.name}"
+        )
 
 
 anthropic_breaker = pybreaker.CircuitBreaker(

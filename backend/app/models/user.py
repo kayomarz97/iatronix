@@ -22,10 +22,12 @@ class User(TimestampMixin, Base):
     key_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     key_hash: Mapped[str] = mapped_column(String(128), nullable=False)
     email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    role: Mapped[UserRole] = mapped_column(Enum(UserRole), default=UserRole.user, nullable=False)
-    scopes: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
-    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-
-    __table_args__ = (
-        Index("ix_users_key_id", "key_id", unique=True),
+    role: Mapped[UserRole] = mapped_column(
+        Enum(UserRole), default=UserRole.user, nullable=False
     )
+    scopes: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    __table_args__ = (Index("ix_users_key_id", "key_id", unique=True),)

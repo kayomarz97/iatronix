@@ -29,7 +29,9 @@ def _ttl_for_type(query_type: str) -> int:
     return settings.cache_ttl_general
 
 
-async def cache_get(redis_client, query: str, query_type: str, model_id: str) -> dict | None:
+async def cache_get(
+    redis_client, query: str, query_type: str, model_id: str
+) -> dict | None:
     """Try to get a cached response. Returns None on miss or Redis failure."""
     if not redis_client:
         return None
@@ -43,7 +45,9 @@ async def cache_get(redis_client, query: str, query_type: str, model_id: str) ->
     return None
 
 
-async def cache_set(redis_client, query: str, query_type: str, model_id: str, response: dict) -> None:
+async def cache_set(
+    redis_client, query: str, query_type: str, model_id: str, response: dict
+) -> None:
     """Write response to cache. Silently skips on Redis failure."""
     if not redis_client:
         return
@@ -55,7 +59,9 @@ async def cache_set(redis_client, query: str, query_type: str, model_id: str, re
         logger.warning("Redis cache set failed", exc_info=True)
 
 
-async def cache_get_any_version(redis_client, query: str, query_type: str, model_id: str) -> dict | None:
+async def cache_get_any_version(
+    redis_client, query: str, query_type: str, model_id: str
+) -> dict | None:
     """Attempt to find any cached version of this query (for circuit breaker fallback)."""
     if not redis_client:
         return None

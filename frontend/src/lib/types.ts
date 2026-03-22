@@ -55,6 +55,7 @@ export interface TreatmentSection {
 export interface DiseaseResponse {
   disease_name: string;
   icd_10?: string | null;
+  etiology: EvidencedClaim[];
   pathophysiology?: EvidencedClaim | null;
   epidemiology?: EvidencedClaim | null;
   clinical_features: EvidencedClaim[];
