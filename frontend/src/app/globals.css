@@ -1,60 +1,93 @@
 @import "tailwindcss";
 
+/*
+ * Light/dark color tokens — defined as plain CSS custom properties
+ * so html.dark can override them. @theme references these via var().
+ */
+:root {
+  --c-primary: #1e40af;
+  --c-primary-light: #3b82f6;
+  --c-primary-dark: #1e3a8a;
+  --c-surface: #ffffff;
+  --c-surface-alt: #f8fafc;
+  --c-surface-hover: #f1f5f9;
+  --c-border: #e2e8f0;
+  --c-text: #0f172a;
+  --c-text-secondary: #475569;
+  --c-text-muted: #94a3b8;
+  --c-danger: #dc2626;
+  --c-danger-bg: #fef2f2;
+  --c-warning: #d97706;
+  --c-warning-bg: #fffbeb;
+  --c-success: #16a34a;
+  --c-success-bg: #f0fdf4;
+}
+
+html.dark {
+  --c-primary: #3b82f6;
+  --c-primary-light: #60a5fa;
+  --c-primary-dark: #2563eb;
+  --c-surface: #0f172a;
+  --c-surface-alt: #1e293b;
+  --c-surface-hover: #334155;
+  --c-border: #334155;
+  --c-text: #f1f5f9;
+  --c-text-secondary: #94a3b8;
+  --c-text-muted: #64748b;
+  --c-danger: #f87171;
+  --c-danger-bg: #450a0a;
+  --c-warning: #fbbf24;
+  --c-warning-bg: #451a03;
+  --c-success: #4ade80;
+  --c-success-bg: #052e16;
+}
+
+/* Register tokens for Tailwind utility classes (bg-surface, text-text, etc.) */
 @theme {
-  --color-primary: #1e40af;
-  --color-primary-light: #3b82f6;
-  --color-primary-dark: #1e3a8a;
-  --color-surface: #ffffff;
-  --color-surface-alt: #f8fafc;
-  --color-surface-hover: #f1f5f9;
-  --color-border: #e2e8f0;
-  --color-text: #0f172a;
-  --color-text-secondary: #475569;
-  --color-text-muted: #94a3b8;
-  --color-danger: #dc2626;
-  --color-danger-bg: #fef2f2;
-  --color-warning: #d97706;
-  --color-warning-bg: #fffbeb;
-  --color-success: #16a34a;
-  --color-success-bg: #f0fdf4;
+  --color-primary: var(--c-primary);
+  --color-primary-light: var(--c-primary-light);
+  --color-primary-dark: var(--c-primary-dark);
+  --color-surface: var(--c-surface);
+  --color-surface-alt: var(--c-surface-alt);
+  --color-surface-hover: var(--c-surface-hover);
+  --color-border: var(--c-border);
+  --color-text: var(--c-text);
+  --color-text-secondary: var(--c-text-secondary);
+  --color-text-muted: var(--c-text-muted);
+  --color-danger: var(--c-danger);
+  --color-danger-bg: var(--c-danger-bg);
+  --color-warning: var(--c-warning);
+  --color-warning-bg: var(--c-warning-bg);
+  --color-success: var(--c-success);
+  --color-success-bg: var(--c-success-bg);
   --color-evidence-high: #16a34a;
   --color-evidence-moderate: #d97706;
   --color-evidence-low: #dc2626;
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
-    --color-surface: #0f172a;
-    --color-surface-alt: #1e293b;
-    --color-surface-hover: #334155;
-    --color-border: #334155;
-    --color-text: #f1f5f9;
-    --color-text-secondary: #94a3b8;
-    --color-text-muted: #64748b;
-    --color-danger-bg: #450a0a;
-    --color-warning-bg: #451a03;
-    --color-success-bg: #052e16;
+  :root:not(.light) {
+    --c-primary: #3b82f6;
+    --c-primary-light: #60a5fa;
+    --c-primary-dark: #2563eb;
+    --c-surface: #0f172a;
+    --c-surface-alt: #1e293b;
+    --c-surface-hover: #334155;
+    --c-border: #334155;
+    --c-text: #f1f5f9;
+    --c-text-secondary: #94a3b8;
+    --c-text-muted: #64748b;
+    --c-danger: #f87171;
+    --c-danger-bg: #450a0a;
+    --c-warning: #fbbf24;
+    --c-warning-bg: #451a03;
+    --c-success: #4ade80;
+    --c-success-bg: #052e16;
   }
-}
-
-html.dark {
-  --color-primary: #3b82f6;
-  --color-primary-light: #60a5fa;
-  --color-primary-dark: #2563eb;
-  --color-surface: #0f172a;
-  --color-surface-alt: #1e293b;
-  --color-surface-hover: #334155;
-  --color-border: #334155;
-  --color-text: #f1f5f9;
-  --color-text-secondary: #94a3b8;
-  --color-text-muted: #64748b;
-  --color-danger-bg: #450a0a;
-  --color-warning-bg: #451a03;
-  --color-success-bg: #052e16;
 }
 
 body {
   font-family: system-ui, -apple-system, sans-serif;
-  background-color: var(--color-surface);
-  color: var(--color-text);
+  background-color: var(--c-surface);
+  color: var(--c-text);
 }

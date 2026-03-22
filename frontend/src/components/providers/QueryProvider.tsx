@@ -8,8 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { submitQuery as apiSubmitQuery } from "@/lib/api";
-import { API_KEY_STORAGE_KEY } from "@/lib/constants";
-import { useModelSelection } from "@/hooks/useModelSelection";
+import { API_KEY_STORAGE_KEY, DEFAULT_MODEL } from "@/lib/constants";
 import type { QueryResponse } from "@/lib/types";
 
 interface QueryContextType {
@@ -26,13 +25,12 @@ export function QueryProvider({ children }: { children: ReactNode }) {
   const [result, setResult] = useState<QueryResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { selectedModel } = useModelSelection();
 
   const submitQuery = useCallback(
     async (query: string) => {
       const apiKey = localStorage.getItem(API_KEY_STORAGE_KEY);
       if (!apiKey) {
-        setError("Please set your API key in the header");
+        setError("Please sign in to submit queries");
         return;
       }
 
@@ -40,7 +38,7 @@ export function QueryProvider({ children }: { children: ReactNode }) {
       setError(null);
 
       try {
-        const response = await apiSubmitQuery(query, selectedModel, apiKey);
+        const response = await apiSubmitQuery(query, DEFAULT_MODEL, apiKey);
         setResult(response);
       } catch (err) {
         setError(err instanceof Error ? err.message : "An error occurred");
@@ -48,7 +46,7 @@ export function QueryProvider({ children }: { children: ReactNode }) {
         setIsLoading(false);
       }
     },
-    [selectedModel]
+    []
   );
 
   const clearResult = useCallback(() => {

@@ -1,7 +1,6 @@
 "use client";
 
 import { SearchBar } from "@/components/ui/SearchBar";
-import { ModelSelector } from "@/components/ui/ModelSelector";
 import { useQueryContext } from "@/components/providers/QueryProvider";
 import { DisclaimerBanner } from "@/components/results/DisclaimerBanner";
 import { TextNodeRenderer } from "@/components/results/TextNodeRenderer";
@@ -37,17 +36,14 @@ export default function HomePage() {
           <h1 className="text-4xl font-bold text-primary">Iatronix</h1>
           <p className="text-text-secondary text-lg max-w-xl mx-auto">
             AI-powered medical reference with evidence grading. Query drugs,
-            diseases, or compare treatments.
+            diseases, procedures, or compare treatments.
           </p>
         </div>
       )}
 
       {/* Search */}
-      <div className="max-w-2xl mx-auto space-y-3">
+      <div className="max-w-2xl mx-auto">
         <SearchBar onSubmit={submitQuery} isLoading={isLoading} />
-        <div className="flex justify-center">
-          <ModelSelector />
-        </div>
       </div>
 
       {/* Error */}
@@ -133,6 +129,14 @@ export default function HomePage() {
               <EvidenceResult data={result.response as EvidenceResponse} />
             )}
 
+          {/* Text nodes */}
+          {result.text_nodes && result.text_nodes.length > 0 && (
+            <Card>
+              <h3 className="font-medium text-sm mb-2">Linked Content</h3>
+              <TextNodeRenderer nodes={result.text_nodes} />
+            </Card>
+          )}
+
           {/* Disclaimer at bottom */}
           <div className="p-3 rounded-lg bg-surface-alt border border-border text-xs text-text-muted">
             {result.disclaimer}
@@ -142,7 +146,7 @@ export default function HomePage() {
 
       {/* Example cards - only when no result */}
       {!result && !isLoading && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 max-w-2xl mx-auto text-sm">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 max-w-3xl mx-auto text-sm">
           <ExampleCard
             title="Drug Query"
             example="metformin dosing and interactions"
@@ -157,10 +161,29 @@ export default function HomePage() {
           />
           <ExampleCard
             title="Comparison"
-            example="lisinopril vs losartan for hypertension"
+            example="lisinopril vs losartan"
             onClick={() =>
               submitQuery("lisinopril vs losartan for hypertension")
             }
+          />
+          <ExampleCard
+            title="Procedure"
+            example="when to change a central line"
+            onClick={() =>
+              submitQuery("when to change a central line")
+            }
+          />
+          <ExampleCard
+            title="Evidence"
+            example="is telmisartan given in CKD"
+            onClick={() =>
+              submitQuery("is telmisartan given in CKD")
+            }
+          />
+          <ExampleCard
+            title="General"
+            example="pathophysiology of sepsis"
+            onClick={() => submitQuery("pathophysiology of sepsis")}
           />
         </div>
       )}
