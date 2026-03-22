@@ -6,14 +6,21 @@ const INTERNAL_API_URL =
 export async function POST(request: NextRequest) {
   try {
     const apiKey = request.headers.get("x-api-key") || "";
-    const formData = await request.formData();
+    const contentType = request.headers.get("content-type") || "";
+
+    // Stream the raw body through to the backend — avoids Node.js
+    // FormData re-encoding issues with file uploads.
+    const body = await request.arrayBuffer();
 
     const response = await fetch(
       `${INTERNAL_API_URL}/api/v1/documents/upload`,
       {
         method: "POST",
-        headers: { "X-API-Key": apiKey },
-        body: formData,
+        headers: {
+          "X-API-Key": apiKey,
+          "Content-Type": contentType,
+        },
+        body: body,
       }
     );
 
