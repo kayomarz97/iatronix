@@ -40,6 +40,8 @@ services:
     env_file: .env
     ports:
       - "127.0.0.1:8200:8000"
+    volumes:
+      - iatronix-models:/app/models
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
       interval: 15s
@@ -73,3 +75,4 @@ networks:
 volumes:
   iatronix-pgdata: {}
   iatronix-redis-data: {}
+  iatronix-models: {}

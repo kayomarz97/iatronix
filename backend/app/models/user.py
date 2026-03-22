@@ -30,4 +30,17 @@ class User(TimestampMixin, Base):
         DateTime(timezone=True), nullable=True
     )
 
+    # BYOK: user's own LLM API key (encrypted at rest)
+    encrypted_llm_key: Mapped[Optional[str]] = mapped_column(
+        String, nullable=True
+    )
+    llm_provider: Mapped[Optional[str]] = mapped_column(
+        String(20), nullable=True
+    )  # 'anthropic' or 'openai'
+
+    # Login auth
+    password_hash: Mapped[Optional[str]] = mapped_column(
+        String(255), nullable=True
+    )
+
     __table_args__ = (Index("ix_users_key_id", "key_id", unique=True),)

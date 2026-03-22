@@ -95,6 +95,51 @@ export interface DegradedResponse {
   cached_similar?: QueryResponse | null;
 }
 
+// --- Procedure Response ---
+
+export interface ProcedureStep {
+  step_number: number;
+  description: string;
+  notes?: string | null;
+}
+
+export interface ProcedureGuideline extends EvidencedClaim {
+  society?: string | null;
+}
+
+export interface ProcedureResponse {
+  procedure_name: string;
+  indications: EvidencedClaim[];
+  contraindications: EvidencedClaim[];
+  technique_steps: ProcedureStep[];
+  complications: EvidencedClaim[];
+  guidelines: ProcedureGuideline[];
+  references: Reference[];
+}
+
+// --- Evidence Response ---
+
+export interface StudyEvidence {
+  title: string;
+  pmid?: string | null;
+  year?: number | null;
+  finding: string;
+  sample_size?: string | null;
+  loe: string;
+}
+
+export interface EvidenceResponse {
+  query_topic: string;
+  summary: string;
+  supporting_studies: StudyEvidence[];
+  opposing_studies: StudyEvidence[];
+  clinical_recommendation?: EvidencedClaim | null;
+  guideline_status: string;
+  references: Reference[];
+}
+
+// --- Text Nodes ---
+
 export interface TextNode {
   type: "text" | "drug_link";
   content: string;
@@ -102,14 +147,24 @@ export interface TextNode {
   match_score?: number | null;
 }
 
+// --- Request / Response ---
+
 export interface QueryResponse {
-  query_type: "drug" | "disease" | "comparative" | "general";
+  query_type:
+    | "drug"
+    | "disease"
+    | "comparative"
+    | "general"
+    | "procedure"
+    | "evidence";
   model_used: string;
   response:
     | DrugResponse
     | DiseaseResponse
     | ComparativeResponse
     | GeneralResponse
+    | ProcedureResponse
+    | EvidenceResponse
     | DegradedResponse;
   text_nodes: TextNode[];
   safety_warnings: string[];
@@ -125,4 +180,38 @@ export interface ModelInfo {
   name: string;
   provider: string;
   description: string;
+}
+
+// --- Document Types ---
+
+export interface DocumentInfo {
+  id: number;
+  title: string;
+  source_type: string;
+  file_name?: string | null;
+  page_count?: number | null;
+  verified: boolean;
+  publisher?: string | null;
+  chunk_count: number;
+  created_at: string;
+}
+
+export interface DocumentListResponse {
+  documents: DocumentInfo[];
+  total: number;
+  verified_count: number;
+}
+
+// --- Auth Types ---
+
+export interface AuthResponse {
+  api_key: string;
+  email: string;
+  message: string;
+}
+
+export interface LLMKeyStatus {
+  provider: string;
+  is_set: boolean;
+  message: string;
 }

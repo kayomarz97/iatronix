@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 from app.config import settings
 
 if TYPE_CHECKING:
     from app.services.data_fetcher import FetchedData
+    from app.services.vector_search import SearchResult
 
 APPROVED_SOURCES = """
 APPROVED CITATION SOURCES (you MUST only cite from this list):
@@ -173,10 +175,66 @@ Respond with a JSON object matching this EXACT structure:
 
 Query: {query}"""
 
+PROCEDURE_PROMPT = """You are a clinical procedure reference assistant.
+{approved_sources}
+{evidence_rules}
+
+{focus_instruction}
+
+Respond with a JSON object for the procedure "{query}":
+{{
+  "procedure_name": "string",
+  "indications": [{{"value": "when to perform", "loe": "I-III", "cor": "I/IIa/IIb/III-*", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}}],
+  "contraindications": [same EvidencedClaim format],
+  "technique_steps": [{{"step_number": 1, "description": "string", "notes": "optional"}}],
+  "complications": [EvidencedClaim format],
+  "guidelines": [{{"value": "recommendation text", "loe": "I-III", "cor": "I/IIa/IIb/III-*", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low", "society": "recommending body"}}],
+  "references": [{{"source": "string", "title": "string or null", "year": int_or_null, "url": null}}]
+}}
+
+{vector_context}
+
+Query: {query}"""
+
+EVIDENCE_PROMPT = """You are a clinical evidence synthesizer.
+{approved_sources}
+{evidence_rules}
+
+{focus_instruction}
+
+The user is asking about evidence for a clinical question that may not have formal guidelines.
+Your job is to summarize the available studies and provide a balanced recommendation.
+
+Respond with a JSON object:
+{{
+  "query_topic": "concise topic string",
+  "summary": "2-3 sentence overview of the evidence",
+  "supporting_studies": [{{
+    "title": "study title",
+    "pmid": "PubMed ID or null",
+    "year": int_or_null,
+    "finding": "key finding in 1-2 sentences",
+    "sample_size": "e.g. n=500 or null",
+    "loe": "I-III"
+  }}],
+  "opposing_studies": [same format],
+  "clinical_recommendation": {{"value": "recommendation", "loe": "I-III", "cor": "I/IIa/IIb/III-*", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}} or null,
+  "guideline_status": "e.g. 'No formal guideline exists' or 'Mentioned in ADA 2024 guidelines'",
+  "references": [{{"source": "string", "title": "string or null", "year": int_or_null, "url": null}}]
+}}
+
+For PMIDs, include the numeric ID only (e.g. "38293847"). These will be auto-linked.
+
+{vector_context}
+
+Query: {query}"""
+
 PROMPTS = {
     "drug": DRUG_PROMPT,
     "disease": DISEASE_PROMPT,
     "comparative": COMPARATIVE_PROMPT,
+    "procedure": PROCEDURE_PROMPT,
+    "evidence": EVIDENCE_PROMPT,
     "general": GENERAL_PROMPT,
 }
 
@@ -316,6 +374,68 @@ Respond ONLY with a JSON object comparing "{entity1}" vs "{entity2}":
 
 Query: {query}"""
 
+PROCEDURE_FORMAT_PROMPT = """You are a clinical procedure reference formatter. Use the retrieved guideline data to create a structured procedure reference.
+
+{evidence_rules}
+
+{focus_instruction}
+
+=== PRACTICE GUIDELINES ===
+{guideline_abstracts_formatted}
+
+=== PROCEDURE-SPECIFIC GUIDELINES ===
+{practice_guideline_abstracts_formatted}
+
+Respond ONLY with a JSON object for the procedure "{query}":
+{{
+  "procedure_name": "string",
+  "indications": [{{"value": "when to perform", "loe": "I-III", "cor": "I/IIa/IIb/III-*", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}}],
+  "contraindications": [same EvidencedClaim format],
+  "technique_steps": [{{"step_number": 1, "description": "string", "notes": "optional"}}],
+  "complications": [EvidencedClaim format],
+  "guidelines": [{{"value": "recommendation text", "loe": "I-III", "cor": "I/IIa/IIb/III-*", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low", "society": "recommending body"}}],
+  "references": [{{"source": "string", "title": "string or null", "year": int_or_null, "url": null}}]
+}}
+
+Query: {query}"""
+
+EVIDENCE_FORMAT_PROMPT = """You are a clinical evidence synthesizer. Use the retrieved study data to provide a balanced evidence summary.
+
+{evidence_rules}
+
+{focus_instruction}
+
+=== CLINICAL TRIALS / RCTs ===
+{clinical_trial_abstracts_formatted}
+
+=== SYSTEMATIC REVIEWS / META-ANALYSES ===
+{systematic_review_abstracts_formatted}
+
+=== GUIDELINE MENTIONS ===
+{guideline_abstracts_formatted}
+
+Respond ONLY with a JSON object:
+{{
+  "query_topic": "concise topic string",
+  "summary": "2-3 sentence overview of the evidence",
+  "supporting_studies": [{{
+    "title": "study title",
+    "pmid": "PubMed ID or null",
+    "year": int_or_null,
+    "finding": "key finding in 1-2 sentences",
+    "sample_size": "e.g. n=500 or null",
+    "loe": "I-III"
+  }}],
+  "opposing_studies": [same format],
+  "clinical_recommendation": {{"value": "recommendation", "loe": "I-III", "cor": "I/IIa/IIb/III-*", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}} or null,
+  "guideline_status": "e.g. 'No formal guideline exists' or 'Mentioned in X guideline'",
+  "references": [{{"source": "string", "title": "string or null", "year": int_or_null, "url": null}}]
+}}
+
+For PMIDs, include the numeric ID only (e.g. "38293847"). These will be auto-linked.
+
+Query: {query}"""
+
 
 # ──────────────────────────────────────────────
 # Formatting helpers for injecting fetched data
@@ -376,41 +496,139 @@ def _format_drug_block(d) -> str:
 
 
 def build_prompt(
-    query: str, query_type: str, fetched_data: "FetchedData | None" = None
+    query: str,
+    query_type: str,
+    fetched_data: "FetchedData | None" = None,
+    vector_results: "list[SearchResult] | None" = None,
 ) -> str:
     """Build a prompt for the LLM.
 
     If fetched_data is provided and fetch succeeded → format-mode prompt (shorter, cheaper).
     Otherwise → generate-mode prompt (existing behaviour, full knowledge generation).
+    Vector results are injected into both modes when available.
     """
     if fetched_data is not None and not fetched_data.fallback_to_llm:
-        result = _build_format_prompt(query, query_type, fetched_data)
+        result = _build_format_prompt(query, query_type, fetched_data, vector_results)
         if result is not None:
             return result
 
-    return _build_generate_prompt(query, query_type)
+    return _build_generate_prompt(query, query_type, vector_results)
 
 
-def _build_generate_prompt(query: str, query_type: str) -> str:
+def _build_generate_prompt(
+    query: str, query_type: str, vector_results: "list[SearchResult] | None" = None
+) -> str:
     template = PROMPTS[query_type]
-    return template.format(
+    vector_context = _format_vector_context(vector_results) if vector_results else ""
+    focus_instruction = _detect_focus_instruction(query)
+
+    # Templates that support vector_context and focus_instruction
+    if query_type in ("procedure", "evidence"):
+        return template.format(
+            query=query,
+            approved_sources=APPROVED_SOURCES,
+            evidence_rules=EVIDENCE_RULES,
+            vector_context=vector_context,
+            focus_instruction=focus_instruction,
+        )
+
+    # Existing templates — append vector context at the end
+    prompt = template.format(
         query=query,
         approved_sources=APPROVED_SOURCES,
         evidence_rules=EVIDENCE_RULES,
     )
+    if vector_context:
+        prompt = prompt.rstrip() + "\n\n" + vector_context
+    if focus_instruction:
+        prompt = focus_instruction + "\n\n" + prompt
+    return prompt
+
+
+# ──────────────────────────────────────────────
+# Vector context formatting
+# ──────────────────────────────────────────────
+
+
+def _format_vector_context(results: "list[SearchResult]") -> str:
+    """Format vector search results as context for the LLM prompt."""
+    if not results:
+        return ""
+
+    lines = ["=== RETRIEVED DOCUMENT CONTEXT (from indexed knowledge base) ==="]
+    for i, r in enumerate(results, 1):
+        source_info = r.title
+        if r.publisher:
+            source_info = f"{r.publisher} — {r.title}"
+        if r.page_number:
+            source_info += f" (page {r.page_number})"
+        if r.pmid:
+            source_info += f" [PMID:{r.pmid}]"
+        if r.section:
+            source_info += f" [{r.section}]"
+
+        lines.append(f"\n[{i}] Source: {source_info}")
+        lines.append(f"    Relevance: {r.similarity:.2f}")
+        lines.append(f"    Content: {r.content[:1500]}")
+
+    lines.append(
+        "\nUse the above context as evidence where relevant. "
+        "Cite the source document title and page number. "
+        "Do NOT reveal who uploaded any document."
+    )
+    return "\n".join(lines)
+
+
+# ──────────────────────────────────────────────
+# Intent detection for focused answers
+# ──────────────────────────────────────────────
+
+_INTENT_PATTERNS = {
+    "management": re.compile(
+        r"\b(?:management|treatment|therapy|therapeutic|prescri|treat)\b", re.I
+    ),
+    "diagnosis": re.compile(
+        r"\b(?:diagnosis|diagnos|criteria|workup|investigate|assess)\b", re.I
+    ),
+    "prognosis": re.compile(
+        r"\b(?:prognosis|outcome|survival|mortality|life expectancy)\b", re.I
+    ),
+    "pathophysiology": re.compile(
+        r"\b(?:pathophysiology|mechanism|etiology|cause|pathogenesis)\b", re.I
+    ),
+}
+
+
+def _detect_focus_instruction(query: str) -> str:
+    """Detect query intent and return a focus instruction for the LLM."""
+    for intent, pattern in _INTENT_PATTERNS.items():
+        if pattern.search(query):
+            return (
+                f"The user is specifically asking about **{intent}**. "
+                f"Lead with detailed {intent} content. Include 1-2 sentence "
+                f"summaries of related clinical areas for context, but do NOT "
+                f"elaborate on sections the user didn't ask about."
+            )
+    return ""
 
 
 def _build_format_prompt(
-    query: str, query_type: str, fetched_data: "FetchedData"
+    query: str,
+    query_type: str,
+    fetched_data: "FetchedData",
+    vector_results: "list[SearchResult] | None" = None,
 ) -> str | None:
-    """Build a format-mode prompt. Returns None if the data is insufficient."""
+    """Build a format-mode prompt. Returns None if the data is insufficient.
+
+    Vector context is appended to format prompts when available.
+    """
     if (
         query_type == "drug"
         and fetched_data.drug_data
         and fetched_data.drug_data.fetch_success
     ):
         d = fetched_data.drug_data
-        return DRUG_FORMAT_PROMPT.format(
+        prompt = DRUG_FORMAT_PROMPT.format(
             query=query,
             evidence_rules=EVIDENCE_RULES,
             data_source=d.data_source.upper(),
@@ -431,6 +649,9 @@ def _build_format_prompt(
             fda_label_source_year=d.fda_label_source_year or "Unknown",
             guideline_abstracts_formatted=_format_abstracts(d.guideline_abstracts),
         )
+        if vector_results:
+            prompt += "\n\n" + _format_vector_context(vector_results)
+        return prompt
 
     if (
         query_type == "disease"
@@ -438,7 +659,7 @@ def _build_format_prompt(
         and fetched_data.disease_data.fetch_success
     ):
         d = fetched_data.disease_data
-        return DISEASE_FORMAT_PROMPT.format(
+        prompt = DISEASE_FORMAT_PROMPT.format(
             query=query,
             evidence_rules=EVIDENCE_RULES,
             guideline_abstracts_formatted=_format_abstracts(d.guideline_abstracts),
@@ -448,6 +669,9 @@ def _build_format_prompt(
             nice_recommendations_formatted=_format_nice_recs(d.nice_recommendations),
             medlineplus_summary=d.medlineplus_summary or "Not available",
         )
+        if vector_results:
+            prompt += "\n\n" + _format_vector_context(vector_results)
+        return prompt
 
     if query_type == "comparative" and fetched_data.comparative_drug_data:
         drugs = fetched_data.comparative_drug_data
@@ -455,7 +679,7 @@ def _build_format_prompt(
         d2 = drugs[1] if len(drugs) > 1 else None
         entity1 = (d1.generic_name or "Drug 1") if d1 else "Drug 1"
         entity2 = (d2.generic_name or "Drug 2") if d2 else "Drug 2"
-        return COMPARATIVE_FORMAT_PROMPT.format(
+        prompt = COMPARATIVE_FORMAT_PROMPT.format(
             query=query,
             evidence_rules=EVIDENCE_RULES,
             entity1=entity1,
@@ -463,6 +687,50 @@ def _build_format_prompt(
             drug1_data_block=_format_drug_block(d1),
             drug2_data_block=_format_drug_block(d2),
         )
+        if vector_results:
+            prompt += "\n\n" + _format_vector_context(vector_results)
+        return prompt
+
+    if (
+        query_type == "procedure"
+        and fetched_data.procedure_data
+        and fetched_data.procedure_data.fetch_success
+    ):
+        d = fetched_data.procedure_data
+        prompt = PROCEDURE_FORMAT_PROMPT.format(
+            query=query,
+            evidence_rules=EVIDENCE_RULES,
+            focus_instruction=_detect_focus_instruction(query),
+            guideline_abstracts_formatted=_format_abstracts(d.guideline_abstracts),
+            practice_guideline_abstracts_formatted=_format_abstracts(
+                d.practice_guideline_abstracts
+            ),
+        )
+        if vector_results:
+            prompt += "\n\n" + _format_vector_context(vector_results)
+        return prompt
+
+    if (
+        query_type == "evidence"
+        and fetched_data.evidence_data
+        and fetched_data.evidence_data.fetch_success
+    ):
+        d = fetched_data.evidence_data
+        prompt = EVIDENCE_FORMAT_PROMPT.format(
+            query=query,
+            evidence_rules=EVIDENCE_RULES,
+            focus_instruction=_detect_focus_instruction(query),
+            clinical_trial_abstracts_formatted=_format_abstracts(
+                d.clinical_trial_abstracts
+            ),
+            systematic_review_abstracts_formatted=_format_abstracts(
+                d.systematic_review_abstracts
+            ),
+            guideline_abstracts_formatted=_format_abstracts(d.guideline_abstracts),
+        )
+        if vector_results:
+            prompt += "\n\n" + _format_vector_context(vector_results)
+        return prompt
 
     return None
 

@@ -3,6 +3,7 @@ FROM python:3.12-slim
 WORKDIR /app
 
 ENV PYTHONPATH=/app
+ENV SENTENCE_TRANSFORMERS_HOME=/app/models
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
@@ -30,7 +31,13 @@ RUN pip install --no-cache-dir \
     "pybreaker>=1.2.0" \
     "python-Levenshtein>=0.26.0" \
     "metaphone>=0.6" \
-    "httpx>=0.27.0"
+    "httpx>=0.27.0" \
+    "sentence-transformers>=3.0.0" \
+    "pdfplumber>=0.11.0" \
+    "python-multipart>=0.0.9" \
+    "lxml>=5.0.0" \
+    "cryptography>=43.0.0" \
+    "email-validator>=2.0.0"
 
 COPY app/ app/
 COPY alembic.ini .
@@ -38,7 +45,7 @@ COPY migrations/ migrations/
 COPY entrypoint.sh .
 COPY data/ data/
 
-RUN chmod +x entrypoint.sh && mkdir -p /app/logs
+RUN chmod +x entrypoint.sh && mkdir -p /app/logs /app/models
 
 EXPOSE 8000
 

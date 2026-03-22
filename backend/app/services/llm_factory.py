@@ -1,4 +1,5 @@
 import logging
+from typing import Optional
 
 from langchain_anthropic import ChatAnthropic
 from langchain_openai import ChatOpenAI
@@ -15,12 +16,41 @@ def get_provider(model_id: str) -> str:
     return "anthropic"
 
 
-def create_llm(model_id: str, max_tokens: int | None = None):
-    """Create an LLM instance for the given model ID."""
+def create_llm(
+    model_id: str,
+    max_tokens: int | None = None,
+    user_key: Optional[str] = None,
+    user_provider: Optional[str] = None,
+):
+    """Create an LLM instance for the given model ID.
+
+    If user_key + user_provider are provided (BYOK), use the user's key.
+    Falls back to server keys if no user key is given.
+    """
     provider = get_provider(model_id)
     effective_max_tokens = (
         max_tokens if max_tokens is not None else settings.llm_max_tokens
     )
+
+    # BYOK: if user has their own key, use it
+    if user_key and user_provider:
+        if user_provider == "anthropic":
+            return ChatAnthropic(
+                model=model_id
+                if provider == "anthropic"
+                else "claude-sonnet-4-20250514",
+                api_key=user_key,
+                max_tokens=effective_max_tokens,
+                timeout=settings.llm_timeout_seconds,
+                max_retries=0,
+            )
+        elif user_provider == "openai":
+            return ChatOpenAI(
+                model=model_id if provider == "openrouter" else "gpt-4o",
+                api_key=user_key,
+                max_tokens=effective_max_tokens,
+                timeout=settings.llm_timeout_seconds,
+            )
 
     if provider == "anthropic":
         return ChatAnthropic(

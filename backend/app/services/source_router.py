@@ -38,6 +38,19 @@ _COMPARATIVE_PREFIX = re.compile(
     re.IGNORECASE,
 )
 
+_PROCEDURE_STRIP = re.compile(
+    r"\b(?:what|is|are|the|when|do|you|how|to|should|we|change|replace|insert|"
+    r"remove|perform|place|steps|for|a|an|in|indication|indications|protocol|"
+    r"guideline|guidelines|procedure|checklist|algorithm)\b",
+    re.IGNORECASE,
+)
+
+_EVIDENCE_STRIP = re.compile(
+    r"\b(?:is|can|should|be|given|used|prescribed|recommended|safe|effective|"
+    r"in|for|the|a|an|role|of|evidence|studies|trial|benefit|efficacy|safety)\b",
+    re.IGNORECASE,
+)
+
 
 @dataclass
 class RoutingDecision:
@@ -75,6 +88,18 @@ def extract_entities(query: str, query_type: str) -> list:
         entity = _clean_entity(stripped)
         return [entity] if entity else []
 
+    if query_type == "procedure":
+        stripped = _PROCEDURE_STRIP.sub(" ", query)
+        entity = _clean_entity(stripped)
+        return [entity] if entity else []
+
+    if query_type == "evidence":
+        stripped = _EVIDENCE_STRIP.sub(" ", query)
+        entity = _clean_entity(stripped)
+        # Evidence queries often have multiple terms (drug + condition)
+        # Return the full stripped string as a single entity
+        return [entity] if entity else []
+
     return []
 
 
@@ -95,7 +120,13 @@ def route_query(query: str, query_type: str) -> RoutingDecision:
     - general → Sonnet (pure generation, no API data)
     """
     entities = extract_entities(query, query_type)
-    fetch_enabled = query_type in ("drug", "disease", "comparative") and bool(entities)
+    fetch_enabled = query_type in (
+        "drug",
+        "disease",
+        "comparative",
+        "procedure",
+        "evidence",
+    ) and bool(entities)
 
     if query_type == "drug":
         preferred = settings.model_haiku

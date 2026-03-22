@@ -13,7 +13,14 @@ from app.models.user import User
 
 logger = logging.getLogger(__name__)
 
-EXEMPT_PATHS = {"/api/v1/health", "/api/v1/health/"}
+EXEMPT_PATHS = {
+    "/api/v1/health",
+    "/api/v1/health/",
+    "/api/v1/auth/register",
+    "/api/v1/auth/register/",
+    "/api/v1/auth/login",
+    "/api/v1/auth/login/",
+}
 
 
 class ApiKeyAuthMiddleware(BaseHTTPMiddleware):
