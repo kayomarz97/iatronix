@@ -48,33 +48,19 @@ def decrypt_key(encrypted_key: str) -> Optional[str]:
 
 
 async def validate_user_key(key: str, provider: str) -> bool:
-    """Quick validation of a user's LLM API key.
+    """Validate a user's LLM API key by format.
 
-    Makes a lightweight API call to verify the key works.
+    Only checks the key format — actual validity is confirmed on first use.
+    Remote validation via /v1/models can reject keys with restricted permissions.
     """
-    import httpx
+    key = key.strip()
+    if not key:
+        return False
 
-    try:
-        if provider == "anthropic":
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.get(
-                    "https://api.anthropic.com/v1/models",
-                    headers={
-                        "x-api-key": key,
-                        "anthropic-version": "2023-06-01",
-                    },
-                )
-                return resp.status_code == 200
+    if provider == "anthropic":
+        return key.startswith("sk-ant-")
 
-        elif provider == "openai":
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.get(
-                    "https://api.openai.com/v1/models",
-                    headers={"Authorization": f"Bearer {key}"},
-                )
-                return resp.status_code == 200
-
-    except Exception:
-        logger.debug("Key validation failed for provider=%s", provider)
+    if provider == "openai":
+        return key.startswith("sk-")
 
     return False

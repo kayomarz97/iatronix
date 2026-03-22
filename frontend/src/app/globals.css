@@ -37,7 +37,10 @@
   }
 }
 
-.dark {
+html.dark {
+  --color-primary: #3b82f6;
+  --color-primary-light: #60a5fa;
+  --color-primary-dark: #2563eb;
   --color-surface: #0f172a;
   --color-surface-alt: #1e293b;
   --color-surface-hover: #334155;
