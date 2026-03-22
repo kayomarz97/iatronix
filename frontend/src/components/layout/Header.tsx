@@ -8,10 +8,12 @@ export function Header() {
   const [apiKey, setApiKey] = useState("");
   const [showKeyInput, setShowKeyInput] = useState(false);
   const [darkMode, setDarkMode] = useState(false);
+  const [email, setEmail] = useState("");
 
   useEffect(() => {
     const stored = localStorage.getItem(API_KEY_STORAGE_KEY);
     if (stored) setApiKey(stored);
+    setEmail(localStorage.getItem("iatronix_email") || "");
     if (document.documentElement.classList.contains("dark")) setDarkMode(true);
   }, []);
 
@@ -25,12 +27,32 @@ export function Header() {
     setDarkMode(!darkMode);
   };
 
+  const isLoggedIn = !!apiKey;
+
   return (
     <header className="border-b border-border bg-surface-alt">
       <div className="max-w-5xl mx-auto px-4 h-14 flex items-center justify-between">
-        <Link href="/" className="font-bold text-lg text-primary">
-          Iatronix
-        </Link>
+        <div className="flex items-center gap-4">
+          <Link href="/" className="font-bold text-lg text-primary">
+            Iatronix
+          </Link>
+          {isLoggedIn && (
+            <nav className="flex items-center gap-3 text-sm">
+              <Link
+                href="/documents"
+                className="text-text-secondary hover:text-text"
+              >
+                Documents
+              </Link>
+              <Link
+                href="/settings"
+                className="text-text-secondary hover:text-text"
+              >
+                Settings
+              </Link>
+            </nav>
+          )}
+        </div>
 
         <div className="flex items-center gap-3">
           <button
@@ -41,12 +63,21 @@ export function Header() {
             {darkMode ? "☀" : "☾"}
           </button>
 
-          <button
-            onClick={() => setShowKeyInput(!showKeyInput)}
-            className="px-3 py-2 text-sm rounded-md border border-border hover:bg-surface-hover min-h-[44px]"
-          >
-            {apiKey ? "Key Set" : "Set API Key"}
-          </button>
+          {isLoggedIn ? (
+            <button
+              onClick={() => setShowKeyInput(!showKeyInput)}
+              className="px-3 py-2 text-sm rounded-md border border-border hover:bg-surface-hover min-h-[44px]"
+            >
+              {email || "Key Set"}
+            </button>
+          ) : (
+            <Link
+              href="/login"
+              className="px-3 py-2 text-sm rounded-md bg-primary text-white min-h-[44px] flex items-center"
+            >
+              Sign In
+            </Link>
+          )}
         </div>
       </div>
 

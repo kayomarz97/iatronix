@@ -13,11 +13,15 @@ import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { QuerySkeleton } from "@/components/ui/Skeleton";
 import { formatLatency } from "@/lib/formatters";
+import { ProcedureResult } from "@/components/results/ProcedureResult";
+import { EvidenceResult } from "@/components/results/EvidenceResult";
 import type {
   DrugResponse,
   DiseaseResponse,
   ComparativeResponse,
   GeneralResponse,
+  ProcedureResponse,
+  EvidenceResponse,
   DegradedResponse,
 } from "@/lib/types";
 
@@ -119,6 +123,14 @@ export default function HomePage() {
           {result.query_type === "general" &&
             "key_points" in result.response && (
               <GeneralResult data={result.response as GeneralResponse} />
+            )}
+          {result.query_type === "procedure" &&
+            "procedure_name" in result.response && (
+              <ProcedureResult data={result.response as ProcedureResponse} />
+            )}
+          {result.query_type === "evidence" &&
+            "query_topic" in result.response && (
+              <EvidenceResult data={result.response as EvidenceResponse} />
             )}
 
           {/* Disclaimer at bottom */}

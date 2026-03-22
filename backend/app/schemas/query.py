@@ -102,6 +102,51 @@ class ComparativeResponse(BaseModel):
     references: list[Reference] = []
 
 
+# --- Procedure Response ---
+
+
+class ProcedureStep(BaseModel):
+    step_number: int
+    description: str
+    notes: Optional[str] = None
+
+
+class ProcedureGuideline(EvidencedClaim):
+    society: Optional[str] = None
+
+
+class ProcedureResponse(BaseModel):
+    procedure_name: str
+    indications: list[EvidencedClaim] = []
+    contraindications: list[EvidencedClaim] = []
+    technique_steps: list[ProcedureStep] = []
+    complications: list[EvidencedClaim] = []
+    guidelines: list[ProcedureGuideline] = []
+    references: list[Reference] = []
+
+
+# --- Evidence Response ---
+
+
+class StudyEvidence(BaseModel):
+    title: str
+    pmid: Optional[str] = None
+    year: Optional[int] = None
+    finding: str
+    sample_size: Optional[str] = None
+    loe: Literal["I", "II-1", "II-2", "II-3", "III"]
+
+
+class EvidenceResponse(BaseModel):
+    query_topic: str
+    summary: str
+    supporting_studies: list[StudyEvidence] = []
+    opposing_studies: list[StudyEvidence] = []
+    clinical_recommendation: Optional[EvidencedClaim] = None
+    guideline_status: str = "No formal guideline exists"
+    references: list[Reference] = []
+
+
 # --- General Response ---
 
 
@@ -138,17 +183,23 @@ class TextNode(BaseModel):
 
 class QueryRequest(BaseModel):
     query: str = Field(max_length=settings.max_query_length)
-    query_type: Optional[Literal["drug", "disease", "comparative"]] = None
+    query_type: Optional[
+        Literal["drug", "disease", "comparative", "procedure", "evidence"]
+    ] = None
     model_id: str = "claude-sonnet-4-20250514"
 
 
 class QueryResponse(BaseModel):
-    query_type: Literal["drug", "disease", "comparative", "general"]
+    query_type: Literal[
+        "drug", "disease", "comparative", "general", "procedure", "evidence"
+    ]
     model_used: str
     response: Union[
         DrugResponse,
         DiseaseResponse,
         ComparativeResponse,
+        ProcedureResponse,
+        EvidenceResponse,
         GeneralResponse,
         DegradedResponse,
     ]

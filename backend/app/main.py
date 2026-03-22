@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -7,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1 import auth, health, models, query
+from app.api.v1 import auth_routes, documents
 from app.config import settings
 from app.middleware.api_key_auth import ApiKeyAuthMiddleware
 from app.middleware.payload_limit import PayloadLimitMiddleware
@@ -46,6 +48,16 @@ async def lifespan(app: FastAPI):
     # Log queue
     await init_log_queue()
 
+    # Pre-load embedding model in background thread (non-blocking)
+    if settings.vector_search_enabled:
+        try:
+            from app.services.embedder import embedder
+
+            await asyncio.to_thread(embedder.embed_text, "warmup")
+            logger.info("Embedding model loaded")
+        except Exception:
+            logger.warning("Embedding model not available — vector search disabled")
+
     yield
 
     # Shutdown
@@ -80,5 +92,7 @@ app.add_middleware(
 # Routes
 app.include_router(health.router, prefix="/api/v1")
 app.include_router(auth.router, prefix="/api/v1")
+app.include_router(auth_routes.router, prefix="/api/v1")
 app.include_router(models.router, prefix="/api/v1")
 app.include_router(query.router, prefix="/api/v1")
+app.include_router(documents.router, prefix="/api/v1")

@@ -31,6 +31,21 @@ COMPARATIVE_PATTERNS = [
     r"\bcompare\b",
 ]
 
+PROCEDURE_PATTERNS = [
+    r"\b(?:when to|indication(?:s)? for|steps for|how to|procedure for)\b",
+    r"\b(?:change|insert|remove|perform|place|replace)\s+(?:a |the )?(?:central line|catheter|tube|drain|line|stent|pacemaker|tracheostomy)\b",
+    r"\b(?:intubation|extubation|lumbar puncture|paracentesis|thoracentesis|bronchoscopy|endoscopy|colonoscopy)\b",
+    r"\b(?:CPR|resuscitation|defibrillation|cardioversion|chest tube|arterial line|swan ganz)\b",
+    r"\b(?:protocol|checklist|algorithm|guideline)\s+(?:for|of)\b",
+]
+
+EVIDENCE_PATTERNS = [
+    r"\b(?:given in|used in|safe in|effective for|effective in|indicated in|role (?:of|in))\b",
+    r"\b(?:can|should|is)\s+\w+\s+(?:be )?(?:given|used|prescribed|recommended)\s+(?:in|for)\b",
+    r"\b(?:off[- ]?label|evidence for|studies on|trial|clinical evidence)\b",
+    r"\b(?:benefit|efficacy|safety)\s+(?:of|in)\b",
+]
+
 
 def _score_patterns(query: str, patterns: list[str]) -> float:
     """Score query against pattern list. Returns 0.0-1.0.
@@ -60,6 +75,8 @@ def classify_query(query: str, user_hint: str | None = None) -> tuple[str, float
         "drug": _score_patterns(query, DRUG_PATTERNS),
         "disease": _score_patterns(query, DISEASE_PATTERNS),
         "comparative": _score_patterns(query, COMPARATIVE_PATTERNS),
+        "procedure": _score_patterns(query, PROCEDURE_PATTERNS),
+        "evidence": _score_patterns(query, EVIDENCE_PATTERNS),
     }
 
     # Comparative is the most specific type — if vs/versus/compare detected, always prefer it

@@ -14,7 +14,9 @@ from app.schemas.query import (
     DegradedResponse,
     DiseaseResponse,
     DrugResponse,
+    EvidenceResponse,
     GeneralResponse,
+    ProcedureResponse,
     QueryRequest,
     QueryResponse,
 )
@@ -29,6 +31,13 @@ from app.services.prompt_engine import build_prompt
 from app.services.query_classifier import classify_query
 from app.services.safety_checker import check_safety
 from app.services.source_router import route_query
+from app.services.vector_search import search as vector_search
+
+# PMID/DOI hyperlinking patterns
+import re as _re
+
+_PMID_PATTERN = _re.compile(r"PMID[:\s]*(\d{6,9})")
+_DOI_PATTERN = _re.compile(r'(10\.\d{4,9}/[^\s,;"\'\)\]]+)')
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +51,8 @@ RESPONSE_MODELS = {
     "drug": DrugResponse,
     "disease": DiseaseResponse,
     "comparative": ComparativeResponse,
+    "procedure": ProcedureResponse,
+    "evidence": EvidenceResponse,
     "general": GeneralResponse,
 }
 
@@ -193,6 +204,34 @@ def _coerce_evidenced_claims(obj: object) -> None:
             _coerce_evidenced_claims(item)
 
 
+def _hyperlink_references(data: dict) -> None:
+    """Add URLs to references with PMIDs or DOIs."""
+    refs = data.get("references", [])
+    for ref in refs:
+        if ref.get("url"):
+            continue
+        source = ref.get("source", "")
+        title = ref.get("title", "") or ""
+        combined = f"{source} {title}"
+
+        pmid_match = _PMID_PATTERN.search(combined)
+        if pmid_match:
+            ref["url"] = f"https://pubmed.ncbi.nlm.nih.gov/{pmid_match.group(1)}"
+            continue
+
+        doi_match = _DOI_PATTERN.search(combined)
+        if doi_match:
+            ref["url"] = f"https://doi.org/{doi_match.group(1)}"
+
+    # Also check nested study lists (evidence response)
+    for key in ("supporting_studies", "opposing_studies"):
+        studies = data.get(key, [])
+        for study in studies:
+            pmid = study.get("pmid")
+            if pmid and not study.get("url"):
+                study["url"] = f"https://pubmed.ncbi.nlm.nih.gov/{pmid}"
+
+
 def _validate_response(data: dict, query_type: str) -> tuple[dict | None, list[str]]:
     """Validate response structurally (Pydantic) and semantically."""
     warnings = []
@@ -306,19 +345,40 @@ async def process_query(
             latency_ms=latency_ms,
         )
 
-    # Route and fetch external data
+    # Route and fetch external data + vector search in parallel
     fetched_data: FetchedData | None = None
+    vector_results = []
+
+    tasks = {}
     if settings.api_fetch_enabled:
         routing = route_query(request.query, query_type)
         if routing.fetch_enabled:
-            try:
-                fetched_data = await asyncio.wait_for(
-                    fetch_data_for_query(query_type, routing.entities),
-                    timeout=settings.api_fetch_timeout_seconds + 1.0,
-                )
-            except asyncio.TimeoutError:
-                logger.warning("API fetch timed out — using generate mode")
-                fetched_data = FetchedData(query_type=query_type, fallback_to_llm=True)
+            tasks["api"] = asyncio.wait_for(
+                fetch_data_for_query(query_type, routing.entities),
+                timeout=settings.api_fetch_timeout_seconds + 1.0,
+            )
+
+    if settings.vector_search_enabled:
+        tasks["vector"] = vector_search(request.query)
+
+    if tasks:
+        results = await asyncio.gather(*tasks.values(), return_exceptions=True)
+        for key, result in zip(tasks.keys(), results):
+            if key == "api":
+                if isinstance(result, asyncio.TimeoutError):
+                    logger.warning("API fetch timed out — using generate mode")
+                    fetched_data = FetchedData(
+                        query_type=query_type, fallback_to_llm=True
+                    )
+                elif isinstance(result, Exception):
+                    logger.warning("API fetch error: %s", result)
+                else:
+                    fetched_data = result
+            elif key == "vector":
+                if isinstance(result, Exception):
+                    logger.warning("Vector search error: %s", result)
+                else:
+                    vector_results = result
 
     # Model and token budget selection
     # Override only for Anthropic models (OpenRouter users keep their chosen model)
@@ -350,7 +410,7 @@ async def process_query(
     fetch_latency_ms = fetched_data.total_fetch_time_ms if fetched_data else 0
 
     # Build prompt (format-mode if API data available, generate-mode otherwise)
-    prompt = build_prompt(request.query, query_type, fetched_data)
+    prompt = build_prompt(request.query, query_type, fetched_data, vector_results)
 
     # LLM call with retry
     raw_response = await _call_llm(effective_model, prompt, max_tokens=max_tokens)
@@ -403,6 +463,9 @@ async def process_query(
 
     # Safety check
     safety_warnings = check_safety(request.query, validated_data, query_type)
+
+    # Hyperlink PMIDs and DOIs in references
+    _hyperlink_references(validated_data)
 
     # Drug linker
     text_nodes = process_text_nodes(validated_data, query_type)

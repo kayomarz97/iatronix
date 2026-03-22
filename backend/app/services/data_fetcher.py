@@ -61,10 +61,27 @@ class DiseaseFetchResult:
 
 
 @dataclass
+class ProcedureFetchResult:
+    guideline_abstracts: list = field(default_factory=list)
+    practice_guideline_abstracts: list = field(default_factory=list)
+    fetch_success: bool = False
+
+
+@dataclass
+class EvidenceFetchResult:
+    clinical_trial_abstracts: list = field(default_factory=list)
+    systematic_review_abstracts: list = field(default_factory=list)
+    guideline_abstracts: list = field(default_factory=list)
+    fetch_success: bool = False
+
+
+@dataclass
 class FetchedData:
     query_type: str
     drug_data: Optional[DrugFetchResult] = None
     disease_data: Optional[DiseaseFetchResult] = None
+    procedure_data: Optional[ProcedureFetchResult] = None
+    evidence_data: Optional[EvidenceFetchResult] = None
     comparative_drug_data: list = field(default_factory=list)
     total_fetch_time_ms: int = 0
     fallback_to_llm: bool = False
@@ -854,6 +871,172 @@ async def fetch_disease_data(disease_name: str) -> DiseaseFetchResult:
     return result
 
 
+async def fetch_procedure_data(procedure_name: str) -> ProcedureFetchResult:
+    """Fetch procedure/guideline data from PubMed practice guidelines."""
+    result = ProcedureFetchResult()
+
+    async with _make_client() as client:
+        guidelines, practice = await asyncio.gather(
+            _fetch_pubmed_abstracts(client, procedure_name, "guideline"),
+            _fetch_pubmed_procedure_guidelines(client, procedure_name),
+            return_exceptions=True,
+        )
+
+        result.guideline_abstracts = _cap_abstracts(
+            guidelines if isinstance(guidelines, list) else [], 4000
+        )
+        result.practice_guideline_abstracts = _cap_abstracts(
+            practice if isinstance(practice, list) else [], 3000
+        )
+
+    result.fetch_success = bool(
+        result.guideline_abstracts or result.practice_guideline_abstracts
+    )
+    return result
+
+
+async def _fetch_pubmed_procedure_guidelines(
+    client: httpx.AsyncClient, entity: str
+) -> list:
+    """Fetch PubMed practice guidelines specifically for procedures."""
+    term = (
+        f"{entity}[Title/Abstract] AND "
+        "(Practice Guideline[pt] OR Consensus Development Conference[pt]) "
+        "AND 2015:2025[dp]"
+    )
+    params: dict = {
+        "db": "pubmed",
+        "term": term,
+        "retmax": 5,
+        "retmode": "json",
+        "sort": "relevance",
+    }
+    if settings.pubmed_api_key:
+        params["api_key"] = settings.pubmed_api_key
+
+    search_data = await _safe_get(
+        client,
+        "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi",
+        params=params,
+    )
+    if not search_data:
+        return []
+
+    ids = search_data.get("esearchresult", {}).get("idlist", [])
+    if not ids:
+        return []
+
+    fetch_params: dict = {
+        "db": "pubmed",
+        "id": ",".join(ids),
+        "rettype": "abstract",
+        "retmode": "xml",
+    }
+    if settings.pubmed_api_key:
+        fetch_params["api_key"] = settings.pubmed_api_key
+
+    xml_text = await _safe_get_text(
+        client,
+        "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi",
+        params=fetch_params,
+    )
+    if not xml_text:
+        return []
+
+    return _parse_pubmed_xml(xml_text)
+
+
+async def fetch_evidence_data(query: str) -> EvidenceFetchResult:
+    """Fetch evidence for drug+condition questions (clinical trials + reviews)."""
+    result = EvidenceFetchResult()
+
+    async with _make_client() as client:
+        trials, reviews, guidelines = await asyncio.gather(
+            _fetch_pubmed_clinical_trials(client, query),
+            _fetch_pubmed_abstracts(client, query, "systematic_review"),
+            _fetch_pubmed_abstracts(client, query, "guideline"),
+            return_exceptions=True,
+        )
+
+        result.clinical_trial_abstracts = _cap_abstracts(
+            trials if isinstance(trials, list) else [], 4000
+        )
+        result.systematic_review_abstracts = _cap_abstracts(
+            reviews if isinstance(reviews, list) else [], 3000
+        )
+        result.guideline_abstracts = _cap_abstracts(
+            guidelines if isinstance(guidelines, list) else [], 2000
+        )
+
+    result.fetch_success = bool(
+        result.clinical_trial_abstracts
+        or result.systematic_review_abstracts
+        or result.guideline_abstracts
+    )
+    return result
+
+
+async def _fetch_pubmed_clinical_trials(client: httpx.AsyncClient, query: str) -> list:
+    """Fetch clinical trial and RCT abstracts from PubMed."""
+    term = (
+        f"{query}[Title/Abstract] AND "
+        "(Clinical Trial[pt] OR Randomized Controlled Trial[pt]) "
+        "AND 2010:2025[dp]"
+    )
+    params: dict = {
+        "db": "pubmed",
+        "term": term,
+        "retmax": 8,
+        "retmode": "json",
+        "sort": "relevance",
+    }
+    if settings.pubmed_api_key:
+        params["api_key"] = settings.pubmed_api_key
+
+    search_data = await _safe_get(
+        client,
+        "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi",
+        params=params,
+    )
+    if not search_data:
+        return []
+
+    ids = search_data.get("esearchresult", {}).get("idlist", [])
+    if not ids:
+        return []
+
+    fetch_params: dict = {
+        "db": "pubmed",
+        "id": ",".join(ids),
+        "rettype": "abstract",
+        "retmode": "xml",
+    }
+    if settings.pubmed_api_key:
+        fetch_params["api_key"] = settings.pubmed_api_key
+
+    xml_text = await _safe_get_text(
+        client,
+        "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi",
+        params=fetch_params,
+    )
+    if not xml_text:
+        return []
+
+    return _parse_pubmed_xml(xml_text)
+
+
+def _fire_and_forget_index(abstracts: list) -> None:
+    """Schedule fire-and-forget indexing of PubMed abstracts into pgvector."""
+    if not abstracts or not settings.vector_search_enabled:
+        return
+    try:
+        from app.services.ingestion import ingest_pubmed_abstracts
+
+        asyncio.create_task(ingest_pubmed_abstracts(abstracts))
+    except Exception:
+        logger.debug("Fire-and-forget indexing skipped", exc_info=True)
+
+
 async def fetch_data_for_query(query_type: str, entities: list) -> FetchedData:
     """Top-level orchestrator called by the pipeline."""
     start = time.time()
@@ -863,10 +1046,13 @@ async def fetch_data_for_query(query_type: str, entities: list) -> FetchedData:
         if query_type == "drug" and entities:
             fetched.drug_data = await fetch_drug_data(entities[0])
             fetched.fallback_to_llm = not fetched.drug_data.fetch_success
+            _fire_and_forget_index(fetched.drug_data.guideline_abstracts)
 
         elif query_type == "disease" and entities:
             fetched.disease_data = await fetch_disease_data(entities[0])
             fetched.fallback_to_llm = not fetched.disease_data.fetch_success
+            _fire_and_forget_index(fetched.disease_data.guideline_abstracts)
+            _fire_and_forget_index(fetched.disease_data.systematic_review_abstracts)
 
         elif query_type == "comparative" and len(entities) >= 2:
             drug_results = await asyncio.gather(
@@ -880,6 +1066,16 @@ async def fetch_data_for_query(query_type: str, entities: list) -> FetchedData:
             fetched.fallback_to_llm = not any(
                 r.fetch_success for r in fetched.comparative_drug_data
             )
+
+        elif query_type == "procedure" and entities:
+            fetched.procedure_data = await fetch_procedure_data(entities[0])
+            fetched.fallback_to_llm = not fetched.procedure_data.fetch_success
+            _fire_and_forget_index(fetched.procedure_data.guideline_abstracts)
+
+        elif query_type == "evidence" and entities:
+            fetched.evidence_data = await fetch_evidence_data(" ".join(entities))
+            fetched.fallback_to_llm = not fetched.evidence_data.fetch_success
+            _fire_and_forget_index(fetched.evidence_data.clinical_trial_abstracts)
 
         else:
             fetched.fallback_to_llm = True

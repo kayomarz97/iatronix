@@ -16,8 +16,24 @@ class Settings(BaseSettings):
     # Redis
     redis_url: str = "redis://iatronix-redis:6379/0"
 
-    # Embedding
-    embedding_dim: int = 1536
+    # Embedding & Vector search
+    embedding_dim: int = 384
+    embedding_model: str = "all-MiniLM-L6-v2"
+    vector_search_enabled: bool = True
+    vector_top_k: int = 5
+    vector_min_similarity: float = 0.3
+
+    # PDF upload
+    max_pdf_size_bytes: int = 20_971_520  # 20MB
+    chunk_size: int = 2000  # characters (~500 tokens)
+    chunk_overlap: int = 400  # characters (~100 tokens)
+
+    # Auto-indexing
+    pubmed_vector_cache_enabled: bool = True
+
+    # BYOK
+    byok_enabled: bool = True
+    encryption_key: str = "CHANGE_ME"  # Fernet key for encrypting user LLM keys
 
     # CORS
     allowed_origins: str = "http://localhost:3100"
