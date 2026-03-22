@@ -19,8 +19,14 @@ async def query_endpoint(request: Request, body: QueryRequest):
 
     # Check scope
     user = getattr(request.state, "user", None)
-    if user and not user.scopes.get("query", False) and user.role not in ("admin", "user"):
-        return JSONResponse(status_code=403, content={"detail": "Insufficient scope for query"})
+    if (
+        user
+        and not user.scopes.get("query", False)
+        and user.role not in ("admin", "user")
+    ):
+        return JSONResponse(
+            status_code=403, content={"detail": "Insufficient scope for query"}
+        )
 
     try:
         response = await asyncio.wait_for(
@@ -32,7 +38,9 @@ async def query_endpoint(request: Request, body: QueryRequest):
         logger.error("Pipeline timeout exceeded")
         return JSONResponse(
             status_code=504,
-            content={"detail": "Request timed out. Try a simpler query or different model."},
+            content={
+                "detail": "Request timed out. Try a simpler query or different model."
+            },
         )
     except Exception:
         logger.error("Unexpected pipeline error", exc_info=True)

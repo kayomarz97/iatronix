@@ -2,11 +2,9 @@ import asyncio
 import json
 import logging
 import time
-from datetime import datetime, timezone
 
 import pybreaker
 from pydantic import ValidationError
-from sqlalchemy import text
 
 from app.config import settings
 from app.db.session import async_session
@@ -23,12 +21,14 @@ from app.schemas.query import (
 from app.services.cache import cache_get, cache_get_any_version, cache_set
 from app.services.circuit_breaker import get_breaker, is_provider_available
 from app.services.citation_validator import validate_citations
+from app.services.data_fetcher import FetchedData, fetch_data_for_query
 from app.services.drug_linker import process_text_nodes
 from app.services.json_repair import parse_llm_json
 from app.services.llm_factory import create_llm, get_alternative_model, get_provider
 from app.services.prompt_engine import build_prompt
 from app.services.query_classifier import classify_query
 from app.services.safety_checker import check_safety
+from app.services.source_router import route_query
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +90,7 @@ async def _write_log_entry(entry: dict):
                 response_str = json.dumps(response_json)
                 truncated = False
                 if len(response_str.encode()) > settings.max_response_jsonb_bytes:
-                    response_str = response_str[:settings.truncated_response_bytes]
+                    response_str = response_str[: settings.truncated_response_bytes]
                     response_json = json.loads(response_str + "}")  # best effort
                     truncated = True
 
@@ -112,10 +112,15 @@ async def _write_log_entry(entry: dict):
                 await asyncio.sleep(settings.log_db_retry_backoff)
             else:
                 # File fallback
-                logger.error("DB log write failed after retries, writing to file", exc_info=True)
+                logger.error(
+                    "DB log write failed after retries, writing to file", exc_info=True
+                )
                 try:
                     import aiofiles
-                    async with aiofiles.open("/app/logs/query_log_fallback.jsonl", "a") as f:
+
+                    async with aiofiles.open(
+                        "/app/logs/query_log_fallback.jsonl", "a"
+                    ) as f:
                         await f.write(json.dumps(entry, default=str) + "\n")
                 except Exception:
                     # Last resort: structured log
@@ -137,13 +142,15 @@ async def _enqueue_log(entry: dict):
             pass
 
 
-async def _call_llm(model_id: str, prompt: str) -> str | None:
+async def _call_llm(
+    model_id: str, prompt: str, max_tokens: int | None = None
+) -> str | None:
     """Call LLM with circuit breaker protection."""
     provider = get_provider(model_id)
     breaker = get_breaker(provider)
 
     try:
-        llm = create_llm(model_id)
+        llm = create_llm(model_id, max_tokens=max_tokens)
 
         @breaker
         async def _invoke():
@@ -159,12 +166,42 @@ async def _call_llm(model_id: str, prompt: str) -> str | None:
         return None
 
 
+_CLAIM_FIELDS = {"loe", "cor", "source", "confidence", "value"}
+_VALID_LOE = {"I", "II-1", "II-2", "II-3", "III"}
+_VALID_COR = {"I", "IIa", "IIb", "III-no-benefit", "III-harm"}
+
+
+def _coerce_evidenced_claims(obj: object) -> None:
+    """Recursively fill missing/invalid required EvidencedClaim fields with safe defaults."""
+    if isinstance(obj, dict):
+        if "value" in obj or (_CLAIM_FIELDS & obj.keys()):
+            # Looks like an EvidencedClaim — fill missing/invalid required fields
+            loe = obj.get("loe") or ""
+            if not loe or loe not in _VALID_LOE:
+                obj["loe"] = "III"
+            cor = obj.get("cor") or ""
+            if not cor or cor not in _VALID_COR:
+                obj["cor"] = "I"
+            if not obj.get("source"):
+                obj["source"] = "Clinical guidelines"
+            if not obj.get("confidence"):
+                obj["confidence"] = "low"
+        for v in obj.values():
+            _coerce_evidenced_claims(v)
+    elif isinstance(obj, list):
+        for item in obj:
+            _coerce_evidenced_claims(item)
+
+
 def _validate_response(data: dict, query_type: str) -> tuple[dict | None, list[str]]:
     """Validate response structurally (Pydantic) and semantically."""
     warnings = []
     model_cls = RESPONSE_MODELS.get(query_type)
     if not model_cls:
         return data, ["Unknown query type"]
+
+    # Fill in missing required EvidencedClaim fields before validation
+    _coerce_evidenced_claims(data)
 
     try:
         validated = model_cls.model_validate(data)
@@ -217,19 +254,25 @@ async def process_query(
     query_type, confidence = classify_query(request.query, request.query_type)
 
     # Cache check
-    cached_data = await cache_get(redis_client, request.query, query_type, request.model_id)
+    cached_data = await cache_get(
+        redis_client, request.query, query_type, request.model_id
+    )
     if cached_data:
         latency_ms = int((time.time() - start_time) * 1000)
-        response = QueryResponse(**cached_data, cached=True, latency_ms=latency_ms)
-        await _enqueue_log({
-            "query": request.query,
-            "query_type": query_type,
-            "model_used": request.model_id,
-            "response_json": cached_data,
-            "latency_ms": latency_ms,
-            "cached": True,
-            "user_key_id": user_key_id,
-        })
+        cached_data["cached"] = True
+        cached_data["latency_ms"] = latency_ms
+        response = QueryResponse(**cached_data)
+        await _enqueue_log(
+            {
+                "query": request.query,
+                "query_type": query_type,
+                "model_used": request.model_id,
+                "response_json": cached_data,
+                "latency_ms": latency_ms,
+                "cached": True,
+                "user_key_id": user_key_id,
+            }
+        )
         return response
 
     # Circuit breaker check
@@ -263,11 +306,54 @@ async def process_query(
             latency_ms=latency_ms,
         )
 
-    # Build prompt
-    prompt = build_prompt(request.query, query_type)
+    # Route and fetch external data
+    fetched_data: FetchedData | None = None
+    if settings.api_fetch_enabled:
+        routing = route_query(request.query, query_type)
+        if routing.fetch_enabled:
+            try:
+                fetched_data = await asyncio.wait_for(
+                    fetch_data_for_query(query_type, routing.entities),
+                    timeout=settings.api_fetch_timeout_seconds + 1.0,
+                )
+            except asyncio.TimeoutError:
+                logger.warning("API fetch timed out — using generate mode")
+                fetched_data = FetchedData(query_type=query_type, fallback_to_llm=True)
+
+    # Model and token budget selection
+    # Override only for Anthropic models (OpenRouter users keep their chosen model)
+    effective_model = request.model_id
+    max_tokens = settings.llm_max_tokens_generate
+    if (
+        settings.model_routing_enabled
+        and fetched_data is not None
+        and not fetched_data.fallback_to_llm
+        and "/" not in request.model_id  # Anthropic model (no "/" = not OpenRouter)
+    ):
+        effective_model = routing.preferred_model
+        # Disease format mode needs more tokens: classifications, pathophysiology, full treatment
+        if query_type == "disease":
+            max_tokens = settings.llm_max_tokens_format_disease
+        else:
+            max_tokens = settings.llm_max_tokens_format
+        # Optionally use free OpenRouter model for drug/comparative format steps
+        if (
+            settings.use_free_model_for_format
+            and settings.model_format_free
+            and query_type in ("drug", "comparative")
+        ):
+            effective_model = settings.model_format_free
+
+    prompt_mode = (
+        "format" if (fetched_data and not fetched_data.fallback_to_llm) else "generate"
+    )
+    fetch_latency_ms = fetched_data.total_fetch_time_ms if fetched_data else 0
+
+    # Build prompt (format-mode if API data available, generate-mode otherwise)
+    prompt = build_prompt(request.query, query_type, fetched_data)
 
     # LLM call with retry
-    raw_response = await _call_llm(request.model_id, prompt)
+    raw_response = await _call_llm(effective_model, prompt, max_tokens=max_tokens)
 
     if raw_response:
         parsed = parse_llm_json(raw_response)
@@ -278,7 +364,7 @@ async def process_query(
     if parsed is None:
         logger.info("First LLM call failed or unparseable, retrying...")
         await asyncio.sleep(settings.llm_retry_backoff_seconds)
-        raw_response = await _call_llm(request.model_id, prompt)
+        raw_response = await _call_llm(effective_model, prompt, max_tokens=max_tokens)
         if raw_response:
             parsed = parse_llm_json(raw_response)
 
@@ -286,7 +372,7 @@ async def process_query(
         latency_ms = int((time.time() - start_time) * 1000)
         return QueryResponse(
             query_type=query_type,
-            model_used=request.model_id,
+            model_used=effective_model,
             response=DegradedResponse(
                 message="Failed to parse AI response",
                 suggestion="Try rephrasing your query or switching models",
@@ -301,7 +387,7 @@ async def process_query(
         latency_ms = int((time.time() - start_time) * 1000)
         return QueryResponse(
             query_type=query_type,
-            model_used=request.model_id,
+            model_used=effective_model,
             response=DegradedResponse(
                 message="Response validation failed",
                 suggestion="Try rephrasing your query",
@@ -329,7 +415,7 @@ async def process_query(
 
     response = QueryResponse(
         query_type=query_type,
-        model_used=request.model_id,
+        model_used=effective_model,
         response=typed_response,
         text_nodes=text_nodes,
         safety_warnings=safety_warnings,
@@ -342,17 +428,24 @@ async def process_query(
 
     # Cache write
     cache_data = response.model_dump()
-    await cache_set(redis_client, request.query, query_type, request.model_id, cache_data)
+    await cache_set(
+        redis_client, request.query, query_type, request.model_id, cache_data
+    )
 
     # Async log
-    await _enqueue_log({
-        "query": request.query,
-        "query_type": query_type,
-        "model_used": request.model_id,
-        "response_json": cache_data,
-        "latency_ms": latency_ms,
-        "cached": False,
-        "user_key_id": user_key_id,
-    })
+    await _enqueue_log(
+        {
+            "query": request.query,
+            "query_type": query_type,
+            "model_used": request.model_id,
+            "effective_model": effective_model,
+            "prompt_mode": prompt_mode,
+            "fetch_latency_ms": fetch_latency_ms,
+            "response_json": cache_data,
+            "latency_ms": latency_ms,
+            "cached": False,
+            "user_key_id": user_key_id,
+        }
+    )
 
     return response

@@ -5,15 +5,42 @@ logger = logging.getLogger(__name__)
 
 APPROVED_SOURCES = {
     # Guidelines
-    "nice", "aha", "acc", "aha/acc", "esc", "who", "idsa", "nccn", "acog",
-    "gold", "kdigo", "ada",
+    "nice",
+    "aha",
+    "acc",
+    "aha/acc",
+    "esc",
+    "who",
+    "idsa",
+    "nccn",
+    "acog",
+    "gold",
+    "kdigo",
+    "ada",
     # Regulatory
-    "fda", "ema", "mhra",
+    "fda",
+    "ema",
+    "mhra",
     # Databases
-    "uptodate", "bmj best practice", "cochrane library", "cochrane",
+    "uptodate",
+    "bmj best practice",
+    "cochrane library",
+    "cochrane",
     "pubmed",
     # Pharmacology
-    "fda drug labels", "fda drug label", "bnf", "micromedex",
+    "fda drug labels",
+    "fda drug label",
+    "bnf",
+    "micromedex",
+    # Indian regulatory
+    "cdsco",
+    "indian pharmacopoeia",
+    "indian local",
+    "medindia",
+    "schedule h",
+    # Other
+    "clinical guidelines",
+    "clinical consensus",
 }
 
 CURRENT_YEAR = datetime.now().year
@@ -43,6 +70,7 @@ def validate_citations(response_data: dict, query_type: str) -> list[str]:
     low_confidence_count = 0
     missing_citation_count = 0
     total_claims = len(claims)
+    seen_unverified: set = set()
 
     for claim in claims:
         source = claim.get("source", "")
@@ -53,10 +81,13 @@ def validate_citations(response_data: dict, query_type: str) -> list[str]:
 
         if not source:
             missing_citation_count += 1
-            warnings.append(f"Missing citation for claim: '{_truncate(claim.get('value', ''))}'")
+            warnings.append(
+                f"Missing citation for claim: '{_truncate(claim.get('value', ''))}'"
+            )
             continue
 
-        if not _is_approved_source(source):
+        if not _is_approved_source(source) and source not in seen_unverified:
+            seen_unverified.add(source)
             warnings.append(f"Unverified source: {source}")
 
         if source_year is not None:
@@ -81,7 +112,7 @@ def validate_citations(response_data: dict, query_type: str) -> list[str]:
             warnings.insert(
                 0,
                 "This response has limited evidence support. "
-                "Please verify with primary sources."
+                "Please verify with primary sources.",
             )
 
     return warnings

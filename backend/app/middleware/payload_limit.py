@@ -12,6 +12,8 @@ class PayloadLimitMiddleware(BaseHTTPMiddleware):
             if content_length and int(content_length) > settings.max_request_body_bytes:
                 return JSONResponse(
                     status_code=413,
-                    content={"detail": f"Request body too large. Maximum size: {settings.max_request_body_bytes} bytes"},
+                    content={
+                        "detail": f"Request body too large. Maximum size: {settings.max_request_body_bytes} bytes"
+                    },
                 )
         return await call_next(request)

@@ -30,14 +30,14 @@ class ApiKeyAuthMiddleware(BaseHTTPMiddleware):
 
         parsed = parse_api_key(api_key)
         if not parsed:
-            return JSONResponse(status_code=401, content={"detail": "Invalid API key format"})
+            return JSONResponse(
+                status_code=401, content={"detail": "Invalid API key format"}
+            )
 
         key_id, secret = parsed
 
         async with async_session() as session:
-            result = await session.execute(
-                select(User).where(User.key_id == key_id)
-            )
+            result = await session.execute(select(User).where(User.key_id == key_id))
             user = result.scalar_one_or_none()
 
         if not user:

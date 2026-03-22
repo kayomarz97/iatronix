@@ -22,9 +22,7 @@ async def rotate_key(request: Request, body: RotateKeyRequest):
     key_id, secret = parsed
 
     async with async_session() as session:
-        result = await session.execute(
-            select(User).where(User.key_id == key_id)
-        )
+        result = await session.execute(select(User).where(User.key_id == key_id))
         user = result.scalar_one_or_none()
 
         if not user or not verify_key_secret(secret, user.key_hash):

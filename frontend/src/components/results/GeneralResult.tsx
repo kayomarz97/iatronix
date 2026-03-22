@@ -18,10 +18,12 @@ export function GeneralResult({ data }: GeneralResultProps) {
         : "danger";
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-2">
-        <h2 className="text-2xl font-bold">General Response</h2>
-        <Badge variant={variant}>{data.confidence} confidence</Badge>
+    <div className="space-y-5">
+      <div className="border-b border-border pb-4 flex items-center gap-2">
+        <h2 className="text-2xl font-bold">Result</h2>
+        {data.confidence === "low" && (
+          <Badge variant="danger">Low confidence</Badge>
+        )}
       </div>
 
       <div className="prose prose-sm max-w-none dark:prose-invert">
@@ -29,33 +31,14 @@ export function GeneralResult({ data }: GeneralResultProps) {
       </div>
 
       {data.key_points.length > 0 && (
-        <Accordion title="Key Points" count={data.key_points.length} defaultOpen>
+        <div>
+          <h3 className="text-base font-semibold mb-2">Key Points</h3>
           <ul className="list-disc list-inside space-y-1 text-sm">
             {data.key_points.map((point, i) => (
               <li key={i}>{point}</li>
             ))}
           </ul>
-        </Accordion>
-      )}
-
-      {data.related_drugs.length > 0 && (
-        <Accordion title="Related Drugs" count={data.related_drugs.length}>
-          <div className="flex flex-wrap gap-2">
-            {data.related_drugs.map((drug, i) => (
-              <Badge key={i}>{drug}</Badge>
-            ))}
-          </div>
-        </Accordion>
-      )}
-
-      {data.related_conditions.length > 0 && (
-        <Accordion title="Related Conditions" count={data.related_conditions.length}>
-          <div className="flex flex-wrap gap-2">
-            {data.related_conditions.map((cond, i) => (
-              <Badge key={i}>{cond}</Badge>
-            ))}
-          </div>
-        </Accordion>
+        </div>
       )}
 
       {data.references.length > 0 && (
@@ -64,7 +47,7 @@ export function GeneralResult({ data }: GeneralResultProps) {
             {data.references.map((ref, i) => (
               <li key={i}>
                 {ref.source}
-                {ref.title ? `: ${ref.title}` : ""}
+                {ref.title ? ` — ${ref.title}` : ""}
                 {ref.year ? ` (${ref.year})` : ""}
               </li>
             ))}

@@ -1,15 +1,4 @@
 services:
-  iatronix-proxy:
-    image: traefik:v3.0
-    restart: unless-stopped
-    networks: [iatronix-net]
-    ports:
-      - "443:443"
-      - "80:80"
-    volumes:
-      - ./traefik:/etc/traefik
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-
   iatronix-db:
     image: pgvector/pgvector:pg16
     restart: unless-stopped
@@ -49,15 +38,8 @@ services:
       iatronix-redis:
         condition: service_healthy
     env_file: .env
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.backend.rule=Host(`iatronix.local`) && PathPrefix(`/api`)"
-      - "traefik.http.routers.backend.entrypoints=websecure"
-      - "traefik.http.routers.backend.tls=true"
-      - "traefik.http.services.backend.loadbalancer.server.port=8000"
-      - "traefik.http.routers.backend-http.rule=Host(`iatronix.local`) && PathPrefix(`/api`)"
-      - "traefik.http.routers.backend-http.entrypoints=web"
-      - "traefik.http.services.backend-http.loadbalancer.server.port=8000"
+    ports:
+      - "127.0.0.1:8200:8000"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
       interval: 15s
@@ -74,15 +56,8 @@ services:
         condition: service_healthy
     environment:
       INTERNAL_API_URL: ${INTERNAL_API_URL}
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.frontend.rule=Host(`iatronix.local`)"
-      - "traefik.http.routers.frontend.entrypoints=websecure"
-      - "traefik.http.routers.frontend.tls=true"
-      - "traefik.http.services.frontend.loadbalancer.server.port=3000"
-      - "traefik.http.routers.frontend-http.rule=Host(`iatronix.local`)"
-      - "traefik.http.routers.frontend-http.entrypoints=web"
-      - "traefik.http.services.frontend-http.loadbalancer.server.port=3000"
+    ports:
+      - "127.0.0.1:3200:3000"
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000"]
       interval: 15s

@@ -7,6 +7,7 @@ from app.config import settings
 
 # --- Evidence ---
 
+
 class EvidencedClaim(BaseModel):
     value: str
     loe: Literal["I", "II-1", "II-2", "II-3", "III"]
@@ -24,6 +25,7 @@ class Reference(BaseModel):
 
 
 # --- Drug Response ---
+
 
 class DrugDosing(EvidencedClaim):
     route: Optional[str] = None
@@ -54,6 +56,7 @@ class DrugResponse(BaseModel):
 
 # --- Disease Response ---
 
+
 class TreatmentEntry(EvidencedClaim):
     drug_names: list[str] = []
 
@@ -61,6 +64,7 @@ class TreatmentEntry(EvidencedClaim):
 class DiseaseResponse(BaseModel):
     disease_name: str
     icd_10: Optional[str] = None
+    etiology: list[EvidencedClaim] = []
     pathophysiology: Optional[EvidencedClaim] = None
     epidemiology: Optional[EvidencedClaim] = None
     clinical_features: list[EvidencedClaim] = []
@@ -83,6 +87,7 @@ DiseaseResponse.model_rebuild()
 
 # --- Comparative Response ---
 
+
 class ComparisonDimension(BaseModel):
     dimension: str
     values: dict[str, EvidencedClaim]
@@ -99,6 +104,7 @@ class ComparativeResponse(BaseModel):
 
 # --- General Response ---
 
+
 class GeneralResponse(BaseModel):
     summary: str
     key_points: list[str] = []
@@ -110,6 +116,7 @@ class GeneralResponse(BaseModel):
 
 # --- Degraded Response ---
 
+
 class DegradedResponse(BaseModel):
     message: str = "AI service temporarily unavailable"
     suggestion: str = "Try again in 30 seconds or switch model"
@@ -117,6 +124,7 @@ class DegradedResponse(BaseModel):
 
 
 # --- Text Nodes ---
+
 
 class TextNode(BaseModel):
     type: Literal["text", "drug_link"]
@@ -127,6 +135,7 @@ class TextNode(BaseModel):
 
 # --- Request / Response ---
 
+
 class QueryRequest(BaseModel):
     query: str = Field(max_length=settings.max_query_length)
     query_type: Optional[Literal["drug", "disease", "comparative"]] = None
@@ -136,7 +145,13 @@ class QueryRequest(BaseModel):
 class QueryResponse(BaseModel):
     query_type: Literal["drug", "disease", "comparative", "general"]
     model_used: str
-    response: Union[DrugResponse, DiseaseResponse, ComparativeResponse, GeneralResponse, DegradedResponse]
+    response: Union[
+        DrugResponse,
+        DiseaseResponse,
+        ComparativeResponse,
+        GeneralResponse,
+        DegradedResponse,
+    ]
     text_nodes: list[TextNode] = []
     safety_warnings: list[str] = []
     validation_warnings: list[str] = []

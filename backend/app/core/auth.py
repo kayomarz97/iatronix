@@ -6,7 +6,9 @@ import bcrypt
 
 def generate_api_key() -> tuple[str, str, str]:
     """Generate a new API key. Returns (full_key, key_id, key_hash)."""
-    key_id = "".join(secrets.choice(string.ascii_lowercase + string.digits) for _ in range(12))
+    key_id = "".join(
+        secrets.choice(string.ascii_lowercase + string.digits) for _ in range(12)
+    )
     secret = secrets.token_urlsafe(32)
     full_key = f"iatx.{key_id}.{secret}"
     key_hash = bcrypt.hashpw(secret.encode(), bcrypt.gensalt()).decode()

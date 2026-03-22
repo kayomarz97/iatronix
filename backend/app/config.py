@@ -9,7 +9,9 @@ class Settings(BaseSettings):
     iatronix_api_key: str = "CHANGE_ME"
 
     # Database
-    database_url: str = "postgresql+asyncpg://medadmin:CHANGE_ME@iatronix-db:5432/medvectordb"
+    database_url: str = (
+        "postgresql+asyncpg://medadmin:CHANGE_ME@iatronix-db:5432/medvectordb"
+    )
 
     # Redis
     redis_url: str = "redis://iatronix-redis:6379/0"
@@ -40,7 +42,7 @@ class Settings(BaseSettings):
     rate_limit_key_per_minute: int = 10
 
     # LLM
-    llm_timeout_seconds: int = 45
+    llm_timeout_seconds: int = 75  # disease format at 4096 tokens needs ~41s on Sonnet
     llm_max_tokens: int = 4096
     llm_retry_max_attempts: int = 1
     llm_retry_backoff_seconds: float = 2.0
@@ -50,8 +52,8 @@ class Settings(BaseSettings):
     proxy_timeout_seconds: int = 130
 
     # Cache TTL (seconds)
-    cache_ttl_structured: int = 2592000   # 30 days
-    cache_ttl_general: int = 86400        # 24 hours
+    cache_ttl_structured: int = 2592000  # 30 days
+    cache_ttl_general: int = 86400  # 24 hours
 
     # Circuit breaker
     cb_fail_max: int = 5
@@ -64,18 +66,43 @@ class Settings(BaseSettings):
 
     # Response storage
     max_response_jsonb_bytes: int = 1048576  # 1MB
-    truncated_response_bytes: int = 512000   # 500KB
+    truncated_response_bytes: int = 512000  # 500KB
 
     # Frontend display
     truncation_display_limit: int = 20
 
     # Drug linker
     drug_link_min_score: float = 0.90
-    fuzzy_max_distance_short: int = 1   # words 5-8 chars
-    fuzzy_max_distance_long: int = 2    # words >8 chars
+    fuzzy_max_distance_short: int = 1  # words 5-8 chars
+    fuzzy_max_distance_long: int = 2  # words >8 chars
 
     # Classifier
     classifier_confidence_threshold: float = 0.7
+
+    # Model routing (RAG optimization)
+    model_haiku: str = "claude-haiku-4-5-20251001"
+    model_sonnet: str = "claude-sonnet-4-20250514"
+    model_routing_enabled: bool = True
+
+    # External API fetching
+    api_fetch_enabled: bool = True
+    api_fetch_timeout_seconds: float = 5.0
+    pubmed_api_key: Optional[str] = None
+    openfda_api_key: Optional[str] = None
+    nice_api_key: Optional[str] = None
+
+    # Token budgets
+    llm_max_tokens_format: int = 2048  # format mode — drugs (Haiku)
+    llm_max_tokens_format_disease: int = (
+        4096  # format mode — diseases need more (classifications, pathophys)
+    )
+    llm_max_tokens_generate: int = 4096  # generate mode / fallback
+
+    # OpenRouter free model for format steps (optional cost reduction)
+    # Set model_format_free to e.g. "meta-llama/llama-3.1-70b-instruct:free"
+    # and use_free_model_for_format=True to use it for drug/comparative format steps
+    model_format_free: str = ""
+    use_free_model_for_format: bool = False
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 
