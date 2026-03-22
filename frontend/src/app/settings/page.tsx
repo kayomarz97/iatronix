@@ -26,7 +26,7 @@ export default function SettingsPage() {
     if (!apiKey) return;
 
     try {
-      const res = await fetch("/api/auth/llm-key", {
+      const res = await fetch("/api/v1/auth/llm-key", {
         headers: { "X-API-Key": apiKey },
       });
       if (res.ok) {
@@ -42,7 +42,7 @@ export default function SettingsPage() {
     setMessage(null);
 
     try {
-      const res = await fetch("/api/auth/llm-key", {
+      const res = await fetch("/api/v1/auth/llm-key", {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -71,7 +71,7 @@ export default function SettingsPage() {
     setMessage(null);
 
     try {
-      const res = await fetch("/api/auth/llm-key", {
+      const res = await fetch("/api/v1/auth/llm-key", {
         method: "DELETE",
         headers: { "X-API-Key": getApiKey() },
       });
@@ -123,7 +123,7 @@ export default function SettingsPage() {
           <div className="p-3 rounded-md bg-surface-alt border border-border text-sm">
             <span className="font-medium">Current:</span>{" "}
             {status.is_set ? (
-              <span className="text-green-500">
+              <span className="text-success">
                 {status.provider} key is set
               </span>
             ) : (
@@ -162,7 +162,7 @@ export default function SettingsPage() {
               disabled={loading || !llmKey}
               className="px-4 py-2 bg-primary text-white rounded-md text-sm min-h-[44px] disabled:opacity-50"
             >
-              {loading ? "Validating..." : "Save Key"}
+              {loading ? "Saving..." : "Save Key"}
             </button>
             {status?.is_set && (
               <button

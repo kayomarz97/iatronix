@@ -18,7 +18,7 @@ export default function DocumentsPage() {
     if (!apiKey) return;
 
     try {
-      const res = await fetch("/api/documents", {
+      const res = await fetch("/api/v1/documents", {
         headers: { "X-API-Key": apiKey },
       });
       if (res.ok) {
@@ -48,7 +48,8 @@ export default function DocumentsPage() {
     formData.append("file", file);
 
     try {
-      const res = await fetch("/api/documents/upload", {
+      // Call backend directly through nginx (handles 25MB body limit)
+      const res = await fetch("/api/v1/documents/upload", {
         method: "POST",
         headers: { "X-API-Key": getApiKey() },
         body: formData,
@@ -66,7 +67,7 @@ export default function DocumentsPage() {
         fetchDocuments();
       }
     } catch {
-      setMessage("Network error");
+      setMessage("Upload failed — check file size (max 20MB)");
     } finally {
       setUploading(false);
     }
@@ -74,7 +75,7 @@ export default function DocumentsPage() {
 
   const deleteDoc = async (id: number) => {
     try {
-      const res = await fetch(`/api/documents/${id}`, {
+      const res = await fetch(`/api/v1/documents/${id}`, {
         method: "DELETE",
         headers: { "X-API-Key": getApiKey() },
       });
@@ -173,11 +174,11 @@ export default function DocumentsPage() {
                   {doc.file_name && <span>{doc.file_name}</span>}
                   {doc.page_count && <span>{doc.page_count} pages</span>}
                   {doc.verified ? (
-                    <span className="text-green-500">
+                    <span className="text-success">
                       Verified{doc.publisher ? ` — ${doc.publisher}` : ""}
                     </span>
                   ) : (
-                    <span className="text-yellow-500">Unverified</span>
+                    <span className="text-warning">Unverified</span>
                   )}
                 </div>
               </div>
