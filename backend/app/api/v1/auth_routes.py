@@ -1,14 +1,12 @@
 """User authentication and BYOK key management endpoints."""
 
-import hashlib
-import secrets
-
 import bcrypt
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.auth import generate_api_key
 from app.db.session import get_session as get_async_session
 from app.models.user import User, UserRole
 from app.services.byok import encrypt_key, validate_user_key
@@ -43,15 +41,6 @@ class LLMKeyResponse(BaseModel):
     message: str = "Success"
 
 
-def _generate_api_key() -> tuple[str, str, str]:
-    """Generate API key: returns (full_key, key_id, key_hash)."""
-    raw = secrets.token_urlsafe(32)
-    key_id = f"iatx.{raw[:12]}"
-    full_key = f"{key_id}.{raw[12:]}"
-    key_hash = hashlib.sha256(full_key.encode()).hexdigest()
-    return full_key, key_id, key_hash
-
-
 def _get_authenticated_user(request: Request) -> User:
     """Extract authenticated user from request state (set by ApiKeyAuthMiddleware)."""
     user = getattr(request.state, "user", None)
@@ -71,7 +60,7 @@ async def register(
         raise HTTPException(409, "Email already registered")
 
     password_hash = bcrypt.hashpw(req.password.encode(), bcrypt.gensalt()).decode()
-    full_key, key_id, key_hash = _generate_api_key()
+    full_key, key_id, key_hash = generate_api_key()
 
     user = User(
         key_id=key_id,
@@ -102,7 +91,7 @@ async def login(
         raise HTTPException(401, "Invalid email or password")
 
     # Regenerate API key on login
-    full_key, key_id, key_hash = _generate_api_key()
+    full_key, key_id, key_hash = generate_api_key()
     user.key_id = key_id
     user.key_hash = key_hash
     await session.commit()

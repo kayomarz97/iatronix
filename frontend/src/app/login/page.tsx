@@ -1,11 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { API_KEY_STORAGE_KEY } from "@/lib/constants";
 
 export default function LoginPage() {
-  const router = useRouter();
   const [isRegister, setIsRegister] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -35,7 +33,7 @@ export default function LoginPage() {
       // Save API key and redirect
       localStorage.setItem(API_KEY_STORAGE_KEY, data.api_key);
       localStorage.setItem("iatronix_email", data.email);
-      router.push("/");
+      window.location.href = "/";
     } catch {
       setError("Network error. Please try again.");
     } finally {
