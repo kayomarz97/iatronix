@@ -3,11 +3,6 @@ from typing import Optional
 
 
 class Settings(BaseSettings):
-    # API Keys
-    anthropic_api_key: str = "CHANGE_ME"
-    openrouter_api_key: str = "CHANGE_ME"
-    iatronix_api_key: str = "CHANGE_ME"
-
     # Database
     database_url: str = (
         "postgresql+asyncpg://medadmin:CHANGE_ME@iatronix-db:5432/medvectordb"
@@ -114,11 +109,22 @@ class Settings(BaseSettings):
     )
     llm_max_tokens_generate: int = 4096  # generate mode / fallback
 
-    # OpenRouter free model for format steps (optional cost reduction)
-    # Set model_format_free to e.g. "meta-llama/llama-3.1-70b-instruct:free"
-    # and use_free_model_for_format=True to use it for drug/comparative format steps
-    model_format_free: str = ""
-    use_free_model_for_format: bool = False
+    # Cloudflare R2 Storage (for PDF uploads)
+    r2_account_id: str = ""
+    r2_access_key_id: str = ""
+    r2_secret_access_key: str = ""
+    r2_bucket_name: str = "iatronix-documents"
+    r2_public_url: str = ""  # e.g. https://pub-xxx.r2.dev
+
+    # PDF lifecycle (non-approved docs auto-deleted after N hours)
+    pdf_non_approved_ttl_hours: int = 48
+    pdf_cleanup_interval_minutes: int = 60
+
+    # LLM cost estimates shown to users (USD per million tokens, Anthropic pricing)
+    cost_haiku_input_per_m: float = 0.25
+    cost_haiku_output_per_m: float = 1.25
+    cost_sonnet_input_per_m: float = 3.0
+    cost_sonnet_output_per_m: float = 15.0
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 

@@ -8,6 +8,8 @@ import asyncio
 import io
 import logging
 import re
+import uuid
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 from xml.etree import ElementTree
 
@@ -21,6 +23,7 @@ from app.db.session import async_session as async_session_factory
 from app.models.document import Document, DocumentChunk
 from app.services.embedder import Embedder
 from app.services.pdf_verifier import verify_pdf
+from app.services import r2_storage, cost_estimator
 
 logger = logging.getLogger(__name__)
 
@@ -42,13 +45,35 @@ async def ingest_pdf(
     file_bytes: bytes,
     user_id: Optional[int] = None,
 ) -> Document:
-    """Extract text from PDF, chunk, embed, and store."""
+    """Extract text from PDF, chunk, embed, store, and optionally upload to R2."""
     pages = await asyncio.to_thread(_extract_pdf_pages, file_bytes)
     page_count = len(pages)
     title = file_name.rsplit(".", 1)[0] if "." in file_name else file_name
 
     # Auto-verify
     verified, publisher = await asyncio.to_thread(verify_pdf, file_bytes)
+
+    # Upload to Cloudflare R2 if configured
+    r2_key = None
+    r2_url = None
+    r2_key_candidate = f"documents/{user_id or 'anon'}/{uuid.uuid4().hex}/{file_name}"
+    if r2_storage.is_configured():
+        try:
+            r2_url = await r2_storage.upload_pdf(
+                file_bytes,
+                r2_key_candidate,
+                metadata={"user_id": str(user_id or ""), "verified": str(verified)},
+            )
+            r2_key = r2_key_candidate
+        except Exception as e:
+            logger.warning(f"R2 upload failed: {e} — continuing without cloud storage")
+            r2_url = None
+            r2_key = None
+
+    # Set expiry for non-approved documents
+    expires_at = None if verified else (
+        datetime.now(timezone.utc) + timedelta(hours=settings.pdf_non_approved_ttl_hours)
+    )
 
     # Chunk with page tracking
     chunks = _chunk_pages(pages)
@@ -69,6 +94,9 @@ async def ingest_pdf(
             uploaded_by_user_id=user_id,
             verified=verified,
             publisher=publisher,
+            r2_key=r2_key,
+            r2_url=r2_url,
+            expires_at=expires_at,
         )
         session.add(doc)
         await session.flush()  # get doc.id
@@ -85,6 +113,15 @@ async def ingest_pdf(
         await session.commit()
         await session.refresh(doc)
         return doc
+
+
+async def get_pdf_text_preview(file_bytes: bytes) -> tuple[str, int]:
+    """Extract text from PDF for cost estimation — does NOT store anything.
+    Returns (full_text, page_count).
+    """
+    pages = await asyncio.to_thread(_extract_pdf_pages, file_bytes)
+    full_text = " ".join(text for _, text in pages)
+    return full_text, len(pages)
 
 
 def _extract_pdf_pages(file_bytes: bytes) -> list[tuple[int, str]]:

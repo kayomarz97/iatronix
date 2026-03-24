@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1 import auth, health, models, query
-from app.api.v1 import auth_routes, documents
+from app.api.v1 import auth_routes, documents, history as history_module
 from app.config import settings
 from app.middleware.api_key_auth import ApiKeyAuthMiddleware
 from app.middleware.payload_limit import PayloadLimitMiddleware
@@ -47,6 +47,39 @@ async def lifespan(app: FastAPI):
 
     # Log queue
     await init_log_queue()
+
+    # Expired document cleanup task
+    async def _cleanup_expired_documents():
+        """Background task: delete expired non-approved documents every N minutes."""
+        from datetime import datetime, timezone
+        from sqlalchemy import select
+        from app.db.session import async_session as session_factory
+        from app.models.document import Document
+        from app.services import r2_storage as r2
+
+        while True:
+            await asyncio.sleep(settings.pdf_cleanup_interval_minutes * 60)
+            try:
+                async with session_factory() as session:
+                    now = datetime.now(timezone.utc)
+                    result = await session.execute(
+                        select(Document).where(
+                            Document.expires_at.isnot(None),
+                            Document.expires_at <= now,
+                        )
+                    )
+                    expired = result.scalars().all()
+                    for doc in expired:
+                        if doc.r2_key:
+                            await r2.delete_pdf(doc.r2_key)
+                        await session.delete(doc)
+                    if expired:
+                        await session.commit()
+                        logger.info(f"Cleanup: removed {len(expired)} expired documents")
+            except Exception as exc:
+                logger.error(f"Cleanup task error: {exc}")
+
+    asyncio.create_task(_cleanup_expired_documents())
 
     # Pre-load embedding model in background thread (non-blocking)
     if settings.vector_search_enabled:
@@ -96,3 +129,4 @@ app.include_router(auth_routes.router, prefix="/api/v1")
 app.include_router(models.router, prefix="/api/v1")
 app.include_router(query.router, prefix="/api/v1")
 app.include_router(documents.router, prefix="/api/v1")
+app.include_router(history_module.router, prefix="/api/v1")

@@ -2,7 +2,7 @@ import enum
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import DateTime, Enum, Index, String
+from sqlalchemy import Boolean, DateTime, Enum, Index, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -13,6 +13,20 @@ class UserRole(str, enum.Enum):
     admin = "admin"
     user = "user"
     readonly = "readonly"
+
+
+class UserPosition(str, enum.Enum):
+    medical_student = "medical_student"
+    intern = "intern"
+    junior_resident = "junior_resident"
+    senior_resident = "senior_resident"
+    fellow = "fellow"
+    consultant = "consultant"
+    researcher = "researcher"
+    nursing_staff = "nursing_staff"
+    pharmacist = "pharmacist"
+    allied_health = "allied_health"
+    other = "other"
 
 
 class User(TimestampMixin, Base):
@@ -30,17 +44,37 @@ class User(TimestampMixin, Base):
         DateTime(timezone=True), nullable=True
     )
 
-    # BYOK: user's own LLM API key (encrypted at rest)
-    encrypted_llm_key: Mapped[Optional[str]] = mapped_column(
-        String, nullable=True
-    )
-    llm_provider: Mapped[Optional[str]] = mapped_column(
-        String(20), nullable=True
-    )  # 'anthropic' or 'openai'
+    # BYOK: user's own LLM API key (Fernet-encrypted at rest)
+    encrypted_llm_key: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    llm_provider: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
 
     # Login auth
-    password_hash: Mapped[Optional[str]] = mapped_column(
-        String(255), nullable=True
+    password_hash: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
+    # Profile (for personalisation and future monetisation analytics)
+    username: Mapped[Optional[str]] = mapped_column(String(50), unique=True, nullable=True)
+    full_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    country: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    position: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)  # UserPosition enum values
+    institute: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    specialty: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    institution_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+
+    # Subscription tier (free/premium/enterprise) — for future paywall
+    tier: Mapped[str] = mapped_column(String(20), default="free", nullable=False)
+    subscription_expires_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
 
-    __table_args__ = (Index("ix_users_key_id", "key_id", unique=True),)
+    # User preferences: answer style, preferred sources, dark mode, etc. (JSONB for flexibility)
+    preferences: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+
+    # Analytics / monetisation metadata
+    newsletter_consent: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    last_login: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index("ix_users_key_id", "key_id", unique=True),
+        Index("ix_users_email", "email"),
+        Index("ix_users_username", "username"),
+    )

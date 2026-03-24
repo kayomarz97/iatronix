@@ -30,7 +30,7 @@ async def query_endpoint(request: Request, body: QueryRequest):
 
     try:
         response = await asyncio.wait_for(
-            process_query(body, redis_client, user_key_id),
+            process_query(body, redis_client, user_key_id, user=user),
             timeout=settings.pipeline_timeout_seconds,
         )
         return response

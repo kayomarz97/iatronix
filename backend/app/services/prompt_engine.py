@@ -583,6 +583,52 @@ def _format_vector_context(results: "list[SearchResult]") -> str:
 # Intent detection for focused answers
 # ──────────────────────────────────────────────
 
+_MANAGEMENT_KEYWORDS = {"manage", "management", "treat", "treatment", "therapy", "therapies", "regimen", "protocol", "guideline", "guidelines", "first-line", "second-line"}
+_DOSING_KEYWORDS = {"dose", "dosing", "dosage", "mg", "mcg", "ug", "titrat", "prescri", "prescrib"}
+_MECHANISM_KEYWORDS = {"mechanism", "moa", "how does", "pharmacology", "pharmacokinetic", "pharmacodynamic", "action", "work"}
+_DIAGNOSIS_KEYWORDS = {"diagnos", "diagnosis", "workup", "investigation", "test", "criteria", "differential", "ddx"}
+
+_FOCUS_INSTRUCTIONS = {
+    "management": (
+        "PRIORITY: Lead your response with treatment and management. "
+        "Put treatment lines, regimens, drug choices, and protocols FIRST — "
+        "before etiology, pathophysiology, or background. "
+        "The user primarily wants to know how to treat/manage."
+    ),
+    "dosing": (
+        "PRIORITY: Lead with dosing information. "
+        "Put specific doses, dosing regimens, titration schedules, and formulations FIRST — "
+        "before mechanism or background."
+    ),
+    "mechanism": (
+        "PRIORITY: Lead with mechanism of action and pharmacology. "
+        "Put MOA, pharmacokinetics, and pharmacodynamics FIRST."
+    ),
+    "diagnosis": (
+        "PRIORITY: Lead with diagnostic criteria and workup. "
+        "Put diagnostic criteria, investigations, and differential diagnosis FIRST."
+    ),
+    "overview": "",
+}
+
+
+def detect_query_focus(query: str, query_type: str = "") -> str:
+    """Detect what aspect the user is primarily asking about.
+
+    Returns one of: 'management', 'dosing', 'mechanism', 'diagnosis', 'overview'.
+    """
+    q = query.lower()
+    if any(kw in q for kw in _MANAGEMENT_KEYWORDS):
+        return "management"
+    if any(kw in q for kw in _DOSING_KEYWORDS):
+        return "dosing"
+    if any(kw in q for kw in _MECHANISM_KEYWORDS):
+        return "mechanism"
+    if any(kw in q for kw in _DIAGNOSIS_KEYWORDS):
+        return "diagnosis"
+    return "overview"
+
+
 _INTENT_PATTERNS = {
     "management": re.compile(
         r"\b(?:management|treatment|therapy|therapeutic|prescri|treat)\b", re.I
@@ -600,7 +646,15 @@ _INTENT_PATTERNS = {
 
 
 def _detect_focus_instruction(query: str) -> str:
-    """Detect query intent and return a focus instruction for the LLM."""
+    """Detect query intent and return a focus instruction for the LLM.
+
+    Uses both the legacy intent patterns and the new keyword-based focus detection,
+    preferring the keyword-based result when a clear focus is found.
+    """
+    focus = detect_query_focus(query)
+    if focus != "overview":
+        return _FOCUS_INSTRUCTIONS.get(focus, "")
+    # Fallback: legacy pattern-based detection for prognosis / pathophysiology
     for intent, pattern in _INTENT_PATTERNS.items():
         if pattern.search(query):
             return (

@@ -1,14 +1,18 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
+import { Activity, Mail } from "lucide-react";
+import { PasswordInput } from "@/components/ui/PasswordInput";
 import { API_KEY_STORAGE_KEY } from "@/lib/constants";
 
 export default function LoginPage() {
-  const [isRegister, setIsRegister] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [shaking, setShaking] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -16,8 +20,7 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const endpoint = isRegister ? "/api/auth/register" : "/api/auth/login";
-      const res = await fetch(endpoint, {
+      const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
@@ -26,84 +29,264 @@ export default function LoginPage() {
       const data = await res.json();
 
       if (!res.ok) {
-        setError(data.detail || "Request failed");
+        setError(data.detail || "Invalid email or password");
+        setShaking(true);
+        setTimeout(() => setShaking(false), 500);
         return;
       }
 
-      // Save API key and redirect
       localStorage.setItem(API_KEY_STORAGE_KEY, data.api_key);
       localStorage.setItem("iatronix_email", data.email);
       window.location.href = "/";
     } catch {
       setError("Network error. Please try again.");
+      setShaking(true);
+      setTimeout(() => setShaking(false), 500);
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="max-w-md mx-auto pt-16">
-      <h1 className="text-3xl font-bold text-center mb-8">
-        {isRegister ? "Create Account" : "Sign In"}
-      </h1>
-
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div>
-          <label className="block text-sm font-medium mb-1">Email</label>
-          <input
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-            className="w-full px-3 py-2 rounded-md border border-border bg-surface text-sm min-h-[44px]"
-            placeholder="you@example.com"
-          />
+    <div
+      style={{
+        minHeight: "calc(100vh - 110px)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "2rem 1rem",
+      }}
+    >
+      <div
+        className="animate-in"
+        style={{
+          width: "100%",
+          maxWidth: 420,
+          background: "var(--bg-surface)",
+          border: "1px solid var(--border)",
+          borderRadius: "var(--radius-lg)",
+          boxShadow: "var(--shadow-lg)",
+          padding: "2.5rem 2rem",
+        }}
+      >
+        {/* Header */}
+        <div style={{ textAlign: "center", marginBottom: "2rem" }}>
+          <div
+            style={{
+              width: 52,
+              height: 52,
+              borderRadius: "50%",
+              background: "var(--accent-glow)",
+              border: "1px solid rgba(59,130,246,0.3)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              margin: "0 auto 1rem",
+            }}
+          >
+            <Activity size={22} color="var(--accent)" />
+          </div>
+          <h1
+            style={{
+              margin: "0 0 0.25rem",
+              fontSize: "1.5rem",
+              fontWeight: 700,
+              color: "var(--text-primary)",
+            }}
+          >
+            Sign in to Iatronix
+          </h1>
+          <p style={{ margin: 0, fontSize: "0.875rem", color: "var(--text-muted)" }}>
+            Evidence-based medical intelligence
+          </p>
         </div>
 
-        <div>
-          <label className="block text-sm font-medium mb-1">Password</label>
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-            minLength={6}
-            className="w-full px-3 py-2 rounded-md border border-border bg-surface text-sm min-h-[44px]"
-            placeholder="Min 6 characters"
-          />
-        </div>
-
+        {/* Error message */}
         {error && (
-          <div className="p-3 rounded-lg bg-danger-bg border border-danger/30 text-sm text-danger">
+          <div
+            className={shaking ? "shake" : ""}
+            style={{
+              marginBottom: "1.25rem",
+              padding: "0.75rem 1rem",
+              background: "rgba(239,68,68,0.1)",
+              border: "1px solid rgba(239,68,68,0.3)",
+              borderRadius: "var(--radius-md)",
+              fontSize: "0.875rem",
+              color: "var(--danger)",
+            }}
+          >
             {error}
           </div>
         )}
 
-        <button
-          type="submit"
-          disabled={loading}
-          className="w-full py-2 bg-primary text-white rounded-md text-sm font-medium min-h-[44px] disabled:opacity-50"
-        >
-          {loading
-            ? "Please wait..."
-            : isRegister
-              ? "Create Account"
-              : "Sign In"}
-        </button>
-      </form>
+        {/* Form */}
+        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+          {/* Email */}
+          <div>
+            <label
+              style={{
+                display: "block",
+                fontSize: "0.875rem",
+                fontWeight: 500,
+                color: "var(--text-secondary)",
+                marginBottom: "0.375rem",
+              }}
+            >
+              Email
+            </label>
+            <div style={{ position: "relative" }}>
+              <Mail
+                size={16}
+                style={{
+                  position: "absolute",
+                  left: 14,
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  color: "var(--text-muted)",
+                  pointerEvents: "none",
+                }}
+              />
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+                placeholder="you@example.com"
+                style={{
+                  width: "100%",
+                  padding: "10px 14px 10px 40px",
+                  background: "var(--bg-elevated)",
+                  border: "1px solid var(--border)",
+                  borderRadius: "var(--radius-md)",
+                  color: "var(--text-primary)",
+                  fontSize: "0.95rem",
+                  outline: "none",
+                  boxSizing: "border-box",
+                  transition: "border-color var(--transition), box-shadow var(--transition)",
+                }}
+                onFocus={(e) => {
+                  e.currentTarget.style.borderColor = "var(--border-focus)";
+                  e.currentTarget.style.boxShadow = "0 0 0 3px var(--accent-glow)";
+                }}
+                onBlur={(e) => {
+                  e.currentTarget.style.borderColor = "var(--border)";
+                  e.currentTarget.style.boxShadow = "none";
+                }}
+              />
+            </div>
+          </div>
 
-      <p className="text-center text-sm text-text-muted mt-6">
-        {isRegister ? "Already have an account?" : "Don't have an account?"}{" "}
-        <button
-          onClick={() => {
-            setIsRegister(!isRegister);
-            setError(null);
+          {/* Password */}
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.375rem" }}>
+              <label
+                style={{
+                  fontSize: "0.875rem",
+                  fontWeight: 500,
+                  color: "var(--text-secondary)",
+                }}
+              >
+                Password
+              </label>
+              <button
+                type="button"
+                style={{
+                  background: "none",
+                  border: "none",
+                  fontSize: "0.8rem",
+                  color: "var(--accent)",
+                  cursor: "pointer",
+                  padding: 0,
+                }}
+              >
+                Forgot password?
+              </button>
+            </div>
+            <PasswordInput
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              minLength={6}
+              placeholder="Min 6 characters"
+              style={{ background: "var(--bg-elevated)" }}
+            />
+          </div>
+
+          {/* Remember me */}
+          <label
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "0.5rem",
+              cursor: "pointer",
+              fontSize: "0.875rem",
+              color: "var(--text-secondary)",
+              userSelect: "none",
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={rememberMe}
+              onChange={(e) => setRememberMe(e.target.checked)}
+              style={{ accentColor: "var(--accent)", width: 15, height: 15 }}
+            />
+            Remember me
+          </label>
+
+          {/* Submit */}
+          <button
+            type="submit"
+            disabled={loading}
+            style={{
+              width: "100%",
+              padding: "11px",
+              background: loading ? "var(--bg-elevated)" : "var(--accent)",
+              border: "none",
+              borderRadius: "var(--radius-md)",
+              color: loading ? "var(--text-muted)" : "#fff",
+              fontSize: "0.95rem",
+              fontWeight: 600,
+              cursor: loading ? "not-allowed" : "pointer",
+              transition: "all var(--transition)",
+              marginTop: "0.25rem",
+            }}
+          >
+            {loading ? "Signing in..." : "Sign In"}
+          </button>
+        </form>
+
+        {/* Divider */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "0.75rem",
+            margin: "1.5rem 0",
           }}
-          className="text-primary hover:underline"
         >
-          {isRegister ? "Sign in" : "Create one"}
-        </button>
-      </p>
+          <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
+          <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>or</span>
+          <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
+        </div>
+
+        {/* Create account */}
+        <p
+          style={{
+            textAlign: "center",
+            fontSize: "0.875rem",
+            color: "var(--text-secondary)",
+            margin: 0,
+          }}
+        >
+          Don&apos;t have an account?{" "}
+          <Link
+            href="/register"
+            style={{ color: "var(--accent)", fontWeight: 500, textDecoration: "none" }}
+          >
+            Create an account
+          </Link>
+        </p>
+      </div>
     </div>
   );
 }

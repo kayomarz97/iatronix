@@ -21,18 +21,18 @@ anthropic_breaker = pybreaker.CircuitBreaker(
     listeners=[LoggingListener()],
 )
 
-openrouter_breaker = pybreaker.CircuitBreaker(
+openai_breaker = pybreaker.CircuitBreaker(
     fail_max=settings.cb_fail_max,
     reset_timeout=settings.cb_reset_timeout,
-    name="openrouter",
+    name="openai",
     listeners=[LoggingListener()],
 )
 
 
 def get_breaker(provider: str) -> pybreaker.CircuitBreaker:
-    if provider == "anthropic":
-        return anthropic_breaker
-    return openrouter_breaker
+    if provider == "openai":
+        return openai_breaker
+    return anthropic_breaker
 
 
 def is_provider_available(provider: str) -> bool:
