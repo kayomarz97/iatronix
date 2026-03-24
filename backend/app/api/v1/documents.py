@@ -95,7 +95,7 @@ async def upload_pdf(
         page_count=doc.page_count,
         verified=doc.verified,
         publisher=doc.publisher,
-        chunk_count=len(doc.chunks) if doc.chunks else 0,
+        chunk_count=getattr(doc, "_chunk_count", 0),
         created_at=doc.created_at.isoformat(),
         expires_at=doc.expires_at.isoformat() if doc.expires_at else None,
         is_approved=doc.verified,

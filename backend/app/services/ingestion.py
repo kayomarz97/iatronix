@@ -112,6 +112,7 @@ async def ingest_pdf(
 
         await session.commit()
         await session.refresh(doc)
+        doc._chunk_count = len(chunks)
         return doc
 
 

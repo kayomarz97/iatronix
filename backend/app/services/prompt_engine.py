@@ -229,6 +229,40 @@ For PMIDs, include the numeric ID only (e.g. "38293847"). These will be auto-lin
 
 Query: {query}"""
 
+HIGHLIGHTS_PROMPT = """You are a senior clinician writing a rapid clinical reference card.
+{approved_sources}
+
+The user asked: "{query}"
+
+Give a SMART, FOCUSED answer — NOT a textbook. Think: what would a consultant say in 90 seconds?
+Rules:
+- DO NOT follow a fixed disease template (no mandatory etiology/pathophysiology/complications headings)
+- LEAD with what the user actually needs (e.g., "Surviving Sepsis" → Sepsis-3 criteria + 1-hour bundle + antibiotic choice + vasopressor threshold)
+- Use clinical pearl style: concise, actionable, memorable
+- Include specific numbers/thresholds where they matter (e.g., MAP ≥65, lactate >2, fluid 30 mL/kg)
+- 5-8 key points maximum — quality over exhaustive coverage
+- Flag any mnemonics or bedside tools if clinically useful
+- Cite society guidelines where directly applicable (e.g., SSC 2021, AHA 2022)
+
+Respond with a JSON object:
+{{
+  "summary": "1-2 sentence overview of what this is clinically",
+  "key_points": [
+    "actionable clinical pearl 1 with specific numbers/doses",
+    "actionable clinical pearl 2",
+    "actionable clinical pearl 3",
+    "...(max 8 total)"
+  ],
+  "related_drugs": ["drug_name_1"],
+  "related_conditions": ["condition_1"],
+  "confidence": "high|moderate|low",
+  "references": [{{"source": "string", "title": "string or null", "year": int_or_null, "url": null}}]
+}}
+
+{vector_context}
+
+Query: {query}"""
+
 PROMPTS = {
     "drug": DRUG_PROMPT,
     "disease": DISEASE_PROMPT,
@@ -500,13 +534,23 @@ def build_prompt(
     query_type: str,
     fetched_data: "FetchedData | None" = None,
     vector_results: "list[SearchResult] | None" = None,
+    intent: str = "full",
 ) -> str:
     """Build a prompt for the LLM.
 
+    If intent='highlights' → compact clinical pearls response (GeneralResponse schema).
     If fetched_data is provided and fetch succeeded → format-mode prompt (shorter, cheaper).
     Otherwise → generate-mode prompt (existing behaviour, full knowledge generation).
     Vector results are injected into both modes when available.
     """
+    if intent == "highlights":
+        vector_context = _format_vector_context(vector_results) if vector_results else ""
+        return HIGHLIGHTS_PROMPT.format(
+            query=query,
+            approved_sources=APPROVED_SOURCES,
+            vector_context=vector_context,
+        )
+
     if fetched_data is not None and not fetched_data.fallback_to_llm:
         result = _build_format_prompt(query, query_type, fetched_data, vector_results)
         if result is not None:

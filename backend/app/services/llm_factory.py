@@ -23,12 +23,20 @@ def create_llm(
     user_key: Optional[str] = None,
     user_provider: Optional[str] = None,
 ):
-    """Create LLM using the user's own API key (BYOK only).
+    """Create LLM client.
 
-    Raises HTTP 402 if user has no key configured.
-    This ensures zero server-side LLM cost.
+    Uses user's own key (BYOK) if provided, otherwise falls back to server key.
+    Raises HTTP 402 only if neither user key nor server key is available.
     """
-    if not user_key or not user_provider:
+    effective_max_tokens = max_tokens if max_tokens is not None else settings.llm_max_tokens
+
+    # Resolve provider and key: user key takes priority, then server key
+    provider = user_provider or ("anthropic" if "/" not in model_id else "openai")
+    api_key = user_key or (
+        settings.anthropic_api_key if provider == "anthropic" else settings.openai_api_key
+    )
+
+    if not api_key:
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
             detail={
@@ -38,20 +46,18 @@ def create_llm(
             },
         )
 
-    effective_max_tokens = max_tokens if max_tokens is not None else settings.llm_max_tokens
-
-    if user_provider == "anthropic":
+    if provider == "anthropic":
         return ChatAnthropic(
             model=model_id if "/" not in model_id else settings.model_sonnet,
-            api_key=user_key,
+            api_key=api_key,
             max_tokens=effective_max_tokens,
             timeout=settings.llm_timeout_seconds,
             max_retries=0,
         )
-    elif user_provider == "openai":
+    elif provider == "openai":
         return ChatOpenAI(
             model=model_id if "/" not in model_id else "gpt-4o",
-            api_key=user_key,
+            api_key=api_key,
             max_tokens=effective_max_tokens,
             timeout=settings.llm_timeout_seconds,
         )
@@ -60,7 +66,7 @@ def create_llm(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={
                 "error": "unsupported_provider",
-                "message": f"Provider '{user_provider}' is not supported. Use 'anthropic' or 'openai'.",
+                "message": f"Provider '{provider}' is not supported. Use 'anthropic' or 'openai'.",
             },
         )
 

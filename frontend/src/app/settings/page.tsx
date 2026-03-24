@@ -1,7 +1,9 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { Monitor, Moon, Sun } from "lucide-react";
 import { API_KEY_STORAGE_KEY } from "@/lib/constants";
+import { useTheme } from "@/hooks/useTheme";
 
 export default function SettingsPage() {
   const [llmKey, setLlmKey] = useState("");
@@ -13,13 +15,58 @@ export default function SettingsPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [email, setEmail] = useState("");
+  const [profile, setProfile] = useState<{
+    full_name?: string;
+    username?: string;
+    position?: string;
+    specialty?: string;
+    institute?: string;
+    country?: string;
+  }>({});
+  const { theme, toggle, resetToSystem } = useTheme();
+  const [themeMode, setThemeMode] = useState<"system" | "dark" | "light">(
+    typeof window !== "undefined" && localStorage.getItem("theme")
+      ? (localStorage.getItem("theme") as "dark" | "light")
+      : "system"
+  );
 
   useEffect(() => {
     setEmail(localStorage.getItem("iatronix_email") || "");
+    try {
+      const stored = localStorage.getItem("iatronix_profile");
+      if (stored) setProfile(JSON.parse(stored));
+    } catch {}
     fetchStatus();
+    fetchProfile();
   }, []);
 
   const getApiKey = () => localStorage.getItem(API_KEY_STORAGE_KEY) || "";
+
+  const fetchProfile = async () => {
+    const apiKey = getApiKey();
+    if (!apiKey) return;
+    try {
+      const res = await fetch("/api/v1/auth/me", {
+        headers: { "X-API-Key": apiKey },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setProfile(data);
+        localStorage.setItem("iatronix_profile", JSON.stringify(data));
+      }
+    } catch {}
+  };
+
+  const applyThemeMode = (mode: "system" | "dark" | "light") => {
+    setThemeMode(mode);
+    if (mode === "system") {
+      resetToSystem();
+    } else {
+      if (mode !== theme) toggle();
+      localStorage.setItem("theme", mode);
+      document.documentElement.dataset.theme = mode;
+    }
+  };
 
   const fetchStatus = async () => {
     const apiKey = getApiKey();
@@ -100,15 +147,80 @@ export default function SettingsPage() {
       {/* Account Info */}
       <section className="space-y-3">
         <h2 className="text-lg font-semibold">Account</h2>
-        {email && (
-          <p className="text-sm text-text-secondary">Signed in as {email}</p>
-        )}
+        <div
+          style={{
+            padding: "1rem",
+            background: "var(--bg-elevated)",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--radius-md)",
+          }}
+        >
+          {(profile.full_name || profile.username) && (
+            <p className="font-medium" style={{ color: "var(--text-primary)", marginBottom: "0.25rem" }}>
+              {profile.full_name || profile.username}
+            </p>
+          )}
+          {email && (
+            <p className="text-sm" style={{ color: "var(--text-secondary)" }}>{email}</p>
+          )}
+          {(profile.position || profile.specialty) && (
+            <p className="text-sm mt-1" style={{ color: "var(--text-muted)" }}>
+              {[profile.position, profile.specialty].filter(Boolean).join(" · ")}
+            </p>
+          )}
+          {(profile.institute || profile.country) && (
+            <p className="text-sm" style={{ color: "var(--text-muted)" }}>
+              {[profile.institute, profile.country].filter(Boolean).join(", ")}
+            </p>
+          )}
+        </div>
         <button
           onClick={logout}
           className="px-4 py-2 text-sm rounded-md border border-danger text-danger hover:bg-danger-bg min-h-[44px]"
         >
           Sign Out
         </button>
+      </section>
+
+      {/* Appearance */}
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold">Appearance</h2>
+        <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
+          Choose how Iatronix looks. System setting follows your OS preference.
+        </p>
+        <div style={{ display: "flex", gap: "0.5rem" }}>
+          {(["system", "light", "dark"] as const).map((mode) => {
+            const icons = { system: Monitor, light: Sun, dark: Moon };
+            const Icon = icons[mode];
+            const labels = { system: "System", light: "Light", dark: "Dark" };
+            const active = themeMode === mode;
+            return (
+              <button
+                key={mode}
+                onClick={() => applyThemeMode(mode)}
+                style={{
+                  flex: 1,
+                  padding: "10px 8px",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  gap: "0.4rem",
+                  background: active ? "var(--accent-glow)" : "var(--bg-elevated)",
+                  border: `1px solid ${active ? "var(--accent)" : "var(--border)"}`,
+                  borderRadius: "var(--radius-md)",
+                  cursor: "pointer",
+                  fontSize: "0.8rem",
+                  fontWeight: active ? 600 : 400,
+                  color: active ? "var(--accent)" : "var(--text-secondary)",
+                  transition: "all var(--transition)",
+                }}
+              >
+                <Icon size={16} />
+                {labels[mode]}
+              </button>
+            );
+          })}
+        </div>
       </section>
 
       {/* LLM Key */}
