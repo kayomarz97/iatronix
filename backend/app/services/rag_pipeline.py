@@ -29,7 +29,7 @@ from app.services.drug_linker import process_text_nodes
 from app.services.json_repair import parse_llm_json
 from app.services.llm_factory import create_llm, get_alternative_model, get_provider
 from app.services.prompt_engine import build_prompt
-from app.services.query_classifier import classify_query
+from app.services.query_classifier import classify_query, detect_intent
 from app.services.safety_checker import check_safety
 from app.services.source_router import route_query
 from app.services.vector_search import search as vector_search
@@ -342,6 +342,10 @@ async def process_query(
 
     # Classify
     query_type, confidence = classify_query(request.query, request.query_type)
+    query_intent = detect_intent(request.query)
+    # Highlights queries use general schema (compact, smart, not rigid)
+    if query_intent == "highlights":
+        query_type = "general"
 
     # Cache check
     cached_data = await cache_get(
@@ -443,7 +447,7 @@ async def process_query(
     fetch_latency_ms = fetched_data.total_fetch_time_ms if fetched_data else 0
 
     # Build prompt (format-mode if API data available, generate-mode otherwise)
-    prompt = build_prompt(request.query, query_type, fetched_data, vector_results)
+    prompt = build_prompt(request.query, query_type, fetched_data, vector_results, intent=query_intent)
 
     # LLM call with retry
     try:

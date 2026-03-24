@@ -13,9 +13,11 @@ COPY pyproject.toml .
 RUN pip install --no-cache-dir \
     "fastapi>=0.115.0" \
     "uvicorn[standard]>=0.30.0" \
+    "gunicorn>=22.0.0" \
     "langchain>=0.3.0" \
     "langchain-anthropic>=0.3.0" \
     "langchain-openai>=0.3.0" \
+    "langchain-text-splitters>=0.3.0" \
     "sqlalchemy[asyncio]>=2.0.0" \
     "asyncpg>=0.30.0" \
     "pgvector>=0.3.0" \
@@ -37,7 +39,9 @@ RUN pip install --no-cache-dir \
     "python-multipart>=0.0.9" \
     "lxml>=5.0.0" \
     "cryptography>=43.0.0" \
-    "email-validator>=2.0.0"
+    "email-validator>=2.0.0" \
+    "boto3>=1.34.0" \
+    "aiofiles>=23.0.0"
 
 COPY app/ app/
 COPY alembic.ini .

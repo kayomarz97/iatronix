@@ -46,6 +46,20 @@ EVIDENCE_PATTERNS = [
     r"\b(?:benefit|efficacy|safety)\s+(?:of|in)\b",
 ]
 
+# Queries asking for highlights/summary/quick-reference rather than a full reference entry
+_HIGHLIGHTS_RE = re.compile(
+    r"\b(?:surviving|approach to|initial management of|quick|highlights?|"
+    r"key points?|overview of|summary of|pearls?|mnemonic|criteria for|"
+    r"emergency management|acute management|first approach)\b",
+    re.IGNORECASE,
+)
+
+def detect_intent(query: str) -> str:
+    """Detect query intent. Returns 'highlights' for quick-reference queries, 'full' otherwise."""
+    if _HIGHLIGHTS_RE.search(query):
+        return "highlights"
+    return "full"
+
 
 def _score_patterns(query: str, patterns: list[str]) -> float:
     """Score query against pattern list. Returns 0.0-1.0.

@@ -3,13 +3,15 @@
 import { Suspense } from "react";
 import { SearchBar } from "@/components/ui/SearchBar";
 import { ModelSelector } from "@/components/ui/ModelSelector";
-import { QuerySkeleton } from "@/components/ui/Skeleton";
+import { ThinkingAnimation } from "@/components/ui/ThinkingAnimation";
 import { DisclaimerBanner } from "@/components/results/DisclaimerBanner";
 import { TextNodeRenderer } from "@/components/results/TextNodeRenderer";
 import { DrugInfoResult } from "@/components/results/DrugInfoResult";
 import { DiseaseInfoResult } from "@/components/results/DiseaseInfoResult";
 import { ComparativeResult } from "@/components/results/ComparativeResult";
 import { GeneralResult } from "@/components/results/GeneralResult";
+import { ProcedureResult } from "@/components/results/ProcedureResult";
+import { EvidenceResult } from "@/components/results/EvidenceResult";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { useQueryContext } from "@/components/providers/QueryProvider";
@@ -19,6 +21,8 @@ import type {
   DiseaseResponse,
   ComparativeResponse,
   GeneralResponse,
+  ProcedureResponse,
+  EvidenceResponse,
   DegradedResponse,
 } from "@/lib/types";
 
@@ -40,7 +44,7 @@ function QueryContent() {
         </Card>
       )}
 
-      {isLoading && <QuerySkeleton />}
+      {isLoading && <ThinkingAnimation />}
 
       {result && !isLoading && (
         <div className="space-y-6">
@@ -96,6 +100,16 @@ function QueryContent() {
               <GeneralResult data={result.response as GeneralResponse} />
             )}
 
+          {result.query_type === "procedure" &&
+            "procedure_name" in result.response && (
+              <ProcedureResult data={result.response as ProcedureResponse} />
+            )}
+
+          {result.query_type === "evidence" &&
+            "query_topic" in result.response && (
+              <EvidenceResult data={result.response as EvidenceResponse} />
+            )}
+
           {/* Text nodes */}
           {result.text_nodes.length > 0 && (
             <Card>
@@ -111,7 +125,7 @@ function QueryContent() {
 
 export default function QueryPage() {
   return (
-    <Suspense fallback={<QuerySkeleton />}>
+    <Suspense fallback={<ThinkingAnimation />}>
       <QueryContent />
     </Suspense>
   );

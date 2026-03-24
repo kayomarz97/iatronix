@@ -95,6 +95,10 @@ class Settings(BaseSettings):
     model_sonnet: str = "claude-sonnet-4-20250514"
     model_routing_enabled: bool = True
 
+    # LLM server-side fallback keys (used when user has no BYOK key set)
+    anthropic_api_key: Optional[str] = None
+    openai_api_key: Optional[str] = None
+
     # External API fetching
     api_fetch_enabled: bool = True
     api_fetch_timeout_seconds: float = 5.0
