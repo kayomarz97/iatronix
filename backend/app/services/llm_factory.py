@@ -1,6 +1,7 @@
 import logging
 from typing import Optional
 
+from fastapi import HTTPException, status
 from langchain_anthropic import ChatAnthropic
 from langchain_openai import ChatOpenAI
 
@@ -12,7 +13,7 @@ logger = logging.getLogger(__name__)
 def get_provider(model_id: str) -> str:
     """Determine provider from model ID."""
     if "/" in model_id:
-        return "openrouter"
+        return "openai"
     return "anthropic"
 
 
@@ -22,62 +23,48 @@ def create_llm(
     user_key: Optional[str] = None,
     user_provider: Optional[str] = None,
 ):
-    """Create an LLM instance for the given model ID.
+    """Create LLM using the user's own API key (BYOK only).
 
-    If user_key + user_provider are provided (BYOK), use the user's key.
-    Falls back to server keys if no user key is given.
+    Raises HTTP 402 if user has no key configured.
+    This ensures zero server-side LLM cost.
     """
-    provider = get_provider(model_id)
-    effective_max_tokens = (
-        max_tokens if max_tokens is not None else settings.llm_max_tokens
-    )
+    if not user_key or not user_provider:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail={
+                "error": "no_api_key",
+                "message": "No API key configured. Please add your Anthropic or OpenAI API key in Settings.",
+                "settings_url": "/settings",
+            },
+        )
 
-    # BYOK: if user has their own key, use it
-    if user_key and user_provider:
-        if user_provider == "anthropic":
-            return ChatAnthropic(
-                model=model_id
-                if provider == "anthropic"
-                else "claude-sonnet-4-20250514",
-                api_key=user_key,
-                max_tokens=effective_max_tokens,
-                timeout=settings.llm_timeout_seconds,
-                max_retries=0,
-            )
-        elif user_provider == "openai":
-            return ChatOpenAI(
-                model=model_id if provider == "openrouter" else "gpt-4o",
-                api_key=user_key,
-                max_tokens=effective_max_tokens,
-                timeout=settings.llm_timeout_seconds,
-            )
+    effective_max_tokens = max_tokens if max_tokens is not None else settings.llm_max_tokens
 
-    if provider == "anthropic":
+    if user_provider == "anthropic":
         return ChatAnthropic(
-            model=model_id,
-            api_key=settings.anthropic_api_key,
+            model=model_id if "/" not in model_id else settings.model_sonnet,
+            api_key=user_key,
             max_tokens=effective_max_tokens,
             timeout=settings.llm_timeout_seconds,
-            max_retries=0,  # pipeline handles retries; SDK retries cause 90s hangs on rate limits
+            max_retries=0,
+        )
+    elif user_provider == "openai":
+        return ChatOpenAI(
+            model=model_id if "/" not in model_id else "gpt-4o",
+            api_key=user_key,
+            max_tokens=effective_max_tokens,
+            timeout=settings.llm_timeout_seconds,
         )
     else:
-        return ChatOpenAI(
-            model=model_id,
-            api_key=settings.openrouter_api_key,
-            base_url="https://openrouter.ai/api/v1",
-            max_tokens=effective_max_tokens,
-            timeout=settings.llm_timeout_seconds,
-            default_headers={
-                "HTTP-Referer": "https://iatronix.local",
-                "X-Title": "Iatronix Medical RAG",
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "unsupported_provider",
+                "message": f"Provider '{user_provider}' is not supported. Use 'anthropic' or 'openai'.",
             },
-            model_kwargs={"response_format": {"type": "json_object"}},
         )
 
 
 def get_alternative_model(model_id: str) -> str | None:
-    """Get a fallback model from the other provider."""
-    provider = get_provider(model_id)
-    if provider == "anthropic":
-        return "anthropic/claude-sonnet-4-20250514"
-    return "claude-sonnet-4-20250514"
+    """No alternative provider in BYOK-only mode."""
+    return None

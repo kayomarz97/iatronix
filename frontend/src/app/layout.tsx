@@ -15,18 +15,19 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" data-theme="dark" suppressHydrationWarning>
       <head>
+        {/* Inject theme before first paint to avoid flash */}
         <script
           dangerouslySetInnerHTML={{
-            __html: `try{if(localStorage.getItem("iatronix_dark")==="true")document.documentElement.classList.add("dark")}catch(e){}`,
+            __html: `(function(){try{var t=localStorage.getItem("theme");if(t==="light"||t==="dark"){document.documentElement.dataset.theme=t;}else{document.documentElement.dataset.theme="dark";}}catch(e){}})();`,
           }}
         />
       </head>
-      <body className="min-h-screen flex flex-col bg-surface text-text">
+      <body style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
         <QueryProvider>
           <Header />
-          <main className="flex-1 max-w-5xl mx-auto w-full px-4 py-6">
+          <main style={{ flex: 1 }}>
             {children}
           </main>
           <Footer />

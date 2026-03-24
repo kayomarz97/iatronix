@@ -26,6 +26,9 @@ class DocumentResponse(BaseModel):
     publisher: Optional[str] = None
     chunk_count: int = 0
     created_at: str
+    expires_at: Optional[str] = None
+    is_approved: bool = False
+    notice: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
@@ -79,6 +82,11 @@ async def upload_pdf(
         logger.error("PDF ingestion failed: %s", e)
         raise HTTPException(500, "Failed to process PDF")
 
+    notice = (
+        "This is an approved document and will be shared to improve the shared medical database."
+        if doc.verified
+        else f"This document will be deleted in {settings.pdf_non_approved_ttl_hours} hours."
+    )
     return DocumentResponse(
         id=doc.id,
         title=doc.title,
@@ -89,7 +97,41 @@ async def upload_pdf(
         publisher=doc.publisher,
         chunk_count=len(doc.chunks) if doc.chunks else 0,
         created_at=doc.created_at.isoformat(),
+        expires_at=doc.expires_at.isoformat() if doc.expires_at else None,
+        is_approved=doc.verified,
+        notice=notice,
     )
+
+
+@router.post("/estimate-cost")
+async def estimate_upload_cost(file: UploadFile = File(...)):
+    """Returns cost/scope estimate for a PDF without storing it.
+    Call this BEFORE the actual upload to show the user what will happen.
+    """
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF files are supported")
+
+    file_bytes = await file.read()
+    if len(file_bytes) > settings.max_pdf_size_bytes:
+        max_mb = settings.max_pdf_size_bytes // (1024 * 1024)
+        raise HTTPException(
+            status_code=413, detail=f"File too large. Max size: {max_mb}MB"
+        )
+
+    from app.services.ingestion import get_pdf_text_preview
+    from app.services.cost_estimator import estimate_pdf_ingestion
+
+    text, page_count = await get_pdf_text_preview(file_bytes)
+    estimate = estimate_pdf_ingestion(text)
+    estimate["page_count"] = page_count
+    estimate["file_size_bytes"] = len(file_bytes)
+    estimate["expires_in_hours"] = settings.pdf_non_approved_ttl_hours
+    estimate["expires_note"] = (
+        f"Non-approved documents are automatically deleted after "
+        f"{settings.pdf_non_approved_ttl_hours} hours. "
+        "Verified medical publications are kept permanently and shared to improve the database."
+    )
+    return estimate
 
 
 @router.get("", response_model=DocumentListResponse)

@@ -32,6 +32,13 @@ class Document(TimestampMixin, Base):
     publisher: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     metadata_: Mapped[Optional[dict]] = mapped_column("metadata", JSONB, nullable=True)
 
+    # Cloudflare R2 storage
+    r2_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    r2_url: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
+
+    # Auto-deletion: non-approved docs expire after N hours
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
     chunks: Mapped[list["DocumentChunk"]] = relationship(
         back_populates="document", cascade="all, delete-orphan"
     )

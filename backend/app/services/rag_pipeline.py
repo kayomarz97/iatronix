@@ -4,6 +4,7 @@ import logging
 import time
 
 import pybreaker
+from fastapi import HTTPException
 from pydantic import ValidationError
 
 from app.config import settings
@@ -154,15 +155,20 @@ async def _enqueue_log(entry: dict):
 
 
 async def _call_llm(
-    model_id: str, prompt: str, max_tokens: int | None = None
+    model_id: str,
+    prompt: str,
+    max_tokens: int | None = None,
+    user_key: str | None = None,
+    user_provider: str | None = None,
 ) -> str | None:
-    """Call LLM with circuit breaker protection."""
-    provider = get_provider(model_id)
+    """Call LLM with circuit breaker protection (BYOK — user key required)."""
+    provider = user_provider or get_provider(model_id)
     breaker = get_breaker(provider)
 
-    try:
-        llm = create_llm(model_id, max_tokens=max_tokens)
+    # Raises HTTP 402 if no key — let it propagate up to process_query
+    llm = create_llm(model_id, max_tokens=max_tokens, user_key=user_key, user_provider=user_provider)
 
+    try:
         @breaker
         async def _invoke():
             response = await llm.ainvoke(prompt)
@@ -172,6 +178,8 @@ async def _call_llm(
     except pybreaker.CircuitBreakerError:
         logger.warning(f"Circuit breaker open for {provider}")
         return None
+    except HTTPException:
+        raise
     except Exception:
         logger.error(f"LLM call failed for {model_id}", exc_info=True)
         return None
@@ -281,13 +289,56 @@ def _validate_response(data: dict, query_type: str) -> tuple[dict | None, list[s
     return data, warnings
 
 
+async def _log_search_history(user_id: int, query_text: str, query_type: str, result: dict):
+    """Fire-and-forget: persist a search history entry for the user."""
+    try:
+        from app.db.session import async_session as session_factory
+        from app.models.search_history import SearchHistory
+        from sqlalchemy import select, func
+        async with session_factory() as session:
+            # Enforce max 100 entries per user
+            count_result = await session.execute(
+                select(func.count()).select_from(SearchHistory).where(SearchHistory.user_id == user_id)
+            )
+            count = count_result.scalar() or 0
+            if count >= 100:
+                oldest = await session.execute(
+                    select(SearchHistory)
+                    .where(SearchHistory.user_id == user_id)
+                    .order_by(SearchHistory.created_at.asc())
+                    .limit(1)
+                )
+                old = oldest.scalar_one_or_none()
+                if old:
+                    await session.delete(old)
+            summary = str(result)[:300] if result else ""
+            session.add(SearchHistory(
+                user_id=user_id,
+                query_text=query_text,
+                query_type=query_type,
+                response_summary=summary,
+            ))
+            await session.commit()
+    except Exception as e:
+        logger.debug(f"Search history logging failed: {e}")
+
+
 async def process_query(
     request: QueryRequest,
     redis_client=None,
     user_key_id: str | None = None,
+    user=None,
 ) -> QueryResponse:
     """Main RAG pipeline orchestrator."""
     start_time = time.time()
+
+    # Resolve user's BYOK key
+    user_llm_key: str | None = None
+    user_llm_provider: str | None = None
+    if user and user.encrypted_llm_key:
+        from app.services.byok import decrypt_key
+        user_llm_key = decrypt_key(user.encrypted_llm_key)
+        user_llm_provider = user.llm_provider
 
     # Classify
     query_type, confidence = classify_query(request.query, request.query_type)
@@ -315,7 +366,7 @@ async def process_query(
         return response
 
     # Circuit breaker check
-    provider = get_provider(request.model_id)
+    provider = user_llm_provider or get_provider(request.model_id)
     if not is_provider_available(provider):
         # Try cached response (any version)
         any_cached = await cache_get_any_version(
@@ -325,17 +376,7 @@ async def process_query(
             latency_ms = int((time.time() - start_time) * 1000)
             return QueryResponse(**any_cached, cached=True, latency_ms=latency_ms)
 
-        # Try alternative provider
-        alt_model = get_alternative_model(request.model_id)
-        if alt_model and is_provider_available(get_provider(alt_model)):
-            request_copy = QueryRequest(
-                query=request.query,
-                query_type=request.query_type,
-                model_id=alt_model,
-            )
-            return await process_query(request_copy, redis_client, user_key_id)
-
-        # Degraded response
+        # Degraded response — circuit is open, no fallback provider in BYOK mode
         latency_ms = int((time.time() - start_time) * 1000)
         return QueryResponse(
             query_type=query_type,
@@ -381,14 +422,13 @@ async def process_query(
                     vector_results = result
 
     # Model and token budget selection
-    # Override only for Anthropic models (OpenRouter users keep their chosen model)
     effective_model = request.model_id
     max_tokens = settings.llm_max_tokens_generate
     if (
         settings.model_routing_enabled
         and fetched_data is not None
         and not fetched_data.fallback_to_llm
-        and "/" not in request.model_id  # Anthropic model (no "/" = not OpenRouter)
+        and (user_llm_provider == "anthropic" or "/" not in request.model_id)
     ):
         effective_model = routing.preferred_model
         # Disease format mode needs more tokens: classifications, pathophysiology, full treatment
@@ -396,13 +436,6 @@ async def process_query(
             max_tokens = settings.llm_max_tokens_format_disease
         else:
             max_tokens = settings.llm_max_tokens_format
-        # Optionally use free OpenRouter model for drug/comparative format steps
-        if (
-            settings.use_free_model_for_format
-            and settings.model_format_free
-            and query_type in ("drug", "comparative")
-        ):
-            effective_model = settings.model_format_free
 
     prompt_mode = (
         "format" if (fetched_data and not fetched_data.fallback_to_llm) else "generate"
@@ -413,7 +446,46 @@ async def process_query(
     prompt = build_prompt(request.query, query_type, fetched_data, vector_results)
 
     # LLM call with retry
-    raw_response = await _call_llm(effective_model, prompt, max_tokens=max_tokens)
+    try:
+        raw_response = await _call_llm(
+            effective_model, prompt, max_tokens=max_tokens,
+            user_key=user_llm_key, user_provider=user_llm_provider,
+        )
+    except HTTPException as e:
+        if e.status_code == 402:
+            # Graceful degradation: no API key — return raw scraped data with warning
+            latency_ms = int((time.time() - start_time) * 1000)
+            raw_sources = {}
+            if fetched_data:
+                if fetched_data.drug_data:
+                    d = fetched_data.drug_data
+                    raw_sources["drug"] = {
+                        "name": d.generic_name,
+                        "brand": d.brand_name,
+                        "source": d.data_source,
+                        "indications": d.indications_raw,
+                        "dosing": d.dosing_raw,
+                        "contraindications": d.contraindications_raw,
+                        "adverse_reactions": d.adverse_reactions_raw,
+                    }
+                if fetched_data.disease_data:
+                    raw_sources["guidelines_count"] = len(
+                        fetched_data.disease_data.guideline_abstracts or []
+                    )
+            return QueryResponse(
+                query_type=query_type,
+                model_used=effective_model,
+                response=DegradedResponse(
+                    message="AI formatting is unavailable — no API key configured. Showing raw data from medical databases. Please add your API key in Settings.",
+                    suggestion="Add your Anthropic or OpenAI API key in Settings to enable AI-formatted responses.",
+                ),
+                disclaimer=(
+                    "This is unformatted data from external medical databases. "
+                    "It has not been reviewed or formatted by AI. Use clinical judgment."
+                ),
+                latency_ms=latency_ms,
+            )
+        raise
 
     if raw_response:
         parsed = parse_llm_json(raw_response)
@@ -424,7 +496,13 @@ async def process_query(
     if parsed is None:
         logger.info("First LLM call failed or unparseable, retrying...")
         await asyncio.sleep(settings.llm_retry_backoff_seconds)
-        raw_response = await _call_llm(effective_model, prompt, max_tokens=max_tokens)
+        try:
+            raw_response = await _call_llm(
+                effective_model, prompt, max_tokens=max_tokens,
+                user_key=user_llm_key, user_provider=user_llm_provider,
+            )
+        except HTTPException:
+            raw_response = None
         if raw_response:
             parsed = parse_llm_json(raw_response)
 
@@ -510,5 +588,11 @@ async def process_query(
             "user_key_id": user_key_id,
         }
     )
+
+    # Search history logging (fire-and-forget, non-blocking)
+    if user and user.id:
+        asyncio.create_task(
+            _log_search_history(user.id, request.query, query_type, cache_data)
+        )
 
     return response
