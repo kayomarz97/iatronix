@@ -128,16 +128,18 @@ def route_query(query: str, query_type: str) -> RoutingDecision:
         "evidence",
     ) and bool(entities)
 
-    if query_type == "drug":
+    if query_type in ("drug", "procedure", "evidence"):
+        # Haiku: structured fetched data (FDA label, PubMed practice guidelines, RCT abstracts)
+        # — LLM is only formatting, not synthesising from scratch
         preferred = settings.model_haiku
         fallback = settings.model_sonnet
     elif query_type == "comparative":
-        # Single-word entities are likely drug names; multi-word = likely diseases
+        # Single-word entities are likely drug names → Haiku; multi-word → likely diseases → Sonnet
         likely_drugs = sum(1 for e in entities if len(e.split()) == 1)
         preferred = settings.model_haiku if likely_drugs >= 1 else settings.model_sonnet
         fallback = settings.model_sonnet
     else:
-        # disease and general both use Sonnet
+        # disease and general: Sonnet (synthesis across multiple society guidelines / pure generation)
         preferred = settings.model_sonnet
         fallback = settings.model_sonnet
 

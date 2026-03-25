@@ -26,6 +26,13 @@ class Settings(BaseSettings):
     # Auto-indexing
     pubmed_vector_cache_enabled: bool = True
 
+    # Semantic query cache (pgvector SWR)
+    semantic_cache_enabled: bool = True
+    semantic_cache_threshold: float = 0.95  # cosine similarity minimum for a cache hit
+    semantic_cache_swr_ttl_seconds: int = (
+        604800  # 7 days — beyond this, revalidate in background
+    )
+
     # BYOK
     byok_enabled: bool = True
     encryption_key: str = "CHANGE_ME"  # Fernet key for encrypting user LLM keys
@@ -107,11 +114,13 @@ class Settings(BaseSettings):
     nice_api_key: Optional[str] = None
 
     # Token budgets
-    llm_max_tokens_format: int = 2048  # format mode — drugs (Haiku)
+    llm_max_tokens_format: int = 2048  # format mode — drug/procedure/evidence (Haiku)
     llm_max_tokens_format_disease: int = (
-        4096  # format mode — diseases need more (classifications, pathophys)
+        4096  # format mode — disease (Sonnet, needs more for classifications)
     )
-    llm_max_tokens_generate: int = 4096  # generate mode / fallback
+    llm_max_tokens_generate: int = (
+        2048  # generate/fallback mode — 2048 is sufficient for summary + key_points
+    )
 
     # Cloudflare R2 Storage (for PDF uploads)
     r2_account_id: str = ""

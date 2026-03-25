@@ -25,20 +25,25 @@ from app.services.cache import cache_get, cache_get_any_version, cache_set
 from app.services.circuit_breaker import get_breaker, is_provider_available
 from app.services.citation_validator import validate_citations
 from app.services.data_fetcher import FetchedData, fetch_data_for_query
+from app.services.scraping_response import _build_scraping_response
+from app.services.semantic_cache import (
+    is_stale,
+    semantic_cache_get,
+    semantic_cache_revalidate,
+    semantic_cache_set,
+)
 from app.services.drug_linker import process_text_nodes
 from app.services.json_repair import parse_llm_json
-from app.services.llm_factory import create_llm, get_alternative_model, get_provider
+from app.services.llm_factory import create_llm, get_provider
 from app.services.prompt_engine import build_prompt
 from app.services.query_classifier import classify_query, detect_intent
 from app.services.safety_checker import check_safety
+from app.services.url_builder import enrich_references
 from app.services.source_router import route_query
 from app.services.vector_search import search as vector_search
 
 # PMID/DOI hyperlinking patterns
-import re as _re
 
-_PMID_PATTERN = _re.compile(r"PMID[:\s]*(\d{6,9})")
-_DOI_PATTERN = _re.compile(r'(10\.\d{4,9}/[^\s,;"\'\)\]]+)')
 
 logger = logging.getLogger(__name__)
 
@@ -166,9 +171,12 @@ async def _call_llm(
     breaker = get_breaker(provider)
 
     # Raises HTTP 402 if no key — let it propagate up to process_query
-    llm = create_llm(model_id, max_tokens=max_tokens, user_key=user_key, user_provider=user_provider)
+    llm = create_llm(
+        model_id, max_tokens=max_tokens, user_key=user_key, user_provider=user_provider
+    )
 
     try:
+
         @breaker
         async def _invoke():
             response = await llm.ainvoke(prompt)
@@ -210,34 +218,6 @@ def _coerce_evidenced_claims(obj: object) -> None:
     elif isinstance(obj, list):
         for item in obj:
             _coerce_evidenced_claims(item)
-
-
-def _hyperlink_references(data: dict) -> None:
-    """Add URLs to references with PMIDs or DOIs."""
-    refs = data.get("references", [])
-    for ref in refs:
-        if ref.get("url"):
-            continue
-        source = ref.get("source", "")
-        title = ref.get("title", "") or ""
-        combined = f"{source} {title}"
-
-        pmid_match = _PMID_PATTERN.search(combined)
-        if pmid_match:
-            ref["url"] = f"https://pubmed.ncbi.nlm.nih.gov/{pmid_match.group(1)}"
-            continue
-
-        doi_match = _DOI_PATTERN.search(combined)
-        if doi_match:
-            ref["url"] = f"https://doi.org/{doi_match.group(1)}"
-
-    # Also check nested study lists (evidence response)
-    for key in ("supporting_studies", "opposing_studies"):
-        studies = data.get(key, [])
-        for study in studies:
-            pmid = study.get("pmid")
-            if pmid and not study.get("url"):
-                study["url"] = f"https://pubmed.ncbi.nlm.nih.gov/{pmid}"
 
 
 def _validate_response(data: dict, query_type: str) -> tuple[dict | None, list[str]]:
@@ -289,16 +269,21 @@ def _validate_response(data: dict, query_type: str) -> tuple[dict | None, list[s
     return data, warnings
 
 
-async def _log_search_history(user_id: int, query_text: str, query_type: str, result: dict):
+async def _log_search_history(
+    user_id: int, query_text: str, query_type: str, result: dict
+):
     """Fire-and-forget: persist a search history entry for the user."""
     try:
         from app.db.session import async_session as session_factory
         from app.models.search_history import SearchHistory
         from sqlalchemy import select, func
+
         async with session_factory() as session:
             # Enforce max 100 entries per user
             count_result = await session.execute(
-                select(func.count()).select_from(SearchHistory).where(SearchHistory.user_id == user_id)
+                select(func.count())
+                .select_from(SearchHistory)
+                .where(SearchHistory.user_id == user_id)
             )
             count = count_result.scalar() or 0
             if count >= 100:
@@ -312,12 +297,14 @@ async def _log_search_history(user_id: int, query_text: str, query_type: str, re
                 if old:
                     await session.delete(old)
             summary = str(result)[:300] if result else ""
-            session.add(SearchHistory(
-                user_id=user_id,
-                query_text=query_text,
-                query_type=query_type,
-                response_summary=summary,
-            ))
+            session.add(
+                SearchHistory(
+                    user_id=user_id,
+                    query_text=query_text,
+                    query_type=query_type,
+                    response_summary=summary,
+                )
+            )
             await session.commit()
     except Exception as e:
         logger.debug(f"Search history logging failed: {e}")
@@ -332,13 +319,27 @@ async def process_query(
     """Main RAG pipeline orchestrator."""
     start_time = time.time()
 
-    # Resolve user's BYOK key
+    # Resolve user's BYOK key (only user-supplied key is used — no server .env fallback)
     user_llm_key: str | None = None
     user_llm_provider: str | None = None
     if user and user.encrypted_llm_key:
         from app.services.byok import decrypt_key
+
         user_llm_key = decrypt_key(user.encrypted_llm_key)
         user_llm_provider = user.llm_provider
+        if user_llm_key is None:
+            # Decryption failed (e.g. ENCRYPTION_KEY changed after restart)
+            latency_ms = int((time.time() - start_time) * 1000)
+            return QueryResponse(
+                query_type="general",
+                model_used=request.model_id,
+                response=DegradedResponse(
+                    message="Your API key could not be retrieved — please re-enter it in Settings.",
+                    suggestion="Go to Settings → LLM API Key and save your key again. This happens when the server restarts without a stable ENCRYPTION_KEY.",
+                ),
+                disclaimer=DISCLAIMER,
+                latency_ms=latency_ms,
+            )
 
     # Classify
     query_type, confidence = classify_query(request.query, request.query_type)
@@ -369,6 +370,44 @@ async def process_query(
         )
         return response
 
+    # Semantic cache check (pgvector cosine similarity — SWR)
+    sem_response, sem_cache_id = await semantic_cache_get(
+        request.query, query_type, request.model_id
+    )
+    if sem_response:
+        latency_ms = int((time.time() - start_time) * 1000)
+        sem_response["cached"] = True
+        sem_response["latency_ms"] = latency_ms
+        try:
+            response = QueryResponse(**sem_response)
+        except Exception:
+            response = None
+
+        if response:
+            # SWR: if stale, trigger background revalidation but still return hit
+            _sem_stale = is_stale(
+                sem_response.get("_last_verified_at"),
+                settings.semantic_cache_swr_ttl_seconds,
+            )
+            if _sem_stale and sem_cache_id:
+                logger.debug(
+                    "Semantic cache hit is stale — scheduling revalidation id=%d",
+                    sem_cache_id,
+                )
+                # Background revalidation will be fired after returning the response below
+                asyncio.create_task(
+                    _revalidate_semantic_cache(
+                        request,
+                        query_type,
+                        sem_cache_id,
+                        redis_client,
+                        user_key_id,
+                        user_llm_key,
+                        user_llm_provider,
+                    )
+                )
+            return response
+
     # Circuit breaker check
     provider = user_llm_provider or get_provider(request.model_id)
     if not is_provider_available(provider):
@@ -391,11 +430,16 @@ async def process_query(
         )
 
     # Route and fetch external data + vector search in parallel
+    # source_mode: "ai" = full pipeline, "scraping" = API only (no vector), "pdfs" = vector only
+    source_mode = getattr(request, "source_mode", "ai")
+    use_api_fetch = settings.api_fetch_enabled and source_mode != "pdfs"
+    use_vector = settings.vector_search_enabled and source_mode != "scraping"
+
     fetched_data: FetchedData | None = None
     vector_results = []
 
     tasks = {}
-    if settings.api_fetch_enabled:
+    if use_api_fetch:
         routing = route_query(request.query, query_type)
         if routing.fetch_enabled:
             tasks["api"] = asyncio.wait_for(
@@ -403,7 +447,7 @@ async def process_query(
                 timeout=settings.api_fetch_timeout_seconds + 1.0,
             )
 
-    if settings.vector_search_enabled:
+    if use_vector:
         tasks["vector"] = vector_search(request.query)
 
     if tasks:
@@ -425,6 +469,22 @@ async def process_query(
                 else:
                     vector_results = result
 
+    # Scraping-only mode: skip LLM and return raw API data directly
+    if source_mode == "scraping":
+        raw_resp = _build_scraping_response(request.query, query_type, fetched_data)
+        if raw_resp is not None:
+            latency_ms = int((time.time() - start_time) * 1000)
+            return QueryResponse(
+                query_type=query_type,
+                model_used="none",
+                response=raw_resp,
+                disclaimer=(
+                    "Raw data from medical databases (OpenFDA, PubMed, RxNorm). "
+                    "Not AI-formatted or verified. Use clinical judgment."
+                ),
+                latency_ms=latency_ms,
+            )
+
     # Model and token budget selection
     effective_model = request.model_id
     max_tokens = settings.llm_max_tokens_generate
@@ -432,6 +492,7 @@ async def process_query(
         settings.model_routing_enabled
         and fetched_data is not None
         and not fetched_data.fallback_to_llm
+        and use_api_fetch  # routing is only set when api fetch was used
         and (user_llm_provider == "anthropic" or "/" not in request.model_id)
     ):
         effective_model = routing.preferred_model
@@ -447,13 +508,18 @@ async def process_query(
     fetch_latency_ms = fetched_data.total_fetch_time_ms if fetched_data else 0
 
     # Build prompt (format-mode if API data available, generate-mode otherwise)
-    prompt = build_prompt(request.query, query_type, fetched_data, vector_results, intent=query_intent)
+    prompt = build_prompt(
+        request.query, query_type, fetched_data, vector_results, intent=query_intent
+    )
 
     # LLM call with retry
     try:
         raw_response = await _call_llm(
-            effective_model, prompt, max_tokens=max_tokens,
-            user_key=user_llm_key, user_provider=user_llm_provider,
+            effective_model,
+            prompt,
+            max_tokens=max_tokens,
+            user_key=user_llm_key,
+            user_provider=user_llm_provider,
         )
     except HTTPException as e:
         if e.status_code == 402:
@@ -491,34 +557,45 @@ async def process_query(
             )
         raise
 
+    raw_response2: str | None = None
     if raw_response:
         parsed = parse_llm_json(raw_response)
     else:
         parsed = None
 
-    # Retry once if parse failed
+    # Retry once if call failed or response unparseable
     if parsed is None:
         logger.info("First LLM call failed or unparseable, retrying...")
         await asyncio.sleep(settings.llm_retry_backoff_seconds)
         try:
-            raw_response = await _call_llm(
-                effective_model, prompt, max_tokens=max_tokens,
-                user_key=user_llm_key, user_provider=user_llm_provider,
+            raw_response2 = await _call_llm(
+                effective_model,
+                prompt,
+                max_tokens=max_tokens,
+                user_key=user_llm_key,
+                user_provider=user_llm_provider,
             )
         except HTTPException:
-            raw_response = None
-        if raw_response:
-            parsed = parse_llm_json(raw_response)
+            raw_response2 = None
+        if raw_response2:
+            parsed = parse_llm_json(raw_response2)
 
     if parsed is None:
         latency_ms = int((time.time() - start_time) * 1000)
+        # Distinguish: LLM never responded vs responded but JSON unparseable
+        llm_never_responded = raw_response is None and raw_response2 is None
+        if llm_never_responded:
+            msg = "LLM call failed — please verify your API key is valid in Settings."
+            sug = "Go to Settings → LLM API Key and check that your key is saved correctly."
+        else:
+            msg = (
+                "Failed to parse AI response. The model returned an unexpected format."
+            )
+            sug = "Try rephrasing your query. If the problem persists, try a different query type."
         return QueryResponse(
             query_type=query_type,
             model_used=effective_model,
-            response=DegradedResponse(
-                message="Failed to parse AI response",
-                suggestion="Try rephrasing your query or switching models",
-            ),
+            response=DegradedResponse(message=msg, suggestion=sug),
             disclaimer=DISCLAIMER,
             latency_ms=latency_ms,
         )
@@ -539,15 +616,21 @@ async def process_query(
             latency_ms=latency_ms,
         )
 
+    # Enrich references with deterministic URLs (no LLM guessing)
+    # Must run BEFORE citation validation so URL warnings reflect final values
+    try:
+        enrich_references(validated_data, fetched_data)
+    except Exception:
+        logger.warning(
+            "URL enrichment failed — references will have no URLs", exc_info=True
+        )
+
     # Citation validation
     citation_warnings = validate_citations(validated_data, query_type)
     validation_warnings.extend(citation_warnings)
 
     # Safety check
     safety_warnings = check_safety(request.query, validated_data, query_type)
-
-    # Hyperlink PMIDs and DOIs in references
-    _hyperlink_references(validated_data)
 
     # Drug linker
     text_nodes = process_text_nodes(validated_data, query_type)
@@ -571,10 +654,13 @@ async def process_query(
         latency_ms=latency_ms,
     )
 
-    # Cache write
+    # Cache write (Redis exact + semantic pgvector — fire-and-forget)
     cache_data = response.model_dump()
     await cache_set(
         redis_client, request.query, query_type, request.model_id, cache_data
+    )
+    asyncio.create_task(
+        semantic_cache_set(request.query, query_type, request.model_id, cache_data)
     )
 
     # Async log
@@ -600,3 +686,30 @@ async def process_query(
         )
 
     return response
+
+
+async def _revalidate_semantic_cache(
+    request,
+    query_type: str,
+    cache_id: int,
+    redis_client,
+    user_key_id,
+    user_llm_key,
+    user_llm_provider,
+) -> None:
+    """
+    Background SWR revalidation: re-run the pipeline for a stale cache entry
+    and update the semantic cache entry with the fresh response.
+    Runs as a fire-and-forget asyncio task.
+    """
+    try:
+        fresh_response = await process_query(
+            request,
+            redis_client=redis_client,
+            user_key_id=user_key_id,
+            user=None,
+        )
+        await semantic_cache_revalidate(cache_id, fresh_response.model_dump())
+        logger.debug("SWR revalidation complete for semantic cache id=%d", cache_id)
+    except Exception:
+        logger.debug("SWR revalidation failed for cache id=%d", cache_id, exc_info=True)
