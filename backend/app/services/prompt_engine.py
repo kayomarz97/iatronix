@@ -216,6 +216,8 @@ PROCEDURE_PROMPT = """You are a clinical procedure reference assistant.
 
 {focus_instruction}
 
+HALLUCINATION PREVENTION — CRITICAL: For "indications", "contraindications", and "complications" arrays, ONLY include items you can cite from the approved sources list above. If no approved source supports an item, do NOT include it — output [] for that array rather than fabricating [Unverified] entries. "technique_steps" may use established clinical consensus for well-known procedural steps.
+
 technique_steps rules: steps MUST be sequential; step_number starts at 1 and increments by 1 with no gaps. "notes" is null if not applicable — never output "".
 
 Respond with a JSON object for the procedure "{query}":
@@ -478,6 +480,8 @@ PROCEDURE_FORMAT_PROMPT = """You are a clinical procedure reference formatter. U
 {json_contract_rules}
 
 {focus_instruction}
+
+HALLUCINATION PREVENTION — CRITICAL: Base ALL indications, contraindications, and complications ONLY on the retrieved data provided below. Do NOT add items not supported by the retrieved data. If the data is insufficient for a section, output [] rather than fabricating [Unverified] entries.
 
 technique_steps rules: steps MUST be sequential; step_number starts at 1 and increments by 1 with no gaps. "notes" is null if not applicable — never output "".
 

@@ -12,6 +12,10 @@ DRUG_PATTERNS = [
     r"\b(?:warfarin|heparin|insulin|prednisone|ibuprofen|acetaminophen)\b",
     r"\b(?:losartan|simvastatin|levothyroxine|gabapentin|hydrochlorothiazide|sertraline|fluoxetine|clopidogrel|pantoprazole|escitalopram)\b",
     r"\b(?:montelukast|rosuvastatin|tramadol|duloxetine|tamsulosin|alprazolam|furosemide|carvedilol|cephalexin|azithromycin)\b",
+    # INN drug name suffixes
+    r"\b\w+(?:pril|sartan|statin|olol|dipine|mycin|cillin|azole|oxacin|cycline|gliptin|gliflozin|mab|nib|formin|zepam|zosin|dronate|fenac|profen|codone|orphine)\b",
+    # Extended common drug list
+    r"\b(?:ramipril|enalapril|atorvastatin|rosuvastatin|Azee|polymyxin|polymixin|colistin|vancomycin|meropenem|piperacillin|tazobactam|clindamycin|doxycycline|ciprofloxacin|levofloxacin|fluconazole|voriconazole|metronidazole|amphotericin|rifampicin|isoniazid|pyrazinamide|ethambutol|dapsone|hydroxychloroquine|chloroquine|ivermectin|albendazole|methotrexate|azathioprine|mycophenolate|cyclosporine|tacrolimus|prednisolone|dexamethasone|hydrocortisone|fludrocortisone|levothyroxine|carbimazole|propylthiouracil|glargine|detemir|glulisine|lispro|aspart|empagliflozin|dapagliflozin|canagliflozin|sitagliptin|vildagliptin|saxagliptin|alogliptin|pioglitazone|glimepiride|gliclazide|glibenclamide|repaglinide|acarbose|digoxin|amiodarone|sotalol|flecainide|adenosine|diltiazem|verapamil|nifedipine|felodipine|spironolactone|eplerenone|hydrochlorothiazide|indapamide|bisoprolol|nebivolol|atenolol|propranolol|ticagrelor|prasugrel|aspirin|rivaroxaban|apixaban|dabigatran|enoxaparin|alteplase|streptokinase|tenecteplase|nitroglycerin|isosorbide|dobutamine|dopamine|noradrenaline|adrenaline|epinephrine|vasopressin|terlipressin|midazolam|diazepam|lorazepam|clonazepam|phenytoin|valproate|levetiracetam|carbamazepine|lamotrigine|pregabalin|morphine|fentanyl|oxycodone|codeine|paracetamol|naproxen|diclofenac|celecoxib|colchicine|allopurinol|febuxostat|ranitidine|esomeprazole|rabeprazole|ondansetron|metoclopramide|domperidone|loperamide|lactulose|bisacodyl|senna|salbutamol|formoterol|salmeterol|tiotropium|ipratropium|budesonide|fluticasone|beclomethasone|fexofenadine|cetirizine|loratadine|chlorpheniramine|promethazine|haloperidol|risperidone|olanzapine|quetiapine|aripiprazole|clozapine|lithium|paroxetine|citalopram|venlafaxine|mirtazapine|amitriptyline|nortriptyline|bupropion|trazodone|zolpidem|melatonin|sildenafil|tadalafil|finasteride|doxazosin|oxybutynin|solifenacin|tolterodine|alendronate|risedronate|ibandronate|denosumab|teriparatide|calcitriol|cholecalciferol)\b",
 ]
 
 DISEASE_PATTERNS = [
@@ -22,6 +26,10 @@ DISEASE_PATTERNS = [
     r"\b(?:stroke|myocardial infarction|atrial fibrillation|chronic kidney disease|cirrhosis|hepatitis|tuberculosis|HIV|sepsis|meningitis)\b",
     r"\b(?:epilepsy|migraine|Parkinson|Alzheimer|multiple sclerosis|lupus|rheumatoid arthritis|osteoporosis|gout|anemia)\b",
     r"\b(?:depression|anxiety|bipolar|schizophrenia|cancer|lymphoma|leukemia|melanoma|pancreatitis|appendicitis)\b",
+    # Medical abbreviations for diseases
+    r"\b(?:DVT|PE|VTE|CLABSI|MRSA|UTI|AKI|CKD|IHD|CAD|CHF|HFrEF|HFpEF|AF|SVT|VT|VF|SBP|HBP|T2DM|T1DM|SLE|RA|IBD|UC|CD|IBS|GERD|PUD|NASH|NAFLD|CLD|SCA|AML|CML|ALL|CLL|NHL|MM|HCC|RCC|GBM|PCA)\b",
+    # Pathological terms
+    r"\b(?:thrombosis|embolism|infarction|insufficiency|failure|deficiency|malignancy|carcinoma|sarcoma|encephalopathy|neuropathy|retinopathy|nephropathy|myopathy|vasculitis|fibrosis)\b",
 ]
 
 COMPARATIVE_PATTERNS = [
@@ -37,6 +45,10 @@ PROCEDURE_PATTERNS = [
     r"\b(?:intubation|extubation|lumbar puncture|paracentesis|thoracentesis|bronchoscopy|endoscopy|colonoscopy)\b",
     r"\b(?:CPR|resuscitation|defibrillation|cardioversion|chest tube|arterial line|swan ganz)\b",
     r"\b(?:protocol|checklist|algorithm|guideline)\s+(?:for|of)\b",
+    # Devices and access lines by name
+    r"\b(?:Foley|foley|nasogastric|NGT|PEG|CVC|PICC|intercostal drain|pericardiocentesis|pericardial drain|intercostal|pleural drain|ascitic drain|epidural|spinal|cricothyrotomy|tracheostomy|proning|prone position|CPAP|BiPAP|NIV|HFNO|high flow)\b",
+    # Temporal action phrases for procedures
+    r"\b(?:when (?:to |do (?:you )?)?(?:change|replace|insert|remove|perform|start|stop|initiate|discontinue|wean|extubate|intubate))\b",
 ]
 
 EVIDENCE_PATTERNS = [
@@ -53,6 +65,7 @@ _HIGHLIGHTS_RE = re.compile(
     r"emergency management|acute management|first approach)\b",
     re.IGNORECASE,
 )
+
 
 def detect_intent(query: str) -> str:
     """Detect query intent. Returns 'highlights' for quick-reference queries, 'full' otherwise."""

@@ -40,6 +40,17 @@ APPROVED_SOURCES = {
     "indian local",
     "medindia",
     "schedule h",
+    # Critical care / infectious disease societies
+    "isid",
+    "ssc",
+    "sccm",
+    "ats",
+    "ers",
+    "asm",
+    "aasld",
+    "easl",
+    "esh",
+    "isth",
     # Other
     "clinical guidelines",
     "clinical consensus",

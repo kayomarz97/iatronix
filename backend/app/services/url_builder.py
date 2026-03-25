@@ -43,6 +43,15 @@ ALLOWED_DOMAINS: frozenset[str] = frozenset(
         "kdigo.org",
         "www.diabetes.org",
         "www.acog.org",
+        "www.isid.org",
+        "www.sccm.org",
+        "www.thoracic.org",
+        "www.ersnet.org",
+        "www.asm.org",
+        "www.aasld.org",
+        "easl.eu",
+        "www.eshonline.org",
+        "www.isth.org",
     }
 )
 
@@ -67,6 +76,16 @@ _SOURCE_URL_MAP: list[tuple[str, str]] = [
     ("acog", "https://www.acog.org/clinical/"),
     ("ema", "https://www.ema.europa.eu/"),
     ("bmj", "https://www.bmj.com/"),
+    ("isid", "https://www.isid.org/"),
+    ("ssc", "https://www.sccm.org/"),
+    ("sccm", "https://www.sccm.org/"),
+    ("ats", "https://www.thoracic.org/"),
+    ("ers", "https://www.ersnet.org/"),
+    ("asm", "https://www.asm.org/"),
+    ("aasld", "https://www.aasld.org/"),
+    ("easl", "https://easl.eu/"),
+    ("esh", "https://www.eshonline.org/"),
+    ("isth", "https://www.isth.org/"),
 ]
 
 
