@@ -12,6 +12,7 @@ import logging
 import os
 import re
 import time
+from urllib.parse import quote_plus
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from typing import Optional
@@ -46,6 +47,7 @@ class DrugFetchResult:
     top_adverse_events: list = field(default_factory=list)
     rxcui: Optional[str] = None
     guideline_abstracts: list = field(default_factory=list)
+    systematic_review_abstracts: list = field(default_factory=list)
     data_source: str = "unknown"
     fetch_success: bool = False
 
@@ -724,10 +726,15 @@ def _merge_indian_drug(result: DrugFetchResult, entry: dict) -> None:
 # ------------------------------------------------------------------
 
 
+def _build_medindia_url(drug_name: str) -> str:
+    """Build a safe MedIndia URL with proper percent-encoding."""
+    return f"https://www.medindia.net/drugs/drug_info.asp?drug_name={quote_plus(drug_name)}"
+
+
 async def _fetch_medindia(
     client: httpx.AsyncClient, drug_name: str
 ) -> Optional[DrugFetchResult]:
-    url = f"https://www.medindia.net/drugs/drug_info.asp?drug_name={drug_name.replace(' ', '+')}"
+    url = _build_medindia_url(drug_name)
     text = await _safe_get_text(client, url)
     if not text:
         return None
@@ -776,11 +783,12 @@ async def fetch_drug_data(drug_name: str) -> DrugFetchResult:
 
     async with _make_client() as client:
         # Phase 1: all parallel primary sources
-        fda_label, fda_events, rxcui_raw, guidelines = await asyncio.gather(
+        fda_label, fda_events, rxcui_raw, guidelines, sysreviews = await asyncio.gather(
             _fetch_fda_label(client, drug_name),
             _fetch_fda_events(client, drug_name),
             _fetch_rxnorm_cui(client, drug_name),
             _fetch_pubmed_abstracts(client, drug_name, "guideline"),
+            _fetch_pubmed_abstracts(client, drug_name, "systematic_review"),
             return_exceptions=True,
         )
 
@@ -790,6 +798,9 @@ async def fetch_drug_data(drug_name: str) -> DrugFetchResult:
         result.top_adverse_events = fda_events if isinstance(fda_events, list) else []
         result.guideline_abstracts = _cap_abstracts(
             guidelines if isinstance(guidelines, list) else [], 1500
+        )
+        result.systematic_review_abstracts = _cap_abstracts(
+            sysreviews if isinstance(sysreviews, list) else [], 1500
         )
 
         rxcui = rxcui_raw if isinstance(rxcui_raw, str) else None
@@ -806,6 +817,7 @@ async def fetch_drug_data(drug_name: str) -> DrugFetchResult:
         dm = await _fetch_dailymed(client, drug_name)
         if dm and dm.fetch_success:
             dm.guideline_abstracts = result.guideline_abstracts
+            dm.systematic_review_abstracts = result.systematic_review_abstracts
             dm.top_adverse_events = result.top_adverse_events
             return dm
 
@@ -820,6 +832,7 @@ async def fetch_drug_data(drug_name: str) -> DrugFetchResult:
         mi = await _fetch_medindia(client, drug_name)
         if mi and mi.fetch_success:
             mi.guideline_abstracts = result.guideline_abstracts
+            mi.systematic_review_abstracts = result.systematic_review_abstracts
             mi.top_adverse_events = result.top_adverse_events
             return mi
 

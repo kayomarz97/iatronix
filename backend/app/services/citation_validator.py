@@ -1,6 +1,8 @@
 import logging
 from datetime import datetime
 
+from app.services.url_builder import is_safe_url
+
 logger = logging.getLogger(__name__)
 
 APPROVED_SOURCES = {
@@ -113,6 +115,28 @@ def validate_citations(response_data: dict, query_type: str) -> list[str]:
                 0,
                 "This response has limited evidence support. "
                 "Please verify with primary sources.",
+            )
+
+    # Reference URL validation — null unsafe URLs and warn (defense-in-depth after url_builder)
+    for ref in response_data.get("references", []):
+        url = ref.get("url")
+        if url is None:
+            continue
+        if not url.startswith("https://"):
+            ref["url"] = None
+            warnings.append(
+                f"Reference URL uses non-HTTPS scheme (insecure) — removed: '{url[:80]}'"
+            )
+        elif not is_safe_url(url):
+            from urllib.parse import urlparse
+
+            try:
+                domain = urlparse(url).netloc
+            except Exception:
+                domain = url[:40]
+            ref["url"] = None
+            warnings.append(
+                f"Reference URL domain not in approved list — removed: '{domain}'"
             )
 
     return warnings

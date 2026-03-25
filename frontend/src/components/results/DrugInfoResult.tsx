@@ -21,6 +21,18 @@ export function DrugInfoResult({ data }: DrugInfoResultProps) {
         )}
       </div>
 
+      {data.bluf && (
+        <div style={{ background: "var(--surface-2)", borderLeft: "3px solid var(--accent)", padding: "0.75rem 1rem", borderRadius: "0 4px 4px 0" }}>
+          <p className="text-sm font-medium leading-relaxed">{data.bluf}</p>
+        </div>
+      )}
+
+      {data.additional_clinical_context && (
+        <div style={{ background: "var(--surface-2)", padding: "0.75rem 1rem", borderRadius: "4px" }}>
+          <p className="text-xs text-text-secondary leading-relaxed">{data.additional_clinical_context}</p>
+        </div>
+      )}
+
       {data.mechanism_of_action && (
         <Section title="Mechanism of Action">
           <p className="text-sm leading-relaxed">

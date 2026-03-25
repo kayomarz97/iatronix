@@ -38,6 +38,21 @@ When evidence is insufficient or absent:
 - Do NOT fabricate data, statistics, or trial names
 """
 
+JSON_CONTRACT_RULES = """
+JSON CONTRACT RULES — apply to every field in your response:
+- String fields: output the clinical value ONLY — no inline LOE markers, no citation suffixes, no parenthetical evidence in the value string
+- Array fields: output [] when no data is available — NEVER output ["None"], ["N/A"], ["Unknown"], or ["Not applicable"]
+- Nullable fields (marked "or null"): output null — NEVER output "", "N/A", "none", or "not available"
+- Enum fields: output ONLY the exact enum value — e.g. "high" not "High", "I" not "Level I"
+- drug_names arrays: generic names only, no doses, no brand names (e.g. ["metformin"] not ["Metformin 500mg (Glucophage)"])
+- related_drugs arrays: generic INN names only — no brand names, no dosing
+- pmid fields: numeric string only, no "PMID:" prefix (e.g. "38293847") — output null if unavailable
+- url fields in references: always output null — the backend generates all URLs from verified metadata; do NOT invent or guess URLs
+- Do NOT add keys not listed in the schema below
+- Do NOT reorder top-level keys
+- Output raw JSON only — no markdown fences, no explanatory prose before or after the JSON object
+"""
+
 # ──────────────────────────────────────────────
 # GENERATE-mode prompts (existing, unchanged)
 # ──────────────────────────────────────────────
@@ -45,6 +60,12 @@ When evidence is insufficient or absent:
 DRUG_PROMPT = """You are a clinical pharmacology reference assistant.
 {approved_sources}
 {evidence_rules}
+{json_contract_rules}
+
+BLUF RULE: Populate "bluf" first with 1-3 sentences directly answering what the user asked about this drug.
+Example — query "metformin for diabetes": bluf = "Metformin is first-line for type 2 diabetes (ADA 2024): 500 mg BD with meals, titrate to 1000 mg BD; reduces HbA1c by 1.0-1.5%."
+Example — query "warfarin interactions": bluf = "Warfarin has narrow therapeutic index with major interactions with NSAIDs, antibiotics (fluoroquinolones, metronidazole), and amiodarone — all can precipitate bleeding."
+Populate "additional_clinical_context" with query-specific nuance not captured by schema fields (e.g. off-label context, monitoring pearls, Indian market equivalents). Output null if nothing to add.
 
 Be COMPREHENSIVE. Cover ALL of the following thoroughly:
 - Mechanism of action: full pharmacodynamic detail
@@ -61,16 +82,18 @@ Do NOT omit sections. Populate every array with multiple entries where applicabl
 Respond with a JSON object matching this EXACT structure:
 {{
   "drug_name": "string",
+  "bluf": "string — 1-3 sentences directly answering what the user asked (or null)",
+  "additional_clinical_context": "string — query-specific nuance not captured above (or null)",
   "drug_class": "string or null",
   "mechanism_of_action": {{"value": "string", "loe": "string", "cor": "string", "source": "string", "source_year": int_or_null, "confidence": "string"}} or null,
-  "indications": [{{"value": "string", "loe": "string", "cor": "string", "source": "string", "source_year": int_or_null, "confidence": "string"}}],
-  "dosing": [{{"value": "string", "loe": "string", "cor": "string", "source": "string", "source_year": int_or_null, "confidence": "string", "route": "string or null", "frequency": "string or null"}}],
-  "contraindications": [{{"value": "...", "loe": "...", "cor": "...", "source": "...", "source_year": null, "confidence": "..."}}],
-  "side_effects": [{{"value": "...", "loe": "...", "cor": "...", "source": "...", "source_year": null, "confidence": "..."}}],
-  "interactions": [{{"drug": "string", "severity": "major|moderate|minor", "description": "string", "evidence": {{"value": "...", "loe": "...", "cor": "...", "source": "...", "source_year": null, "confidence": "..."}} or null}}],
-  "pharmacokinetics": {{"value": "...", ...}} or null,
-  "special_populations": [{{"value": "...", ...}}],
-  "monitoring": [{{"value": "...", ...}}],
+  "indications": [{{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}}],
+  "dosing": [{{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low", "route": "string or null", "frequency": "string or null"}}],
+  "contraindications": [{{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}}],
+  "side_effects": [{{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}}],
+  "interactions": [{{"drug": "string", "severity": "major|moderate|minor", "description": "string", "evidence": {{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}} or null}}],
+  "pharmacokinetics": {{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}} or null,
+  "special_populations": [{{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}}],
+  "monitoring": [{{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}}],
   "references": [{{"source": "string", "title": "string or null", "year": int_or_null, "url": null}}]
 }}
 
@@ -79,41 +102,46 @@ Query: {query}"""
 DISEASE_PROMPT = """You are a senior clinician writing a comprehensive disease reference for medical trainees.
 {approved_sources}
 {evidence_rules}
+{json_contract_rules}
 
-MANDATORY CLINICAL ORDER: etiology → clinical_features → pathophysiology → diagnostic_criteria → treatment → complications → prognosis
+BLUF RULE: Populate "bluf" first with 1-3 sentences directly answering what the user asked.
+Example — query "first-line treatment for PAH": bluf = "First-line: ambrisentan or macitentan (ERA) combined with tadalafil or sildenafil (PDE5i) per ESC/ERS 2022."
+Example — query "what is sepsis": bluf = "Sepsis is life-threatening organ dysfunction caused by dysregulated host response to infection (Sepsis-3 definition, JAMA 2016)."
+Populate "additional_clinical_context" with any query-specific nuance not captured by the fixed schema fields (e.g. special populations, emerging therapies, bedside tips). Output null if nothing to add.
 
-DEPTH REQUIREMENTS — every section MUST be fully populated:
+CONTENT DEPTH — populate sections relevant to the query; sections not relevant to the specific question may be [] or null:
 - etiology: 4-8 entries covering ALL causes (genetic, autoimmune, infectious, structural, toxic, idiopathic, risk factors)
-- pathophysiology: detailed mechanistic explanation (≥150 words) — vasoconstriction, inflammation, fibrosis, remodeling, hemodynamic changes, cellular/molecular mechanisms
-- clinical_features: 6-10 entries — ALL symptoms and signs PLUS if this disease has a CLASSIFICATION SYSTEM (WHO groups, NYHA classes, Child-Pugh, GOLD stages, etc.) include EVERY CLASS/STAGE with its specific criteria as separate entries
-- diagnostic_criteria: 5-8 entries with SPECIFIC threshold values (e.g., "mPAP ≥ 25 mmHg at rest on right heart catheterization", NOT just "elevated pressures")
-- treatment.first_line: 3-6 entries with SPECIFIC drug name + dose + route + frequency (NOT drug class names)
-  Example RIGHT: "Ambrisentan (ERA) 5-10 mg orally once daily, or Bosentan 62.5 mg BD × 4 weeks then 125 mg BD"
-  Example WRONG: "Endothelin receptor antagonists are used"
+- pathophysiology: detailed mechanistic explanation (≥150 words) — include vasoconstriction, inflammation, fibrosis, remodeling, hemodynamic changes, cellular/molecular mechanisms as applicable
+- clinical_features: 6-10 entries — ALL symptoms and signs PLUS if the disease has a CLASSIFICATION SYSTEM (WHO groups, NYHA classes, Child-Pugh, GOLD stages, etc.) include EVERY CLASS/STAGE with its specific criteria as separate entries
+- diagnostic_criteria: 5-8 entries with SPECIFIC threshold values (e.g. "mPAP ≥ 25 mmHg at rest on RHC", NOT just "elevated pressures")
+- treatment.first_line: 3-6 entries — SPECIFIC drug name + dose + route + frequency (NOT drug class names)
+  RIGHT: "Ambrisentan (ERA) 5-10 mg orally once daily, or Bosentan 62.5 mg BD × 4 weeks then 125 mg BD"
+  WRONG: "Endothelin receptor antagonists are used"
 - treatment.second_line: 2-4 specific drugs with doses
 - treatment.non_pharmacological: 3+ entries (oxygen therapy, exercise, anticoagulation, transplant criteria, etc.)
 - complications: 4-6 entries
-- CLASSIFICATION SYSTEMS: if this disease has WHO/staging/functional class criteria, list each class explicitly in clinical_features
-
-Do NOT omit any section. If evidence is limited, use loe="III", confidence="moderate", source="Clinical consensus".
+- CLASSIFICATION SYSTEMS: list each class explicitly in clinical_features where applicable
+If evidence is limited, use loe="III", confidence="moderate", source="Clinical consensus".
 
 Respond with a JSON object matching this EXACT structure:
 {{
   "disease_name": "string",
+  "bluf": "string — 1-3 sentences directly answering what the user asked (or null)",
+  "additional_clinical_context": "string — query-specific nuance not captured above (or null)",
   "icd_10": "string or null",
-  "etiology": [{{"value": "string", "loe": "string", "cor": "string", "source": "string", "source_year": int_or_null, "confidence": "string"}}],
-  "pathophysiology": {{"value": "string", "loe": "string", "cor": "string", "source": "string", "source_year": int_or_null, "confidence": "string"}} or null,
-  "epidemiology": {{"value": "...", ...}} or null,
-  "clinical_features": [{{"value": "...", "loe": "...", "cor": "...", "source": "...", "source_year": null, "confidence": "..."}}],
-  "diagnostic_criteria": [{{"value": "...", ...}}],
+  "etiology": [{{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}}],
+  "pathophysiology": {{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}} or null,
+  "epidemiology": {{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}} or null,
+  "clinical_features": [{{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}}],
+  "diagnostic_criteria": [{{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}}],
   "treatment": {{
-    "first_line": [{{"value": "...", "loe": "...", "cor": "...", "source": "...", "source_year": null, "confidence": "...", "drug_names": ["string"]}}],
-    "second_line": [{{"value": "...", ..., "drug_names": ["string"]}}],
-    "adjunctive": [{{"value": "...", ..., "drug_names": ["string"]}}],
-    "non_pharmacological": [{{"value": "...", ...}}]
+    "first_line": [{{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low", "drug_names": ["generic_name_only"]}}],
+    "second_line": [{{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low", "drug_names": ["generic_name_only"]}}],
+    "adjunctive": [{{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low", "drug_names": ["generic_name_only"]}}],
+    "non_pharmacological": [{{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}}]
   }},
-  "complications": [{{"value": "...", ...}}],
-  "prognosis": {{"value": "...", ...}} or null,
+  "complications": [{{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}}],
+  "prognosis": {{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}} or null,
   "references": [{{"source": "string", "title": "string or null", "year": int_or_null, "url": null}}]
 }}
 
@@ -122,6 +150,7 @@ Query: {query}"""
 COMPARATIVE_PROMPT = """You are a clinical comparison assistant.
 {approved_sources}
 {evidence_rules}
+{json_contract_rules}
 
 Be COMPREHENSIVE. Compare the entities thoroughly across ALL of the following dimensions:
 - Efficacy (primary outcomes, NNT where available)
@@ -151,7 +180,7 @@ Respond with a JSON object matching this EXACT structure:
       }}
     }}
   ],
-  "clinical_preference": {{"value": "...", ...}} or null,
+  "clinical_preference": {{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}} or null,
   "references": [{{"source": "string", "title": "string or null", "year": int_or_null, "url": null}}]
 }}
 
@@ -160,15 +189,20 @@ Query: {query}"""
 GENERAL_PROMPT = """You are a medical knowledge assistant.
 {approved_sources}
 {evidence_rules}
+{json_contract_rules}
 
 This query does not fit a specific drug/disease/comparative pattern. Provide a structured response.
+
+key_points rules: plain strings only — no leading markdown bullet prefix ("- "), no numbered prefix ("1."). Each entry is a complete sentence or actionable statement.
+related_drugs rules: generic INN names only — no brand names, no dosing information.
+related_conditions rules: condition names only — no descriptions.
 
 Respond with a JSON object matching this EXACT structure:
 {{
   "summary": "markdown string with your main answer",
-  "key_points": ["bullet point 1", "bullet point 2"],
-  "related_drugs": ["drug_name_1", "drug_name_2"],
-  "related_conditions": ["condition_1", "condition_2"],
+  "key_points": ["actionable clinical statement without bullet prefix", "..."],
+  "related_drugs": ["generic_name_only"],
+  "related_conditions": ["condition_name_only"],
   "confidence": "high|moderate|low",
   "references": [{{"source": "string", "title": "string or null", "year": int_or_null, "url": null}}]
 }}
@@ -178,17 +212,20 @@ Query: {query}"""
 PROCEDURE_PROMPT = """You are a clinical procedure reference assistant.
 {approved_sources}
 {evidence_rules}
+{json_contract_rules}
 
 {focus_instruction}
+
+technique_steps rules: steps MUST be sequential; step_number starts at 1 and increments by 1 with no gaps. "notes" is null if not applicable — never output "".
 
 Respond with a JSON object for the procedure "{query}":
 {{
   "procedure_name": "string",
-  "indications": [{{"value": "when to perform", "loe": "I-III", "cor": "I/IIa/IIb/III-*", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}}],
-  "contraindications": [same EvidencedClaim format],
-  "technique_steps": [{{"step_number": 1, "description": "string", "notes": "optional"}}],
-  "complications": [EvidencedClaim format],
-  "guidelines": [{{"value": "recommendation text", "loe": "I-III", "cor": "I/IIa/IIb/III-*", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low", "society": "recommending body"}}],
+  "indications": [{{"value": "string describing when to perform", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}}],
+  "contraindications": [{{"value": "string describing contraindication", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}}],
+  "technique_steps": [{{"step_number": 1, "description": "string", "notes": "string or null"}}],
+  "complications": [{{"value": "string describing complication", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}}],
+  "guidelines": [{{"value": "recommendation text", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low", "society": "e.g. SSC, AHA/ACC, NICE, WHO, ACLS — null if unknown"}}],
   "references": [{{"source": "string", "title": "string or null", "year": int_or_null, "url": null}}]
 }}
 
@@ -199,11 +236,18 @@ Query: {query}"""
 EVIDENCE_PROMPT = """You are a clinical evidence synthesizer.
 {approved_sources}
 {evidence_rules}
+{json_contract_rules}
 
 {focus_instruction}
 
 The user is asking about evidence for a clinical question that may not have formal guidelines.
 Your job is to summarize the available studies and provide a balanced recommendation.
+
+pmid rule: numeric string only, no "PMID:" prefix (e.g. "38293847") — output null if unavailable.
+guideline_status rule: output EXACTLY one of these three templates (fill in the blanks):
+  "No formal guideline exists"
+  "Mentioned in [Society] [year] guidelines"
+  "Formal recommendation in [Society] [year] guidelines"
 
 Respond with a JSON object:
 {{
@@ -211,19 +255,24 @@ Respond with a JSON object:
   "summary": "2-3 sentence overview of the evidence",
   "supporting_studies": [{{
     "title": "study title",
-    "pmid": "PubMed ID or null",
+    "pmid": "numeric string or null",
     "year": int_or_null,
     "finding": "key finding in 1-2 sentences",
     "sample_size": "e.g. n=500 or null",
-    "loe": "I-III"
+    "loe": "I|II-1|II-2|II-3|III"
   }}],
-  "opposing_studies": [same format],
-  "clinical_recommendation": {{"value": "recommendation", "loe": "I-III", "cor": "I/IIa/IIb/III-*", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}} or null,
-  "guideline_status": "e.g. 'No formal guideline exists' or 'Mentioned in ADA 2024 guidelines'",
+  "opposing_studies": [{{
+    "title": "study title",
+    "pmid": "numeric string or null",
+    "year": int_or_null,
+    "finding": "key finding in 1-2 sentences",
+    "sample_size": "e.g. n=500 or null",
+    "loe": "I|II-1|II-2|II-3|III"
+  }}],
+  "clinical_recommendation": {{"value": "recommendation", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}} or null,
+  "guideline_status": "No formal guideline exists",
   "references": [{{"source": "string", "title": "string or null", "year": int_or_null, "url": null}}]
 }}
-
-For PMIDs, include the numeric ID only (e.g. "38293847"). These will be auto-linked.
 
 {vector_context}
 
@@ -231,6 +280,7 @@ Query: {query}"""
 
 HIGHLIGHTS_PROMPT = """You are a senior clinician writing a rapid clinical reference card.
 {approved_sources}
+{json_contract_rules}
 
 The user asked: "{query}"
 
@@ -240,21 +290,18 @@ Rules:
 - LEAD with what the user actually needs (e.g., "Surviving Sepsis" → Sepsis-3 criteria + 1-hour bundle + antibiotic choice + vasopressor threshold)
 - Use clinical pearl style: concise, actionable, memorable
 - Include specific numbers/thresholds where they matter (e.g., MAP ≥65, lactate >2, fluid 30 mL/kg)
-- 5-8 key points maximum — quality over exhaustive coverage
+- 5-8 key points maximum — quality over exhaustive coverage (do NOT add a literal "max 8 total" string to the array)
 - Flag any mnemonics or bedside tools if clinically useful
 - Cite society guidelines where directly applicable (e.g., SSC 2021, AHA 2022)
+- key_points: plain strings, no leading bullet or numbered prefix, max 8 entries
+- related_drugs: generic INN names only — no brand names
 
 Respond with a JSON object:
 {{
   "summary": "1-2 sentence overview of what this is clinically",
-  "key_points": [
-    "actionable clinical pearl 1 with specific numbers/doses",
-    "actionable clinical pearl 2",
-    "actionable clinical pearl 3",
-    "...(max 8 total)"
-  ],
-  "related_drugs": ["drug_name_1"],
-  "related_conditions": ["condition_1"],
+  "key_points": ["actionable clinical pearl with specific numbers/doses"],
+  "related_drugs": ["generic_name_only"],
+  "related_conditions": ["condition_name_only"],
   "confidence": "high|moderate|low",
   "references": [{{"source": "string", "title": "string or null", "year": int_or_null, "url": null}}]
 }}
@@ -285,7 +332,12 @@ Your ONLY job: extract and format this data into the required JSON schema.
 - Set loe="I" and cor="I" for FDA-approved indications; loe="II-2" for adverse event frequency data
 - For claims from PubMed guidelines, set source=the society name (e.g., "AHA/ACC", "ADA", "ESC") and source_year from the abstract year
 
+BLUF RULE: Populate "bluf" with 1-3 sentences directly answering what the user asked, drawn from the source data below.
+Example — query "metformin for diabetes": bluf = "Metformin is first-line for T2DM per ADA 2024: 500 mg BD with meals, titrate to 1000 mg BD."
+Populate "additional_clinical_context" with query-specific nuance from the source data (monitoring pearls, off-label uses, special population notes). Output null if nothing relevant.
+
 {evidence_rules}
+{json_contract_rules}
 
 === DRUG DATA SOURCE: {data_source} ===
 Drug Name: {generic_name} ({brand_name})
@@ -304,19 +356,24 @@ FDA Label Year: {fda_label_source_year}
 === PUBLISHED GUIDELINES MENTIONING THIS DRUG (PubMed) ===
 {guideline_abstracts_formatted}
 
+=== SYSTEMATIC REVIEWS / META-ANALYSES (PubMed) ===
+{systematic_review_abstracts_formatted}
+
 Respond ONLY with a JSON object matching this EXACT structure:
 {{
   "drug_name": "string",
+  "bluf": "string — 1-3 sentences directly answering what the user asked (or null)",
+  "additional_clinical_context": "string — query-specific nuance not captured above (or null)",
   "drug_class": "string or null",
-  "mechanism_of_action": {{"value": "string", "loe": "string", "cor": "string", "source": "string", "source_year": int_or_null, "confidence": "string"}} or null,
-  "indications": [{{"value": "string", "loe": "string", "cor": "string", "source": "string", "source_year": int_or_null, "confidence": "string"}}],
-  "dosing": [{{"value": "string", "loe": "string", "cor": "string", "source": "string", "source_year": int_or_null, "confidence": "string", "route": "string or null", "frequency": "string or null"}}],
-  "contraindications": [{{"value": "...", "loe": "...", "cor": "...", "source": "...", "source_year": null, "confidence": "..."}}],
-  "side_effects": [{{"value": "...", "loe": "...", "cor": "...", "source": "...", "source_year": null, "confidence": "..."}}],
-  "interactions": [{{"drug": "string", "severity": "major|moderate|minor", "description": "string", "evidence": {{"value": "...", "loe": "...", "cor": "...", "source": "...", "source_year": null, "confidence": "..."}} or null}}],
-  "pharmacokinetics": {{"value": "...", ...}} or null,
-  "special_populations": [{{"value": "...", ...}}],
-  "monitoring": [{{"value": "...", ...}}],
+  "mechanism_of_action": {{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}} or null,
+  "indications": [{{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}}],
+  "dosing": [{{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low", "route": "string or null", "frequency": "string or null"}}],
+  "contraindications": [{{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}}],
+  "side_effects": [{{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}}],
+  "interactions": [{{"drug": "string", "severity": "major|moderate|minor", "description": "string", "evidence": {{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}} or null}}],
+  "pharmacokinetics": {{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}} or null,
+  "special_populations": [{{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}}],
+  "monitoring": [{{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}}],
   "references": [{{"source": "string", "title": "string or null", "year": int_or_null, "url": null}}]
 }}
 
@@ -324,9 +381,12 @@ Query: {query}"""
 
 DISEASE_FORMAT_PROMPT = """You are a senior clinician creating a comprehensive disease reference card.
 
-Your sources are below. Use them as PRIMARY evidence (cite with society + year). Where the abstracts are incomplete, supplement with your medical knowledge — especially for classification systems, pathophysiology mechanisms, and specific drug doses. Mark supplemented content with source="Clinical consensus", loe="III", confidence="moderate".
+Your sources are below. Use them as PRIMARY evidence (cite with society + year). Where source data is absent or incomplete for a specific field, you MAY supplement with established medical knowledge AS A LAST RESORT — but ONLY for widely-accepted facts (classification systems, standard pathophysiology mechanisms, well-established drug doses). ALWAYS mark any supplemented content explicitly with source="Clinical consensus", loe="III", confidence="moderate". Do NOT add supplemented content to fields that can remain [] or null.
 
-MANDATORY CLINICAL ORDER: etiology → clinical_features → pathophysiology → diagnostic_criteria → treatment → complications → prognosis
+BLUF RULE: Populate "bluf" first with 1-3 sentences directly answering what the user asked.
+Populate "additional_clinical_context" with any query-specific nuance not captured by the fixed schema fields. Output null if nothing to add.
+
+CONTENT ORDER: populate sections relevant to the query. Sections not relevant to the specific question may be [] or null — do not fabricate content to fill them.
 
 DEPTH REQUIREMENTS — every section MUST be fully populated:
 - etiology: 4-8 entries covering ALL causes (genetic, autoimmune, infectious, structural, toxic, idiopathic, risk factors)
@@ -342,6 +402,7 @@ DEPTH REQUIREMENTS — every section MUST be fully populated:
 - NEVER leave etiology, pathophysiology, clinical_features, diagnostic_criteria, or treatment empty
 
 {evidence_rules}
+{json_contract_rules}
 
 === RETRIEVED GUIDELINE DATA (ACC/AHA/ESC/ERS/NICE/WHO/ADA/IDSA etc. via PubMed) ===
 {guideline_abstracts_formatted}
@@ -358,20 +419,22 @@ DEPTH REQUIREMENTS — every section MUST be fully populated:
 Respond ONLY with a JSON object matching this EXACT structure:
 {{
   "disease_name": "string",
+  "bluf": "string — 1-3 sentences directly answering what the user asked (or null)",
+  "additional_clinical_context": "string — query-specific nuance not captured above (or null)",
   "icd_10": "string or null",
-  "etiology": [{{"value": "string", "loe": "string", "cor": "string", "source": "string", "source_year": int_or_null, "confidence": "string"}}],
-  "pathophysiology": {{"value": "string", "loe": "string", "cor": "string", "source": "string", "source_year": int_or_null, "confidence": "string"}} or null,
-  "epidemiology": {{"value": "...", ...}} or null,
-  "clinical_features": [{{"value": "...", "loe": "...", "cor": "...", "source": "...", "source_year": null, "confidence": "..."}}],
-  "diagnostic_criteria": [{{"value": "...", ...}}],
+  "etiology": [{{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}}],
+  "pathophysiology": {{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}} or null,
+  "epidemiology": {{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}} or null,
+  "clinical_features": [{{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}}],
+  "diagnostic_criteria": [{{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}}],
   "treatment": {{
-    "first_line": [{{"value": "...", "loe": "...", "cor": "...", "source": "...", "source_year": null, "confidence": "...", "drug_names": ["string"]}}],
-    "second_line": [{{"value": "...", ..., "drug_names": ["string"]}}],
-    "adjunctive": [{{"value": "...", ..., "drug_names": ["string"]}}],
-    "non_pharmacological": [{{"value": "...", ...}}]
+    "first_line": [{{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low", "drug_names": ["generic_name_only"]}}],
+    "second_line": [{{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low", "drug_names": ["generic_name_only"]}}],
+    "adjunctive": [{{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low", "drug_names": ["generic_name_only"]}}],
+    "non_pharmacological": [{{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}}]
   }},
-  "complications": [{{"value": "...", ...}}],
-  "prognosis": {{"value": "...", ...}} or null,
+  "complications": [{{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}}],
+  "prognosis": {{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}} or null,
   "references": [{{"source": "string", "title": "string or null", "year": int_or_null, "url": null}}]
 }}
 
@@ -381,6 +444,7 @@ COMPARATIVE_FORMAT_PROMPT = """You are a medical JSON formatter comparing two en
 Compare them accurately. Do NOT invent efficacy statistics not present in the source data.
 
 {evidence_rules}
+{json_contract_rules}
 
 === {entity1} SOURCE DATA ===
 {drug1_data_block}
@@ -402,7 +466,7 @@ Respond ONLY with a JSON object comparing "{entity1}" vs "{entity2}":
       }}
     }}
   ],
-  "clinical_preference": {{"value": "...", ...}} or null,
+  "clinical_preference": {{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}} or null,
   "references": [{{"source": "string", "title": "string or null", "year": int_or_null, "url": null}}]
 }}
 
@@ -411,8 +475,11 @@ Query: {query}"""
 PROCEDURE_FORMAT_PROMPT = """You are a clinical procedure reference formatter. Use the retrieved guideline data to create a structured procedure reference.
 
 {evidence_rules}
+{json_contract_rules}
 
 {focus_instruction}
+
+technique_steps rules: steps MUST be sequential; step_number starts at 1 and increments by 1 with no gaps. "notes" is null if not applicable — never output "".
 
 === PRACTICE GUIDELINES ===
 {guideline_abstracts_formatted}
@@ -423,11 +490,11 @@ PROCEDURE_FORMAT_PROMPT = """You are a clinical procedure reference formatter. U
 Respond ONLY with a JSON object for the procedure "{query}":
 {{
   "procedure_name": "string",
-  "indications": [{{"value": "when to perform", "loe": "I-III", "cor": "I/IIa/IIb/III-*", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}}],
-  "contraindications": [same EvidencedClaim format],
-  "technique_steps": [{{"step_number": 1, "description": "string", "notes": "optional"}}],
-  "complications": [EvidencedClaim format],
-  "guidelines": [{{"value": "recommendation text", "loe": "I-III", "cor": "I/IIa/IIb/III-*", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low", "society": "recommending body"}}],
+  "indications": [{{"value": "string describing when to perform", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}}],
+  "contraindications": [{{"value": "string describing contraindication", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}}],
+  "technique_steps": [{{"step_number": 1, "description": "string", "notes": "string or null"}}],
+  "complications": [{{"value": "string describing complication", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}}],
+  "guidelines": [{{"value": "recommendation text", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low", "society": "e.g. SSC, AHA/ACC, NICE, WHO — null if unknown"}}],
   "references": [{{"source": "string", "title": "string or null", "year": int_or_null, "url": null}}]
 }}
 
@@ -436,8 +503,15 @@ Query: {query}"""
 EVIDENCE_FORMAT_PROMPT = """You are a clinical evidence synthesizer. Use the retrieved study data to provide a balanced evidence summary.
 
 {evidence_rules}
+{json_contract_rules}
 
 {focus_instruction}
+
+pmid rule: numeric string only, no "PMID:" prefix (e.g. "38293847") — output null if unavailable.
+guideline_status rule: output EXACTLY one of these three templates (fill in the blanks):
+  "No formal guideline exists"
+  "Mentioned in [Society] [year] guidelines"
+  "Formal recommendation in [Society] [year] guidelines"
 
 === CLINICAL TRIALS / RCTs ===
 {clinical_trial_abstracts_formatted}
@@ -454,19 +528,24 @@ Respond ONLY with a JSON object:
   "summary": "2-3 sentence overview of the evidence",
   "supporting_studies": [{{
     "title": "study title",
-    "pmid": "PubMed ID or null",
+    "pmid": "numeric string or null",
     "year": int_or_null,
     "finding": "key finding in 1-2 sentences",
     "sample_size": "e.g. n=500 or null",
-    "loe": "I-III"
+    "loe": "I|II-1|II-2|II-3|III"
   }}],
-  "opposing_studies": [same format],
-  "clinical_recommendation": {{"value": "recommendation", "loe": "I-III", "cor": "I/IIa/IIb/III-*", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}} or null,
-  "guideline_status": "e.g. 'No formal guideline exists' or 'Mentioned in X guideline'",
+  "opposing_studies": [{{
+    "title": "study title",
+    "pmid": "numeric string or null",
+    "year": int_or_null,
+    "finding": "key finding in 1-2 sentences",
+    "sample_size": "e.g. n=500 or null",
+    "loe": "I|II-1|II-2|II-3|III"
+  }}],
+  "clinical_recommendation": {{"value": "recommendation", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}} or null,
+  "guideline_status": "No formal guideline exists",
   "references": [{{"source": "string", "title": "string or null", "year": int_or_null, "url": null}}]
 }}
-
-For PMIDs, include the numeric ID only (e.g. "38293847"). These will be auto-linked.
 
 Query: {query}"""
 
@@ -544,10 +623,13 @@ def build_prompt(
     Vector results are injected into both modes when available.
     """
     if intent == "highlights":
-        vector_context = _format_vector_context(vector_results) if vector_results else ""
+        vector_context = (
+            _format_vector_context(vector_results) if vector_results else ""
+        )
         return HIGHLIGHTS_PROMPT.format(
             query=query,
             approved_sources=APPROVED_SOURCES,
+            json_contract_rules=JSON_CONTRACT_RULES,
             vector_context=vector_context,
         )
 
@@ -572,6 +654,7 @@ def _build_generate_prompt(
             query=query,
             approved_sources=APPROVED_SOURCES,
             evidence_rules=EVIDENCE_RULES,
+            json_contract_rules=JSON_CONTRACT_RULES,
             vector_context=vector_context,
             focus_instruction=focus_instruction,
         )
@@ -581,6 +664,7 @@ def _build_generate_prompt(
         query=query,
         approved_sources=APPROVED_SOURCES,
         evidence_rules=EVIDENCE_RULES,
+        json_contract_rules=JSON_CONTRACT_RULES,
     )
     if vector_context:
         prompt = prompt.rstrip() + "\n\n" + vector_context
@@ -627,10 +711,51 @@ def _format_vector_context(results: "list[SearchResult]") -> str:
 # Intent detection for focused answers
 # ──────────────────────────────────────────────
 
-_MANAGEMENT_KEYWORDS = {"manage", "management", "treat", "treatment", "therapy", "therapies", "regimen", "protocol", "guideline", "guidelines", "first-line", "second-line"}
-_DOSING_KEYWORDS = {"dose", "dosing", "dosage", "mg", "mcg", "ug", "titrat", "prescri", "prescrib"}
-_MECHANISM_KEYWORDS = {"mechanism", "moa", "how does", "pharmacology", "pharmacokinetic", "pharmacodynamic", "action", "work"}
-_DIAGNOSIS_KEYWORDS = {"diagnos", "diagnosis", "workup", "investigation", "test", "criteria", "differential", "ddx"}
+_MANAGEMENT_KEYWORDS = {
+    "manage",
+    "management",
+    "treat",
+    "treatment",
+    "therapy",
+    "therapies",
+    "regimen",
+    "protocol",
+    "guideline",
+    "guidelines",
+    "first-line",
+    "second-line",
+}
+_DOSING_KEYWORDS = {
+    "dose",
+    "dosing",
+    "dosage",
+    "mg",
+    "mcg",
+    "ug",
+    "titrat",
+    "prescri",
+    "prescrib",
+}
+_MECHANISM_KEYWORDS = {
+    "mechanism",
+    "moa",
+    "how does",
+    "pharmacology",
+    "pharmacokinetic",
+    "pharmacodynamic",
+    "action",
+    "work",
+}
+_DIAGNOSIS_KEYWORDS = {
+    "diagnos",
+    "diagnosis",
+    "workup",
+    "investigation",
+    "test",
+    "criteria",
+    "differential",
+    "ddx",
+}
 
 _FOCUS_INSTRUCTIONS = {
     "management": (
@@ -729,6 +854,7 @@ def _build_format_prompt(
         prompt = DRUG_FORMAT_PROMPT.format(
             query=query,
             evidence_rules=EVIDENCE_RULES,
+            json_contract_rules=JSON_CONTRACT_RULES,
             data_source=d.data_source.upper(),
             generic_name=d.generic_name or "Unknown",
             brand_name=d.brand_name or "Unknown",
@@ -746,6 +872,9 @@ def _build_format_prompt(
             special_populations_raw=d.special_populations_raw or "Not available",
             fda_label_source_year=d.fda_label_source_year or "Unknown",
             guideline_abstracts_formatted=_format_abstracts(d.guideline_abstracts),
+            systematic_review_abstracts_formatted=_format_abstracts(
+                d.systematic_review_abstracts
+            ),
         )
         if vector_results:
             prompt += "\n\n" + _format_vector_context(vector_results)
@@ -760,6 +889,7 @@ def _build_format_prompt(
         prompt = DISEASE_FORMAT_PROMPT.format(
             query=query,
             evidence_rules=EVIDENCE_RULES,
+            json_contract_rules=JSON_CONTRACT_RULES,
             guideline_abstracts_formatted=_format_abstracts(d.guideline_abstracts),
             systematic_review_abstracts_formatted=_format_abstracts(
                 d.systematic_review_abstracts
@@ -780,6 +910,7 @@ def _build_format_prompt(
         prompt = COMPARATIVE_FORMAT_PROMPT.format(
             query=query,
             evidence_rules=EVIDENCE_RULES,
+            json_contract_rules=JSON_CONTRACT_RULES,
             entity1=entity1,
             entity2=entity2,
             drug1_data_block=_format_drug_block(d1),
@@ -798,6 +929,7 @@ def _build_format_prompt(
         prompt = PROCEDURE_FORMAT_PROMPT.format(
             query=query,
             evidence_rules=EVIDENCE_RULES,
+            json_contract_rules=JSON_CONTRACT_RULES,
             focus_instruction=_detect_focus_instruction(query),
             guideline_abstracts_formatted=_format_abstracts(d.guideline_abstracts),
             practice_guideline_abstracts_formatted=_format_abstracts(
@@ -817,6 +949,7 @@ def _build_format_prompt(
         prompt = EVIDENCE_FORMAT_PROMPT.format(
             query=query,
             evidence_rules=EVIDENCE_RULES,
+            json_contract_rules=JSON_CONTRACT_RULES,
             focus_instruction=_detect_focus_instruction(query),
             clinical_trial_abstracts_formatted=_format_abstracts(
                 d.clinical_trial_abstracts

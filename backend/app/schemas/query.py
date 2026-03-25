@@ -41,6 +41,8 @@ class DrugInteraction(BaseModel):
 
 class DrugResponse(BaseModel):
     drug_name: str
+    bluf: Optional[str] = Field(default=None, max_length=1000)
+    additional_clinical_context: Optional[str] = Field(default=None, max_length=2000)
     drug_class: Optional[str] = None
     mechanism_of_action: Optional[EvidencedClaim] = None
     indications: list[EvidencedClaim] = []
@@ -63,6 +65,8 @@ class TreatmentEntry(EvidencedClaim):
 
 class DiseaseResponse(BaseModel):
     disease_name: str
+    bluf: Optional[str] = Field(default=None, max_length=1000)
+    additional_clinical_context: Optional[str] = Field(default=None, max_length=2000)
     icd_10: Optional[str] = None
     etiology: list[EvidencedClaim] = []
     pathophysiology: Optional[EvidencedClaim] = None
@@ -187,6 +191,7 @@ class QueryRequest(BaseModel):
         Literal["drug", "disease", "comparative", "procedure", "evidence"]
     ] = None
     model_id: str = "claude-sonnet-4-20250514"
+    source_mode: Literal["ai", "scraping", "pdfs"] = "ai"
 
 
 class QueryResponse(BaseModel):

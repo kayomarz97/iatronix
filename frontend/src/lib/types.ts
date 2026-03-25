@@ -28,6 +28,8 @@ export interface DrugInteraction {
 
 export interface DrugResponse {
   drug_name: string;
+  bluf?: string | null;
+  additional_clinical_context?: string | null;
   drug_class?: string | null;
   mechanism_of_action?: EvidencedClaim | null;
   indications: EvidencedClaim[];
@@ -54,6 +56,8 @@ export interface TreatmentSection {
 
 export interface DiseaseResponse {
   disease_name: string;
+  bluf?: string | null;
+  additional_clinical_context?: string | null;
   icd_10?: string | null;
   etiology: EvidencedClaim[];
   pathophysiology?: EvidencedClaim | null;
