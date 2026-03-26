@@ -1,10 +1,10 @@
 "use client";
 
 import type { DrugResponse } from "@/lib/types";
-import { Accordion } from "@/components/ui/Accordion";
 import { Badge } from "@/components/ui/Badge";
 import { ClaimItem } from "./ClaimItem";
 import { EvidencedText } from "./EvidenceBadge";
+import { ReferenceList } from "./ReferenceList";
 import { TruncatedList } from "./TruncatedList";
 
 interface DrugInfoResultProps {
@@ -22,13 +22,13 @@ export function DrugInfoResult({ data }: DrugInfoResultProps) {
       </div>
 
       {data.bluf && (
-        <div style={{ background: "var(--surface-2)", borderLeft: "3px solid var(--accent)", padding: "0.75rem 1rem", borderRadius: "0 4px 4px 0" }}>
+        <div style={{ background: "var(--bg-elevated)", borderLeft: "3px solid var(--accent)", padding: "0.75rem 1rem", borderRadius: "0 4px 4px 0" }}>
           <p className="text-sm font-medium leading-relaxed">{data.bluf}</p>
         </div>
       )}
 
       {data.additional_clinical_context && (
-        <div style={{ background: "var(--surface-2)", padding: "0.75rem 1rem", borderRadius: "4px" }}>
+        <div style={{ background: "var(--bg-elevated)", padding: "0.75rem 1rem", borderRadius: "4px" }}>
           <p className="text-xs text-text-secondary leading-relaxed">{data.additional_clinical_context}</p>
         </div>
       )}
@@ -41,7 +41,7 @@ export function DrugInfoResult({ data }: DrugInfoResultProps) {
         </Section>
       )}
 
-      {data.indications.length > 0 && (
+      {data.indications?.length > 0 && (
         <Section title="Indications">
           <ul className="list-disc list-inside space-y-1">
             <TruncatedList
@@ -52,7 +52,7 @@ export function DrugInfoResult({ data }: DrugInfoResultProps) {
         </Section>
       )}
 
-      {data.dosing.length > 0 && (
+      {data.dosing?.length > 0 && (
         <Section title="Dosing">
           <TruncatedList
             items={data.dosing}
@@ -81,7 +81,7 @@ export function DrugInfoResult({ data }: DrugInfoResultProps) {
         </Section>
       )}
 
-      {data.contraindications.length > 0 && (
+      {data.contraindications?.length > 0 && (
         <Section title="Contraindications">
           <ul className="list-disc list-inside space-y-1">
             <TruncatedList
@@ -92,7 +92,7 @@ export function DrugInfoResult({ data }: DrugInfoResultProps) {
         </Section>
       )}
 
-      {data.side_effects.length > 0 && (
+      {data.side_effects?.length > 0 && (
         <Section title="Adverse Effects">
           <ul className="list-disc list-inside space-y-1">
             <TruncatedList
@@ -103,7 +103,7 @@ export function DrugInfoResult({ data }: DrugInfoResultProps) {
         </Section>
       )}
 
-      {data.interactions.length > 0 && (
+      {data.interactions?.length > 0 && (
         <Section title="Drug Interactions">
           <TruncatedList
             items={data.interactions}
@@ -138,7 +138,7 @@ export function DrugInfoResult({ data }: DrugInfoResultProps) {
         </Section>
       )}
 
-      {data.special_populations.length > 0 && (
+      {data.special_populations?.length > 0 && (
         <Section title="Special Populations">
           <ul className="list-disc list-inside space-y-1">
             <TruncatedList
@@ -149,7 +149,7 @@ export function DrugInfoResult({ data }: DrugInfoResultProps) {
         </Section>
       )}
 
-      {data.monitoring.length > 0 && (
+      {data.monitoring?.length > 0 && (
         <Section title="Monitoring Parameters">
           <ul className="list-disc list-inside space-y-1">
             <TruncatedList
@@ -160,18 +160,8 @@ export function DrugInfoResult({ data }: DrugInfoResultProps) {
         </Section>
       )}
 
-      {data.references.length > 0 && (
-        <Accordion title="References" count={data.references.length}>
-          <ul className="text-xs text-text-muted space-y-1">
-            {data.references.map((ref, i) => (
-              <li key={i}>
-                {ref.source}
-                {ref.title ? ` — ${ref.title}` : ""}
-                {ref.year ? ` (${ref.year})` : ""}
-              </li>
-            ))}
-          </ul>
-        </Accordion>
+      {data.references?.length > 0 && (
+        <ReferenceList references={data.references} />
       )}
     </div>
   );

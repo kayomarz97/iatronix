@@ -87,10 +87,12 @@ def check_safety(query: str, response_data: dict, query_type: str) -> list[str]:
         a_found = any(d in combined_text for d in group_a)
         b_found = any(d in combined_text for d in group_b)
         if a_found and b_found:
+            matched_a = {d for d in group_a if d in combined_text}
+            matched_b = {d for d in group_b if d in combined_text}
             warnings.append(
                 f"Potential drug interaction detected between "
-                f"{group_a & set(combined_text.split())} and "
-                f"{group_b & set(combined_text.split())}. "
+                f"{', '.join(matched_a)} and "
+                f"{', '.join(matched_b)}. "
                 "Verify clinical significance."
             )
 

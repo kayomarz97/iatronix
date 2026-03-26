@@ -191,6 +191,9 @@ class QueryRequest(BaseModel):
         Literal["drug", "disease", "comparative", "procedure", "evidence"]
     ] = None
     model_id: str = "claude-sonnet-4-20250514"
+    model_explicit: bool = (
+        False  # True when user explicitly chose a model (not just default)
+    )
     source_mode: Literal["ai", "scraping", "pdfs"] = "ai"
 
 

@@ -4,7 +4,7 @@ import bcrypt
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, EmailStr
-from sqlalchemy import select, delete
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import generate_api_key
@@ -81,6 +81,8 @@ async def register(
         institute=req.institute,
         specialty=req.specialty,
         institution_type=req.institution_type,
+        age=req.age,
+        gender=req.gender,
         newsletter_consent=req.newsletter_consent,
         preferences={},
         tier="free",
@@ -134,7 +136,11 @@ async def get_me(
         institute=db_user.institute,
         specialty=db_user.specialty,
         institution_type=db_user.institution_type,
-        role=db_user.role.value if hasattr(db_user.role, "value") else str(db_user.role),
+        age=db_user.age,
+        gender=db_user.gender,
+        role=db_user.role.value
+        if hasattr(db_user.role, "value")
+        else str(db_user.role),
         tier=db_user.tier or "free",
         llm_provider=db_user.llm_provider,
         has_llm_key=bool(db_user.encrypted_llm_key),
@@ -177,6 +183,10 @@ async def update_profile(
         db_user.specialty = req.specialty
     if req.institution_type is not None:
         db_user.institution_type = req.institution_type
+    if req.age is not None:
+        db_user.age = req.age
+    if req.gender is not None:
+        db_user.gender = req.gender
     if req.newsletter_consent is not None:
         db_user.newsletter_consent = req.newsletter_consent
 
@@ -193,7 +203,11 @@ async def update_profile(
         institute=db_user.institute,
         specialty=db_user.specialty,
         institution_type=db_user.institution_type,
-        role=db_user.role.value if hasattr(db_user.role, "value") else str(db_user.role),
+        age=db_user.age,
+        gender=db_user.gender,
+        role=db_user.role.value
+        if hasattr(db_user.role, "value")
+        else str(db_user.role),
         tier=db_user.tier or "free",
         llm_provider=db_user.llm_provider,
         has_llm_key=bool(db_user.encrypted_llm_key),
@@ -291,6 +305,7 @@ async def delete_account(
     # Also clean up R2 files for user's documents
     from app.models.document import Document
     from app.services import r2_storage
+
     doc_result = await session.execute(
         select(Document).where(Document.uploaded_by_user_id == user.id)
     )

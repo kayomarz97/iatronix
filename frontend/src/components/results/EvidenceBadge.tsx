@@ -34,7 +34,7 @@ export function EvidenceBadge({ claim }: EvidenceBadgeProps) {
             {claim.confidence}
           </span>
           <span className="block text-gray-300">
-            {claim.source}
+            {claim.source || "Unknown source"}
             {claim.source_year ? ` (${claim.source_year})` : ""}
           </span>
           <span className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-900" />

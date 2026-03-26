@@ -37,7 +37,9 @@ class Document(TimestampMixin, Base):
     r2_url: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
 
     # Auto-deletion: non-approved docs expire after N hours
-    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     chunks: Mapped[list["DocumentChunk"]] = relationship(
         back_populates="document", cascade="all, delete-orphan"

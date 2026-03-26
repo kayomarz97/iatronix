@@ -1,98 +1,156 @@
 "use client";
 
 import type { ComparativeResponse } from "@/lib/types";
-import { Accordion } from "@/components/ui/Accordion";
-import { EvidencedText, EvidenceBadge } from "./EvidenceBadge";
+import { EvidencedText } from "./EvidenceBadge";
 import { TruncatedList } from "./TruncatedList";
+import { ReferenceList } from "./ReferenceList";
 
 interface ComparativeResultProps {
   data: ComparativeResponse;
 }
 
+const ENTITY_COLORS = [
+  { bg: "rgba(59,130,246,0.08)", border: "rgba(59,130,246,0.25)", label: "#60a5fa" },
+  { bg: "rgba(139,92,246,0.08)", border: "rgba(139,92,246,0.25)", label: "#a78bfa" },
+  { bg: "rgba(16,185,129,0.08)", border: "rgba(16,185,129,0.25)", label: "#34d399" },
+];
+
 export function ComparativeResult({ data }: ComparativeResultProps) {
+  // Build entity → color map from entities_compared order
+  const entityColor: Record<string, (typeof ENTITY_COLORS)[0]> = {};
+  data.entities_compared.forEach((e, i) => {
+    entityColor[e] = ENTITY_COLORS[i % ENTITY_COLORS.length];
+  });
+
   return (
     <div className="space-y-5">
-      <div className="border-b border-border pb-4">
-        <h2 className="text-2xl font-bold">
-          {data.entities_compared.join(" vs ")}
-        </h2>
+      {/* Header with entity pills */}
+      <div style={{ borderBottom: "1px solid var(--border)", paddingBottom: "1rem" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" }}>
+          {data.entities_compared.map((entity, i) => (
+            <span key={entity}>
+              {i > 0 && (
+                <span style={{ color: "var(--text-muted)", fontWeight: 600, fontSize: "1.1rem", marginRight: "0.75rem" }}>
+                  vs
+                </span>
+              )}
+              <span
+                style={{
+                  fontSize: "1.25rem",
+                  fontWeight: 700,
+                  color: entityColor[entity]?.label ?? "var(--text-primary)",
+                }}
+              >
+                {entity}
+              </span>
+            </span>
+          ))}
+        </div>
         {data.comparison_type && (
-          <p className="text-text-secondary mt-1">{data.comparison_type}</p>
+          <p style={{ color: "var(--text-secondary)", marginTop: "0.25rem", fontSize: "0.85rem" }}>
+            {data.comparison_type}
+          </p>
         )}
       </div>
 
+      {/* Summary */}
       {data.summary && (
-        <Section title="Summary">
-          <p className="text-sm leading-relaxed">
+        <div
+          style={{
+            background: "var(--bg-surface)",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--radius-md)",
+            padding: "1rem",
+          }}
+        >
+          <p style={{ fontSize: "0.875rem", lineHeight: 1.7 }}>
             <EvidencedText claim={data.summary} />
           </p>
-        </Section>
+        </div>
       )}
 
-      {data.detailed_comparison.length > 0 && (
-        <Section title="Detailed Comparison">
+      {/* Detailed Comparison */}
+      {data.detailed_comparison?.length > 0 && (
+        <div>
+          <h3 style={{ fontSize: "0.95rem", fontWeight: 600, marginBottom: "0.75rem" }}>
+            Detailed Comparison
+          </h3>
           <TruncatedList
             items={data.detailed_comparison}
             renderItem={(dim, i) => (
-              <div key={i} className="py-3 border-b border-border/50 last:border-0">
-                <h4 className="font-semibold text-sm mb-2">{dim.dimension}</h4>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {Object.entries(dim.values).map(([entity, claim]) => (
-                    <div
-                      key={entity}
-                      className="p-3 rounded-lg bg-surface-alt border border-border"
-                    >
-                      <p className="font-medium text-xs text-primary mb-1">
-                        {entity}
-                      </p>
-                      <p className="text-sm leading-relaxed">
-                        <EvidencedText claim={claim} />
-                      </p>
-                    </div>
-                  ))}
+              <div
+                key={i}
+                style={{
+                  marginBottom: "0.75rem",
+                  border: "1px solid var(--border)",
+                  borderRadius: "var(--radius-md)",
+                  overflow: "hidden",
+                }}
+              >
+                <div
+                  style={{
+                    padding: "0.5rem 0.75rem",
+                    background: "var(--bg-elevated)",
+                    borderBottom: "1px solid var(--border)",
+                    fontWeight: 600,
+                    fontSize: "0.8rem",
+                    textTransform: "uppercase",
+                    letterSpacing: "0.03em",
+                    color: "var(--text-secondary)",
+                  }}
+                >
+                  {dim.dimension}
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(Object.keys(dim.values).length, 2)}, 1fr)` }}>
+                  {Object.entries(dim.values).map(([entity, claim], j) => {
+                    const color = entityColor[entity] ?? ENTITY_COLORS[0];
+                    return (
+                      <div
+                        key={entity}
+                        style={{
+                          padding: "0.75rem",
+                          borderRight: j === 0 && Object.keys(dim.values).length > 1 ? "1px solid var(--border)" : "none",
+                          background: color.bg,
+                        }}
+                      >
+                        <p style={{ fontWeight: 600, fontSize: "0.7rem", color: color.label, marginBottom: "0.35rem", textTransform: "uppercase" }}>
+                          {entity}
+                        </p>
+                        <p style={{ fontSize: "0.825rem", lineHeight: 1.6, color: "var(--text-secondary)" }}>
+                          <EvidencedText claim={claim} />
+                        </p>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}
           />
-        </Section>
+        </div>
       )}
 
+      {/* Clinical Preference */}
       {data.clinical_preference && (
-        <Section title="Clinical Preference">
-          <p className="text-sm leading-relaxed">
+        <div
+          style={{
+            background: "rgba(16,185,129,0.06)",
+            border: "1px solid rgba(16,185,129,0.2)",
+            borderRadius: "var(--radius-md)",
+            padding: "0.75rem 1rem",
+          }}
+        >
+          <h3 style={{ fontSize: "0.8rem", fontWeight: 600, color: "#34d399", marginBottom: "0.35rem" }}>
+            Clinical Preference
+          </h3>
+          <p style={{ fontSize: "0.85rem", lineHeight: 1.6, color: "var(--text-secondary)" }}>
             <EvidencedText claim={data.clinical_preference} />
           </p>
-        </Section>
+        </div>
       )}
 
-      {data.references.length > 0 && (
-        <Accordion title="References" count={data.references.length}>
-          <ul className="text-xs text-text-muted space-y-1">
-            {data.references.map((ref, i) => (
-              <li key={i}>
-                {ref.source}
-                {ref.title ? ` — ${ref.title}` : ""}
-                {ref.year ? ` (${ref.year})` : ""}
-              </li>
-            ))}
-          </ul>
-        </Accordion>
+      {data.references?.length > 0 && (
+        <ReferenceList references={data.references} />
       )}
-    </div>
-  );
-}
-
-function Section({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div>
-      <h3 className="text-base font-semibold mb-2 text-text">{title}</h3>
-      {children}
     </div>
   );
 }

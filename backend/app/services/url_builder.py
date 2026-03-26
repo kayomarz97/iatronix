@@ -52,6 +52,44 @@ ALLOWED_DOMAINS: frozenset[str] = frozenset(
         "easl.eu",
         "www.eshonline.org",
         "www.isth.org",
+        # Major medical journals
+        "www.annals.org",
+        "journal.chestnet.org",
+        "www.atsjournals.org",
+        "academic.oup.com",
+        "www.nature.com",
+        "www.cell.com",
+        "www.sciencedirect.com",
+        "link.springer.com",
+        "onlinelibrary.wiley.com",
+        "www.mdpi.com",
+        "www.frontiersin.org",
+        "journals.plos.org",
+        "www.ncbi.nlm.nih.gov",
+        "www.uptodate.com",
+        "bestpractice.bmj.com",
+        "bnf.nice.org.uk",
+        "www.medicines.org.uk",
+        "dailymed.nlm.nih.gov",
+        "www.rxlist.com",
+        "www.drugs.com",
+        "medlineplus.gov",
+        # Clinical trials and NIH resources
+        "clinicaltrials.gov",
+        "www.guidelines.gov",
+        # PubMed Central
+        "pmc.ncbi.nlm.nih.gov",
+        # Additional specialty society journals
+        "www.gastrojournal.org",
+        "www.journal-of-hepatology.eu",
+        "erj.ersjournals.com",
+        "thorax.bmj.com",
+        "gut.bmj.com",
+        "heart.bmj.com",
+        "ard.bmj.com",
+        "www.blood.org",
+        "ashpublications.org",
+        "www.haematologica.org",
     }
 )
 
@@ -86,6 +124,20 @@ _SOURCE_URL_MAP: list[tuple[str, str]] = [
     ("easl", "https://easl.eu/"),
     ("esh", "https://www.eshonline.org/"),
     ("isth", "https://www.isth.org/"),
+    # Major journals
+    ("nejm", "https://www.nejm.org/"),
+    ("lancet", "https://www.thelancet.com/"),
+    ("jama", "https://jamanetwork.com/"),
+    ("annals", "https://www.annals.org/"),
+    ("chest", "https://journal.chestnet.org/"),
+    ("nature", "https://www.nature.com/"),
+    ("uptodate", "https://www.uptodate.com/"),
+    ("bmj best practice", "https://bestpractice.bmj.com/"),
+    ("bnf", "https://bnf.nice.org.uk/"),
+    ("dailymed", "https://dailymed.nlm.nih.gov/"),
+    ("medlineplus", "https://medlineplus.gov/"),
+    ("micromedex", "https://www.uptodate.com/"),
+    ("indian pharmacopoeia", "https://www.drugs.com/"),
 ]
 
 

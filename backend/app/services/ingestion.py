@@ -23,7 +23,7 @@ from app.db.session import async_session as async_session_factory
 from app.models.document import Document, DocumentChunk
 from app.services.embedder import Embedder
 from app.services.pdf_verifier import verify_pdf
-from app.services import r2_storage, cost_estimator
+from app.services import r2_storage
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +39,7 @@ NCBI_BASE = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
 # ---------------------------------------------------------------------------
 # PDF Ingestion
 # ---------------------------------------------------------------------------
+
 
 async def ingest_pdf(
     file_name: str,
@@ -71,8 +72,13 @@ async def ingest_pdf(
             r2_key = None
 
     # Set expiry for non-approved documents
-    expires_at = None if verified else (
-        datetime.now(timezone.utc) + timedelta(hours=settings.pdf_non_approved_ttl_hours)
+    expires_at = (
+        None
+        if verified
+        else (
+            datetime.now(timezone.utc)
+            + timedelta(hours=settings.pdf_non_approved_ttl_hours)
+        )
     )
 
     # Chunk with page tracking
@@ -102,13 +108,15 @@ async def ingest_pdf(
         await session.flush()  # get doc.id
 
         for i, (chunk, emb) in enumerate(zip(chunks, embeddings)):
-            session.add(DocumentChunk(
-                document_id=doc.id,
-                content=chunk["text"],
-                chunk_index=i,
-                page_number=chunk.get("page_number"),
-                embedding=emb,
-            ))
+            session.add(
+                DocumentChunk(
+                    document_id=doc.id,
+                    content=chunk["text"],
+                    chunk_index=i,
+                    page_number=chunk.get("page_number"),
+                    embedding=emb,
+                )
+            )
 
         await session.commit()
         await session.refresh(doc)
@@ -151,6 +159,7 @@ def _chunk_pages(pages: list[tuple[int, str]]) -> list[dict]:
 # PMC Full-Text Ingestion
 # ---------------------------------------------------------------------------
 
+
 async def ingest_pmc_article(pmcid: str) -> Optional[Document]:
     """Fetch and index a full-text PMC article."""
     async with async_session_factory() as session:
@@ -181,11 +190,13 @@ async def ingest_pmc_article(pmcid: str) -> Optional[Document]:
         section_chunks = _splitter.split_text(text)
         for chunk_text in section_chunks:
             if chunk_text.strip():
-                chunks.append({
-                    "text": chunk_text,
-                    "page_number": None,
-                    "section": section_name,
-                })
+                chunks.append(
+                    {
+                        "text": chunk_text,
+                        "page_number": None,
+                        "section": section_name,
+                    }
+                )
 
     if not chunks:
         return None
@@ -208,13 +219,15 @@ async def ingest_pmc_article(pmcid: str) -> Optional[Document]:
         await session.flush()
 
         for i, (chunk, emb) in enumerate(zip(chunks, embeddings)):
-            session.add(DocumentChunk(
-                document_id=doc.id,
-                content=chunk["text"],
-                chunk_index=i,
-                embedding=emb,
-                metadata_={"section": chunk.get("section")},
-            ))
+            session.add(
+                DocumentChunk(
+                    document_id=doc.id,
+                    content=chunk["text"],
+                    chunk_index=i,
+                    embedding=emb,
+                    metadata_={"section": chunk.get("section")},
+                )
+            )
 
         await session.commit()
         await session.refresh(doc)
@@ -244,7 +257,8 @@ def _parse_pmc_xml(xml_text: str) -> dict[str, str]:
         for sec in root.findall(".//body//sec"):
             sec_title_el = sec.find("title")
             sec_title = (
-                sec_title_el.text.strip() if sec_title_el is not None and sec_title_el.text
+                sec_title_el.text.strip()
+                if sec_title_el is not None and sec_title_el.text
                 else "Untitled"
             )
             paragraphs = []
@@ -264,6 +278,7 @@ def _parse_pmc_xml(xml_text: str) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 # StatPearls Ingestion
 # ---------------------------------------------------------------------------
+
 
 async def ingest_statpearls(topic: str) -> Optional[Document]:
     """Fetch and index a StatPearls monograph from NCBI Bookshelf."""
@@ -301,9 +316,7 @@ async def ingest_statpearls(topic: str) -> Optional[Document]:
         fetch_params = {"db": "books", "id": book_id, "rettype": "xml"}
         if settings.pubmed_api_key:
             fetch_params["api_key"] = settings.pubmed_api_key
-        resp = await client.get(
-            f"{NCBI_BASE}/efetch.fcgi", params=fetch_params
-        )
+        resp = await client.get(f"{NCBI_BASE}/efetch.fcgi", params=fetch_params)
         if resp.status_code != 200:
             return None
 
@@ -320,10 +333,12 @@ async def ingest_statpearls(topic: str) -> Optional[Document]:
         section_chunks = _splitter.split_text(text)
         for chunk_text in section_chunks:
             if chunk_text.strip():
-                chunks.append({
-                    "text": chunk_text,
-                    "section": section_name,
-                })
+                chunks.append(
+                    {
+                        "text": chunk_text,
+                        "section": section_name,
+                    }
+                )
 
     if not chunks:
         return None
@@ -345,13 +360,15 @@ async def ingest_statpearls(topic: str) -> Optional[Document]:
         await session.flush()
 
         for i, (chunk, emb) in enumerate(zip(chunks, embeddings)):
-            session.add(DocumentChunk(
-                document_id=doc.id,
-                content=chunk["text"],
-                chunk_index=i,
-                embedding=emb,
-                metadata_={"section": chunk.get("section")},
-            ))
+            session.add(
+                DocumentChunk(
+                    document_id=doc.id,
+                    content=chunk["text"],
+                    chunk_index=i,
+                    embedding=emb,
+                    metadata_={"section": chunk.get("section")},
+                )
+            )
 
         await session.commit()
         await session.refresh(doc)
@@ -372,7 +389,8 @@ def _parse_statpearls_xml(xml_text: str) -> dict[str, str]:
             title_el = sec.find("title")
             sec_title = (
                 "".join(title_el.itertext()).strip()
-                if title_el is not None else "Untitled"
+                if title_el is not None
+                else "Untitled"
             )
             paragraphs = []
             for p in sec.findall("p"):
@@ -391,6 +409,7 @@ def _parse_statpearls_xml(xml_text: str) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 # PubMed Abstract Ingestion (fallback)
 # ---------------------------------------------------------------------------
+
 
 async def ingest_pubmed_abstracts(abstracts: list[dict]) -> int:
     """Index PubMed abstracts into pgvector. Deduplicates by PMID.
@@ -433,13 +452,15 @@ async def ingest_pubmed_abstracts(abstracts: list[dict]) -> int:
             session.add(doc)
             await session.flush()
 
-            session.add(DocumentChunk(
-                document_id=doc.id,
-                content=text,
-                chunk_index=0,
-                embedding=embedding,
-                metadata_={"year": ab.get("year"), "journal": ab.get("journal")},
-            ))
+            session.add(
+                DocumentChunk(
+                    document_id=doc.id,
+                    content=text,
+                    chunk_index=0,
+                    embedding=embedding,
+                    metadata_={"year": ab.get("year"), "journal": ab.get("journal")},
+                )
+            )
             indexed += 1
 
         await session.commit()

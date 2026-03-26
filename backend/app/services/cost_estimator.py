@@ -1,4 +1,5 @@
 """Cost estimation utilities — shown to users before LLM operations."""
+
 import math
 from app.config import settings
 
@@ -42,7 +43,9 @@ def estimate_query_cost(query_type: str, fetched_data_chars: int = 8000) -> dict
         output_rate = settings.cost_sonnet_output_per_m
         max_out = settings.llm_max_tokens_format_disease
 
-    est_input = int(fetched_data_chars / 4) + 500  # fetched data + system prompt overhead
+    est_input = (
+        int(fetched_data_chars / 4) + 500
+    )  # fetched data + system prompt overhead
     est_output = max_out  # worst case
 
     cost = (est_input / 1_000_000 * input_rate) + (est_output / 1_000_000 * output_rate)

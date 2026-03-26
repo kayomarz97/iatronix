@@ -16,8 +16,8 @@ export function ProcedureResult({ data }: ProcedureResultProps) {
         <h2 className="text-2xl font-bold">{data.procedure_name}</h2>
       </div>
 
-      {data.indications.length > 0 && (
-        <Accordion title="Indications" count={data.indications.length} defaultOpen>
+      {data.indications?.length > 0 && (
+        <Accordion title="Indications" count={data.indications?.length} defaultOpen>
           <ul className="space-y-2">
             {data.indications.map((item, i) => (
               <li key={i}>
@@ -28,8 +28,8 @@ export function ProcedureResult({ data }: ProcedureResultProps) {
         </Accordion>
       )}
 
-      {data.contraindications.length > 0 && (
-        <Accordion title="Contraindications" count={data.contraindications.length}>
+      {data.contraindications?.length > 0 && (
+        <Accordion title="Contraindications" count={data.contraindications?.length}>
           <ul className="space-y-2">
             {data.contraindications.map((item, i) => (
               <li key={i}>
@@ -40,8 +40,8 @@ export function ProcedureResult({ data }: ProcedureResultProps) {
         </Accordion>
       )}
 
-      {data.technique_steps.length > 0 && (
-        <Accordion title="Technique / Steps" count={data.technique_steps.length} defaultOpen>
+      {data.technique_steps?.length > 0 && (
+        <Accordion title="Technique / Steps" count={data.technique_steps?.length} defaultOpen>
           <ol className="space-y-3">
             {data.technique_steps.map((step) => (
               <li key={step.step_number} className="flex gap-3">
@@ -60,8 +60,8 @@ export function ProcedureResult({ data }: ProcedureResultProps) {
         </Accordion>
       )}
 
-      {data.complications.length > 0 && (
-        <Accordion title="Complications" count={data.complications.length}>
+      {data.complications?.length > 0 && (
+        <Accordion title="Complications" count={data.complications?.length}>
           <ul className="space-y-2">
             {data.complications.map((item, i) => (
               <li key={i}>
@@ -72,8 +72,8 @@ export function ProcedureResult({ data }: ProcedureResultProps) {
         </Accordion>
       )}
 
-      {data.guidelines.length > 0 && (
-        <Accordion title="Guidelines & Recommendations" count={data.guidelines.length}>
+      {data.guidelines?.length > 0 && (
+        <Accordion title="Guidelines & Recommendations" count={data.guidelines?.length}>
           <ul className="space-y-2">
             {data.guidelines.map((g, i) => (
               <li key={i}>
@@ -89,7 +89,7 @@ export function ProcedureResult({ data }: ProcedureResultProps) {
         </Accordion>
       )}
 
-      {data.references.length > 0 && (
+      {data.references?.length > 0 && (
         <ReferenceList references={data.references} />
       )}
     </div>

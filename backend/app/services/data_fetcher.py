@@ -7,6 +7,7 @@ All API calls are async, fire-and-forget, and silent on failure.
 """
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -22,6 +23,145 @@ import httpx
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+# ------------------------------------------------------------------
+# Journal registry (loaded once at import time)
+# ------------------------------------------------------------------
+
+_JOURNAL_REGISTRY: dict = {}
+
+
+def _load_journal_registry() -> None:
+    global _JOURNAL_REGISTRY
+    try:
+        path = os.path.join(
+            os.path.dirname(__file__), "..", "..", "data", "medical_journals.json"
+        )
+        path = os.path.normpath(path)
+        if os.path.exists(path):
+            with open(path, encoding="utf-8") as f:
+                _JOURNAL_REGISTRY = json.load(f)
+    except Exception:
+        logger.warning("Failed to load medical_journals.json", exc_info=True)
+
+
+_load_journal_registry()
+
+
+# Mapping from query specialty keywords to journal registry keys
+_SPECIALTY_MAP: dict[str, list[str]] = {
+    "heart": ["cardiology"],
+    "cardiac": ["cardiology"],
+    "cardio": ["cardiology"],
+    "hypertension": ["cardiology"],
+    "arrhythmia": ["cardiology"],
+    "cancer": ["oncology"],
+    "tumor": ["oncology"],
+    "neoplasm": ["oncology"],
+    "lymphoma": ["oncology", "hematology"],
+    "leukemia": ["oncology", "hematology"],
+    "brain": ["neurology"],
+    "neuro": ["neurology"],
+    "stroke": ["neurology"],
+    "epilepsy": ["neurology"],
+    "seizure": ["neurology"],
+    "diabetes": ["endocrinology"],
+    "thyroid": ["endocrinology"],
+    "insulin": ["endocrinology"],
+    "lung": ["pulmonology"],
+    "asthma": ["pulmonology"],
+    "copd": ["pulmonology"],
+    "pneumonia": ["pulmonology", "infectious_disease"],
+    "infection": ["infectious_disease"],
+    "antibiotic": ["infectious_disease"],
+    "hiv": ["infectious_disease"],
+    "tuberculosis": ["infectious_disease", "tropical_medicine"],
+    "malaria": ["tropical_medicine", "infectious_disease"],
+    "liver": ["gastroenterology"],
+    "hepatitis": ["gastroenterology", "infectious_disease"],
+    "gastric": ["gastroenterology"],
+    "bowel": ["gastroenterology"],
+    "kidney": ["nephrology"],
+    "renal": ["nephrology"],
+    "dialysis": ["nephrology"],
+    "arthritis": ["rheumatology"],
+    "lupus": ["rheumatology"],
+    "autoimmune": ["rheumatology"],
+    "depression": ["psychiatry"],
+    "anxiety": ["psychiatry"],
+    "schizophrenia": ["psychiatry"],
+    "bipolar": ["psychiatry"],
+    "child": ["pediatrics"],
+    "neonatal": ["pediatrics"],
+    "pediatric": ["pediatrics"],
+    "surgery": ["surgery"],
+    "surgical": ["surgery"],
+    "fracture": ["orthopedics"],
+    "joint": ["orthopedics"],
+    "spine": ["orthopedics"],
+    "pregnancy": ["obstetrics_gynecology"],
+    "obstetric": ["obstetrics_gynecology"],
+    "gynecol": ["obstetrics_gynecology"],
+    "skin": ["dermatology"],
+    "dermat": ["dermatology"],
+    "psoriasis": ["dermatology"],
+    "eye": ["ophthalmology"],
+    "retina": ["ophthalmology"],
+    "glaucoma": ["ophthalmology"],
+    "icu": ["critical_care"],
+    "sepsis": ["critical_care", "infectious_disease"],
+    "ventilat": ["critical_care"],
+    "anesthes": ["anesthesiology"],
+    "pain": ["anesthesiology"],
+    "blood": ["hematology"],
+    "anemia": ["hematology"],
+    "coagul": ["hematology"],
+    "thrombosis": ["hematology"],
+    "prostate": ["urology"],
+    "bladder": ["urology"],
+    "urinary": ["urology"],
+}
+
+
+def _get_journal_filter(entity: str) -> str:
+    """Build a PubMed journal filter string (TA field) for the entity's specialty.
+
+    Returns top-5 ranked journal abbreviations as OR-joined TA filters,
+    or empty string if no specialty match.
+    """
+    entity_lower = entity.lower()
+    matched_specialties: set[str] = set()
+
+    for keyword, specialties in _SPECIALTY_MAP.items():
+        if keyword in entity_lower:
+            matched_specialties.update(specialties)
+
+    if not matched_specialties:
+        return ""
+
+    abbrevs: list[str] = []
+    for spec in matched_specialties:
+        journals = _JOURNAL_REGISTRY.get(spec, [])
+        for j in journals[:5]:  # top 5 per specialty
+            abbr = j.get("abbrev")
+            if abbr and j.get("pubmed"):
+                abbrevs.append(abbr)
+
+    if not abbrevs:
+        return ""
+
+    # Deduplicate while preserving order
+    seen: set[str] = set()
+    unique: list[str] = []
+    for a in abbrevs:
+        if a not in seen:
+            seen.add(a)
+            unique.append(a)
+
+    # Limit to 8 journals to keep query reasonable
+    ta_parts = [f'"{a}"[TA]' for a in unique[:8]]
+    return "(" + " OR ".join(ta_parts) + ")"
+
 
 # ------------------------------------------------------------------
 # Data classes
@@ -82,6 +222,9 @@ class FetchedData:
     query_type: str
     drug_data: Optional[DrugFetchResult] = None
     disease_data: Optional[DiseaseFetchResult] = None
+    condition_data: Optional[DiseaseFetchResult] = (
+        None  # disease guidelines for drug-in-condition queries
+    )
     procedure_data: Optional[ProcedureFetchResult] = None
     evidence_data: Optional[EvidenceFetchResult] = None
     comparative_drug_data: list = field(default_factory=list)
@@ -124,11 +267,63 @@ _load_indian_drugs()
 # ------------------------------------------------------------------
 
 
-def _make_client() -> httpx.AsyncClient:
+# ------------------------------------------------------------------
+# Persistent HTTP client — shared across all requests for connection reuse
+# ------------------------------------------------------------------
+
+_HTTP_CLIENT: httpx.AsyncClient | None = None
+
+
+async def init_http_client() -> None:
+    """Initialize the shared HTTP client at application startup."""
+    global _HTTP_CLIENT
+    _HTTP_CLIENT = httpx.AsyncClient(
+        timeout=httpx.Timeout(connect=3.0, read=8.0, write=3.0, pool=3.0),
+        follow_redirects=True,
+        limits=httpx.Limits(
+            max_connections=30,
+            max_keepalive_connections=15,
+            keepalive_expiry=60,
+        ),
+    )
+
+
+async def shutdown_http_client() -> None:
+    """Close the shared HTTP client at application shutdown."""
+    global _HTTP_CLIENT
+    if _HTTP_CLIENT is not None:
+        await _HTTP_CLIENT.aclose()
+        _HTTP_CLIENT = None
+
+
+def _get_client() -> httpx.AsyncClient:
+    """Return the shared HTTP client. Falls back to creating a temporary client if not initialized."""
+    if _HTTP_CLIENT is not None:
+        return _HTTP_CLIENT
+    # Fallback for tests or early startup — create a one-off client
     return httpx.AsyncClient(
         timeout=settings.api_fetch_timeout_seconds,
         follow_redirects=True,
+        limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
     )
+
+
+@contextlib.asynccontextmanager
+async def _make_client():  # type: ignore[return]
+    """Async context manager for HTTP client access.
+
+    When the persistent client is initialized (production), yields it WITHOUT closing on exit.
+    Falls back to creating a temporary client (tests / early startup) that IS closed on exit.
+    """
+    if _HTTP_CLIENT is not None:
+        yield _HTTP_CLIENT
+    else:
+        async with httpx.AsyncClient(
+            timeout=settings.api_fetch_timeout_seconds,
+            follow_redirects=True,
+            limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+        ) as client:
+            yield client
 
 
 async def _safe_get(
@@ -362,6 +557,20 @@ async def _fetch_rxnorm_class(client: httpx.AsyncClient, rxcui: str) -> Optional
     return concepts[0].get("className") if concepts else None
 
 
+async def _fetch_rxnorm_class_chain(
+    client: httpx.AsyncClient, drug_name: str
+) -> Optional[str]:
+    """Chain CUI lookup → class lookup in a single coroutine for parallel execution.
+
+    Replaces the sequential post-Phase-1 RxNorm class call with one that can run
+    alongside FDA/PubMed calls in the Phase 1 gather.
+    """
+    rxcui = await _fetch_rxnorm_cui(client, drug_name)
+    if not rxcui:
+        return None
+    return await _fetch_rxnorm_class(client, rxcui)
+
+
 # ------------------------------------------------------------------
 # PubMed Entrez (guidelines + systematic reviews)
 # ------------------------------------------------------------------
@@ -370,15 +579,58 @@ async def _fetch_rxnorm_class(client: httpx.AsyncClient, rxcui: str) -> Optional
 async def _fetch_pubmed_abstracts(
     client: httpx.AsyncClient, entity: str, pub_type: str = "guideline"
 ) -> list:
-    """Fetch PubMed guideline or systematic review abstracts for an entity."""
+    """Fetch PubMed guideline or systematic review abstracts for an entity.
+
+    Uses journal registry to boost results from top-ranked specialty journals.
+    Two parallel searches: one broad (publication type filter) + one journal-targeted.
+    Results are merged and deduplicated by PMID.
+    """
     if pub_type == "guideline":
         pt_filter = "(Practice Guideline[pt] OR Guideline[pt])"
-        retmax = 5  # 3 for drugs (caller caps), 5 for diseases
+        retmax = 8  # More guidelines = richer disease coverage
     else:
         pt_filter = "(Systematic Review[pt] OR Meta-Analysis[pt])"
-        retmax = 4
+        retmax = 6
 
-    term = f"{entity}[Title/Abstract] AND {pt_filter} AND 2018:2025[dp]"
+    # Broad search (existing behavior)
+    term = f"{entity}[Title/Abstract] AND {pt_filter} AND 2010:2026[dp]"
+
+    # Journal-targeted search (new: uses top specialty journals)
+    journal_filter = _get_journal_filter(entity)
+    journal_term = (
+        f"{entity}[Title/Abstract] AND {journal_filter} AND 2010:2026[dp]"
+        if journal_filter
+        else None
+    )
+    # Run broad search + journal-targeted search in parallel
+    search_tasks = [_pubmed_esearch(client, term, retmax)]
+    if journal_term:
+        search_tasks.append(_pubmed_esearch(client, journal_term, 4))
+
+    search_results = await asyncio.gather(*search_tasks, return_exceptions=True)
+
+    # Merge PMIDs from both searches, deduplicate
+    all_ids: list[str] = []
+    seen_ids: set[str] = set()
+    for result in search_results:
+        if isinstance(result, Exception) or not result:
+            continue
+        for pid in result:
+            if pid not in seen_ids:
+                seen_ids.add(pid)
+                all_ids.append(pid)
+
+    if not all_ids:
+        return []
+
+    # Single batch efetch for all merged PMIDs
+    return await _pubmed_efetch(client, all_ids)
+
+
+async def _pubmed_esearch(
+    client: httpx.AsyncClient, term: str, retmax: int
+) -> list[str]:
+    """PubMed esearch → list of PMID strings."""
     params: dict = {
         "db": "pubmed",
         "term": term,
@@ -396,11 +648,13 @@ async def _fetch_pubmed_abstracts(
     )
     if not search_data:
         return []
+    return search_data.get("esearchresult", {}).get("idlist", [])
 
-    ids = search_data.get("esearchresult", {}).get("idlist", [])
+
+async def _pubmed_efetch(client: httpx.AsyncClient, ids: list[str]) -> list:
+    """PubMed efetch → parsed abstract list."""
     if not ids:
         return []
-
     fetch_params: dict = {
         "db": "pubmed",
         "id": ",".join(ids),
@@ -417,53 +671,14 @@ async def _fetch_pubmed_abstracts(
     )
     if not xml_text:
         return []
-
     return _parse_pubmed_xml(xml_text)
 
 
 async def _fetch_pubmed_classification(client: httpx.AsyncClient, entity: str) -> list:
     """Fetch PubMed abstracts for classification/staging systems (e.g. WHO groups, NYHA)."""
-    term = f"{entity} classification[Title/Abstract] AND 2010:2025[dp]"
-    params: dict = {
-        "db": "pubmed",
-        "term": term,
-        "retmax": 4,
-        "retmode": "json",
-        "sort": "relevance",
-    }
-    if settings.pubmed_api_key:
-        params["api_key"] = settings.pubmed_api_key
-
-    search_data = await _safe_get(
-        client,
-        "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi",
-        params=params,
-    )
-    if not search_data:
-        return []
-
-    ids = search_data.get("esearchresult", {}).get("idlist", [])
-    if not ids:
-        return []
-
-    fetch_params: dict = {
-        "db": "pubmed",
-        "id": ",".join(ids),
-        "rettype": "abstract",
-        "retmode": "xml",
-    }
-    if settings.pubmed_api_key:
-        fetch_params["api_key"] = settings.pubmed_api_key
-
-    xml_text = await _safe_get_text(
-        client,
-        "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi",
-        params=fetch_params,
-    )
-    if not xml_text:
-        return []
-
-    return _parse_pubmed_xml(xml_text)
+    term = f"{entity} classification[Title/Abstract] AND 2010:2026[dp]"
+    ids = await _pubmed_esearch(client, term, 4)
+    return await _pubmed_efetch(client, ids)
 
 
 def _parse_pubmed_xml(xml_text: str) -> list:
@@ -778,17 +993,33 @@ async def _fetch_medindia(
 
 
 async def fetch_drug_data(drug_name: str) -> DrugFetchResult:
-    """Fetch drug data: OpenFDA (primary) → DailyMed → Indian local → MedIndia."""
+    """Fetch drug data: OpenFDA (primary) → DailyMed → Indian local → MedIndia.
+
+    Speed optimizations vs previous version:
+    - RxNorm CUI+class now chains into a single parallel coroutine (B2)
+    - DailyMed fetch runs in parallel with FDA (B3) — result used if FDA fails
+    - Indian local check is synchronous (no I/O), checked immediately after Phase 1
+    """
     result = DrugFetchResult()
 
     async with _make_client() as client:
-        # Phase 1: all parallel primary sources
-        fda_label, fda_events, rxcui_raw, guidelines, sysreviews = await asyncio.gather(
+        # Phase 1: ALL parallel sources including DailyMed fallback and RxNorm chain
+        (
+            fda_label,
+            fda_events,
+            rxnorm_class,
+            guidelines,
+            sysreviews,
+            dailymed_result,
+        ) = await asyncio.gather(
             _fetch_fda_label(client, drug_name),
             _fetch_fda_events(client, drug_name),
-            _fetch_rxnorm_cui(client, drug_name),
+            _fetch_rxnorm_class_chain(client, drug_name),  # CUI→class in one call (B2)
             _fetch_pubmed_abstracts(client, drug_name, "guideline"),
             _fetch_pubmed_abstracts(client, drug_name, "systematic_review"),
+            _fetch_dailymed(
+                client, drug_name
+            ),  # run in parallel, use if FDA fails (B3)
             return_exceptions=True,
         )
 
@@ -797,38 +1028,38 @@ async def fetch_drug_data(drug_name: str) -> DrugFetchResult:
         )
         result.top_adverse_events = fda_events if isinstance(fda_events, list) else []
         result.guideline_abstracts = _cap_abstracts(
-            guidelines if isinstance(guidelines, list) else [], 1500
+            guidelines if isinstance(guidelines, list) else [], 3000
         )
         result.systematic_review_abstracts = _cap_abstracts(
-            sysreviews if isinstance(sysreviews, list) else [], 1500
+            sysreviews if isinstance(sysreviews, list) else [], 3000
         )
-
-        rxcui = rxcui_raw if isinstance(rxcui_raw, str) else None
-        if rxcui:
-            result.rxcui = rxcui
-            drug_class = await _fetch_rxnorm_class(client, rxcui)
-            if drug_class and not result.drug_class_rxnorm:
-                result.drug_class_rxnorm = drug_class
+        # Apply RxNorm class from chain result (no sequential round-trip needed)
+        if (
+            isinstance(rxnorm_class, str)
+            and rxnorm_class
+            and not result.drug_class_rxnorm
+        ):
+            result.drug_class_rxnorm = rxnorm_class
 
         if result.fetch_success:
             return result
 
-        # Phase 2: DailyMed fallback
-        dm = await _fetch_dailymed(client, drug_name)
+        # Phase 2a: DailyMed result already fetched in parallel — use it now (B3)
+        dm = dailymed_result if not isinstance(dailymed_result, Exception) else None
         if dm and dm.fetch_success:
             dm.guideline_abstracts = result.guideline_abstracts
             dm.systematic_review_abstracts = result.systematic_review_abstracts
             dm.top_adverse_events = result.top_adverse_events
             return dm
 
-        # Phase 3: Indian drugs local lookup
+        # Phase 2b: Indian drugs local lookup (synchronous, no I/O)
         indian = _check_indian_drugs(drug_name)
         if indian:
             _merge_indian_drug(result, indian)
             if result.fetch_success:
                 return result
 
-        # Phase 4: MedIndia HTML fallback
+        # Phase 3: MedIndia HTML fallback (last resort)
         mi = await _fetch_medindia(client, drug_name)
         if mi and mi.fetch_success:
             mi.guideline_abstracts = result.guideline_abstracts
@@ -841,40 +1072,97 @@ async def fetch_drug_data(drug_name: str) -> DrugFetchResult:
 
 async def fetch_disease_data(disease_name: str) -> DiseaseFetchResult:
     """Fetch disease data from PubMed (guidelines + reviews + classification), NICE,
-    MedlinePlus, and Semantic Scholar — all in parallel."""
+    MedlinePlus, and Semantic Scholar — all in parallel.
+
+    Speed optimization: runs all PubMed esearch + non-PubMed sources in parallel
+    (Phase 1), then batches all PMIDs into a single efetch call (Phase 2).
+    This cuts 3 sequential efetch calls down to 1.
+    """
     result = DiseaseFetchResult()
 
+    journal_filter = _get_journal_filter(disease_name)
+
+    # Build PubMed search terms
+    guideline_term = f"{disease_name}[Title/Abstract] AND (Practice Guideline[pt] OR Guideline[pt]) AND 2010:2026[dp]"
+    review_term = f"{disease_name}[Title/Abstract] AND (Systematic Review[pt] OR Meta-Analysis[pt]) AND 2010:2026[dp]"
+    classification_term = (
+        f"{disease_name} classification[Title/Abstract] AND 2010:2026[dp]"
+    )
+    journal_term = (
+        f"{disease_name}[Title/Abstract] AND {journal_filter} AND 2010:2026[dp]"
+        if journal_filter
+        else None
+    )
+
     async with _make_client() as client:
-        (
-            guidelines,
-            sysreviews,
-            classification,
-            nice_recs,
-            medlineplus,
-            semantic,
-        ) = await asyncio.gather(
-            _fetch_pubmed_abstracts(client, disease_name, "guideline"),
-            _fetch_pubmed_abstracts(client, disease_name, "systematic_review"),
-            _fetch_pubmed_classification(client, disease_name),
+        # Phase 1: ALL esearch calls + non-PubMed sources in parallel
+        tasks: list = [
+            _pubmed_esearch(client, guideline_term, 12),
+            _pubmed_esearch(client, review_term, 8),
+            _pubmed_esearch(client, classification_term, 6),
             _fetch_nice(client, disease_name),
             _fetch_medlineplus(client, disease_name),
             _fetch_semantic_scholar(client, disease_name),
-            return_exceptions=True,
+        ]
+        if journal_term:
+            tasks.append(_pubmed_esearch(client, journal_term, 4))
+
+        # Use asyncio.wait so partial results are recovered if some calls time out
+        task_objs = [asyncio.ensure_future(coro) for coro in tasks]
+        done, pending = await asyncio.wait(
+            task_objs, timeout=settings.api_fetch_timeout_seconds
+        )
+        for t in pending:
+            t.cancel()
+        results = []
+        for t in task_objs:
+            if t.done() and not t.cancelled():
+                try:
+                    results.append(t.result())
+                except Exception as e:
+                    results.append(e)
+            else:
+                results.append(None)
+
+        guideline_ids = results[0] if isinstance(results[0], list) else []
+        review_ids = results[1] if isinstance(results[1], list) else []
+        classification_ids = results[2] if isinstance(results[2], list) else []
+        nice_recs = results[3] if isinstance(results[3], list) else []
+        medlineplus = results[4] if isinstance(results[4], str) else None
+        semantic = results[5] if isinstance(results[5], list) else []
+        journal_ids = (
+            results[6] if len(results) > 6 and isinstance(results[6], list) else []
         )
 
-        # Merge classification abstracts into guidelines — they describe staging systems
-        all_guidelines = (guidelines if isinstance(guidelines, list) else []) + (
-            classification if isinstance(classification, list) else []
-        )
-        result.guideline_abstracts = _cap_abstracts(all_guidelines, 5000)
-        result.systematic_review_abstracts = _cap_abstracts(
-            sysreviews if isinstance(sysreviews, list) else [], 3000
-        )
-        result.nice_recommendations = nice_recs if isinstance(nice_recs, list) else []
-        result.medlineplus_summary = (
-            medlineplus if isinstance(medlineplus, str) else None
-        )
-        result.semantic_papers = semantic if isinstance(semantic, list) else []
+        # Merge journal-targeted PMIDs into guideline set
+        all_guideline_ids = guideline_ids + classification_ids + journal_ids
+        # Deduplicate while keeping order
+        seen: set[str] = set()
+        unique_guideline_ids = [
+            pid for pid in all_guideline_ids if pid not in seen and not seen.add(pid)
+        ]
+
+        # Phase 2: single batch efetch for ALL PMIDs (guidelines + reviews)
+        all_ids = list(set(unique_guideline_ids + review_ids))
+        all_abstracts = await _pubmed_efetch(client, all_ids) if all_ids else []
+
+        # Tag abstracts by which search found them (by PMID membership)
+        guideline_set = set(unique_guideline_ids)
+        review_set = set(review_ids)
+        guideline_abstracts = []
+        review_abstracts = []
+        for a in all_abstracts:
+            pmid = a.get("pmid")
+            if pmid in guideline_set:
+                guideline_abstracts.append(a)
+            if pmid in review_set:
+                review_abstracts.append(a)
+
+        result.guideline_abstracts = _cap_abstracts(guideline_abstracts, 12000)
+        result.systematic_review_abstracts = _cap_abstracts(review_abstracts, 7000)
+        result.nice_recommendations = nice_recs
+        result.medlineplus_summary = medlineplus
+        result.semantic_papers = semantic
 
     result.fetch_success = bool(
         result.guideline_abstracts
@@ -917,69 +1205,60 @@ async def _fetch_pubmed_procedure_guidelines(
         "(Practice Guideline[pt] OR Consensus Development Conference[pt]) "
         "AND 2015:2025[dp]"
     )
-    params: dict = {
-        "db": "pubmed",
-        "term": term,
-        "retmax": 5,
-        "retmode": "json",
-        "sort": "relevance",
-    }
-    if settings.pubmed_api_key:
-        params["api_key"] = settings.pubmed_api_key
-
-    search_data = await _safe_get(
-        client,
-        "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi",
-        params=params,
-    )
-    if not search_data:
-        return []
-
-    ids = search_data.get("esearchresult", {}).get("idlist", [])
-    if not ids:
-        return []
-
-    fetch_params: dict = {
-        "db": "pubmed",
-        "id": ",".join(ids),
-        "rettype": "abstract",
-        "retmode": "xml",
-    }
-    if settings.pubmed_api_key:
-        fetch_params["api_key"] = settings.pubmed_api_key
-
-    xml_text = await _safe_get_text(
-        client,
-        "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi",
-        params=fetch_params,
-    )
-    if not xml_text:
-        return []
-
-    return _parse_pubmed_xml(xml_text)
+    ids = await _pubmed_esearch(client, term, 5)
+    return await _pubmed_efetch(client, ids)
 
 
 async def fetch_evidence_data(query: str) -> EvidenceFetchResult:
-    """Fetch evidence for drug+condition questions (clinical trials + reviews)."""
+    """Fetch evidence for drug+condition questions (clinical trials + reviews).
+
+    Speed optimization: parallel esearch → single batch efetch.
+    """
     result = EvidenceFetchResult()
 
+    trial_term = (
+        f"{query}[Title/Abstract] AND "
+        "(Clinical Trial[pt] OR Randomized Controlled Trial[pt]) "
+        "AND 2010:2026[dp]"
+    )
+    review_term = f"{query}[Title/Abstract] AND (Systematic Review[pt] OR Meta-Analysis[pt]) AND 2010:2026[dp]"
+    guideline_term = f"{query}[Title/Abstract] AND (Practice Guideline[pt] OR Guideline[pt]) AND 2010:2026[dp]"
+
     async with _make_client() as client:
-        trials, reviews, guidelines = await asyncio.gather(
-            _fetch_pubmed_clinical_trials(client, query),
-            _fetch_pubmed_abstracts(client, query, "systematic_review"),
-            _fetch_pubmed_abstracts(client, query, "guideline"),
+        # Phase 1: all esearch in parallel
+        trial_ids, review_ids, guideline_ids = await asyncio.gather(
+            _pubmed_esearch(client, trial_term, 12),
+            _pubmed_esearch(client, review_term, 8),
+            _pubmed_esearch(client, guideline_term, 10),
             return_exceptions=True,
         )
+        trial_ids = trial_ids if isinstance(trial_ids, list) else []
+        review_ids = review_ids if isinstance(review_ids, list) else []
+        guideline_ids = guideline_ids if isinstance(guideline_ids, list) else []
+
+        # Phase 2: single batch efetch
+        all_ids = list(set(trial_ids + review_ids + guideline_ids))
+        all_abstracts = await _pubmed_efetch(client, all_ids) if all_ids else []
+
+        trial_set = set(trial_ids)
+        review_set = set(review_ids)
+        guideline_set = set(guideline_ids)
+        for a in all_abstracts:
+            pmid = a.get("pmid")
+            if pmid in trial_set:
+                result.clinical_trial_abstracts.append(a)
+            if pmid in review_set:
+                result.systematic_review_abstracts.append(a)
+            if pmid in guideline_set:
+                result.guideline_abstracts.append(a)
 
         result.clinical_trial_abstracts = _cap_abstracts(
-            trials if isinstance(trials, list) else [], 4000
+            result.clinical_trial_abstracts, 6000
         )
         result.systematic_review_abstracts = _cap_abstracts(
-            reviews if isinstance(reviews, list) else [], 3000
+            result.systematic_review_abstracts, 5000
         )
-        result.guideline_abstracts = _cap_abstracts(
-            guidelines if isinstance(guidelines, list) else [], 2000
-        )
+        result.guideline_abstracts = _cap_abstracts(result.guideline_abstracts, 4000)
 
     result.fetch_success = bool(
         result.clinical_trial_abstracts
@@ -994,48 +1273,10 @@ async def _fetch_pubmed_clinical_trials(client: httpx.AsyncClient, query: str) -
     term = (
         f"{query}[Title/Abstract] AND "
         "(Clinical Trial[pt] OR Randomized Controlled Trial[pt]) "
-        "AND 2010:2025[dp]"
+        "AND 2010:2026[dp]"
     )
-    params: dict = {
-        "db": "pubmed",
-        "term": term,
-        "retmax": 8,
-        "retmode": "json",
-        "sort": "relevance",
-    }
-    if settings.pubmed_api_key:
-        params["api_key"] = settings.pubmed_api_key
-
-    search_data = await _safe_get(
-        client,
-        "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi",
-        params=params,
-    )
-    if not search_data:
-        return []
-
-    ids = search_data.get("esearchresult", {}).get("idlist", [])
-    if not ids:
-        return []
-
-    fetch_params: dict = {
-        "db": "pubmed",
-        "id": ",".join(ids),
-        "rettype": "abstract",
-        "retmode": "xml",
-    }
-    if settings.pubmed_api_key:
-        fetch_params["api_key"] = settings.pubmed_api_key
-
-    xml_text = await _safe_get_text(
-        client,
-        "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi",
-        params=fetch_params,
-    )
-    if not xml_text:
-        return []
-
-    return _parse_pubmed_xml(xml_text)
+    ids = await _pubmed_esearch(client, term, 8)
+    return await _pubmed_efetch(client, ids)
 
 
 def _fire_and_forget_index(abstracts: list) -> None:
@@ -1050,16 +1291,47 @@ def _fire_and_forget_index(abstracts: list) -> None:
         logger.debug("Fire-and-forget indexing skipped", exc_info=True)
 
 
-async def fetch_data_for_query(query_type: str, entities: list) -> FetchedData:
-    """Top-level orchestrator called by the pipeline."""
+async def fetch_data_for_query(
+    query_type: str, entities: list, condition_context: Optional[str] = None
+) -> FetchedData:
+    """Top-level orchestrator called by the pipeline.
+
+    Args:
+        query_type: Classified query type (drug, disease, comparative, procedure, evidence).
+        entities: Extracted entity names (drug names, disease names, etc.).
+        condition_context: For drug-in-condition queries, the condition name to fetch
+            management guidelines for in parallel (e.g., "atrial fibrillation" for "digoxin in AF").
+    """
     start = time.time()
     fetched = FetchedData(query_type=query_type)
 
     try:
         if query_type == "drug" and entities:
-            fetched.drug_data = await fetch_drug_data(entities[0])
-            fetched.fallback_to_llm = not fetched.drug_data.fetch_success
-            _fire_and_forget_index(fetched.drug_data.guideline_abstracts)
+            if condition_context:
+                # Fetch drug data AND condition management guidelines in parallel (B6)
+                drug_result, condition_result = await asyncio.gather(
+                    fetch_drug_data(entities[0]),
+                    fetch_disease_data(condition_context),
+                    return_exceptions=True,
+                )
+                fetched.drug_data = (
+                    drug_result
+                    if not isinstance(drug_result, Exception)
+                    else DrugFetchResult()
+                )
+                fetched.condition_data = (
+                    condition_result
+                    if not isinstance(condition_result, Exception)
+                    else None
+                )
+                fetched.fallback_to_llm = not fetched.drug_data.fetch_success
+                _fire_and_forget_index(fetched.drug_data.guideline_abstracts)
+                if fetched.condition_data:
+                    _fire_and_forget_index(fetched.condition_data.guideline_abstracts)
+            else:
+                fetched.drug_data = await fetch_drug_data(entities[0])
+                fetched.fallback_to_llm = not fetched.drug_data.fetch_success
+                _fire_and_forget_index(fetched.drug_data.guideline_abstracts)
 
         elif query_type == "disease" and entities:
             fetched.disease_data = await fetch_disease_data(entities[0])

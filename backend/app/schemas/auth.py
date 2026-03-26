@@ -29,6 +29,8 @@ class RegisterRequest(BaseModel):
     institute: Optional[str] = None
     specialty: Optional[str] = None
     institution_type: Optional[str] = None
+    age: Optional[int] = None
+    gender: Optional[str] = None
     newsletter_consent: bool = False
 
 
@@ -40,11 +42,15 @@ class UpdateProfileRequest(BaseModel):
     institute: Optional[str] = None
     specialty: Optional[str] = None
     institution_type: Optional[str] = None
+    age: Optional[int] = None
+    gender: Optional[str] = None
     newsletter_consent: Optional[bool] = None
 
 
 class UpdatePreferencesRequest(BaseModel):
-    preferences: dict  # Arbitrary JSON (answer style, UI prefs, preferred sources, etc.)
+    preferences: (
+        dict  # Arbitrary JSON (answer style, UI prefs, preferred sources, etc.)
+    )
 
 
 class UserProfileResponse(BaseModel):
@@ -57,6 +63,8 @@ class UserProfileResponse(BaseModel):
     institute: Optional[str]
     specialty: Optional[str]
     institution_type: Optional[str]
+    age: Optional[int] = None
+    gender: Optional[str] = None
     role: str
     tier: str
     llm_provider: Optional[str]

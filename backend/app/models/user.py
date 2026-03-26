@@ -52,13 +52,19 @@ class User(TimestampMixin, Base):
     password_hash: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
     # Profile (for personalisation and future monetisation analytics)
-    username: Mapped[Optional[str]] = mapped_column(String(50), unique=True, nullable=True)
+    username: Mapped[Optional[str]] = mapped_column(
+        String(50), unique=True, nullable=True
+    )
     full_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     country: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-    position: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)  # UserPosition enum values
+    position: Mapped[Optional[str]] = mapped_column(
+        String(30), nullable=True
+    )  # UserPosition enum values
     institute: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     specialty: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     institution_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    age: Mapped[Optional[int]] = mapped_column(nullable=True)
+    gender: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
 
     # Subscription tier (free/premium/enterprise) — for future paywall
     tier: Mapped[str] = mapped_column(String(20), default="free", nullable=False)
@@ -70,8 +76,12 @@ class User(TimestampMixin, Base):
     preferences: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
 
     # Analytics / monetisation metadata
-    newsletter_consent: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    last_login: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    newsletter_consent: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
+    last_login: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     __table_args__ = (
         Index("ix_users_key_id", "key_id", unique=True),

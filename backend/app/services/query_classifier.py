@@ -16,6 +16,24 @@ DRUG_PATTERNS = [
     r"\b\w+(?:pril|sartan|statin|olol|dipine|mycin|cillin|azole|oxacin|cycline|gliptin|gliflozin|mab|nib|formin|zepam|zosin|dronate|fenac|profen|codone|orphine)\b",
     # Extended common drug list
     r"\b(?:ramipril|enalapril|atorvastatin|rosuvastatin|Azee|polymyxin|polymixin|colistin|vancomycin|meropenem|piperacillin|tazobactam|clindamycin|doxycycline|ciprofloxacin|levofloxacin|fluconazole|voriconazole|metronidazole|amphotericin|rifampicin|isoniazid|pyrazinamide|ethambutol|dapsone|hydroxychloroquine|chloroquine|ivermectin|albendazole|methotrexate|azathioprine|mycophenolate|cyclosporine|tacrolimus|prednisolone|dexamethasone|hydrocortisone|fludrocortisone|levothyroxine|carbimazole|propylthiouracil|glargine|detemir|glulisine|lispro|aspart|empagliflozin|dapagliflozin|canagliflozin|sitagliptin|vildagliptin|saxagliptin|alogliptin|pioglitazone|glimepiride|gliclazide|glibenclamide|repaglinide|acarbose|digoxin|amiodarone|sotalol|flecainide|adenosine|diltiazem|verapamil|nifedipine|felodipine|spironolactone|eplerenone|hydrochlorothiazide|indapamide|bisoprolol|nebivolol|atenolol|propranolol|ticagrelor|prasugrel|aspirin|rivaroxaban|apixaban|dabigatran|enoxaparin|alteplase|streptokinase|tenecteplase|nitroglycerin|isosorbide|dobutamine|dopamine|noradrenaline|adrenaline|epinephrine|vasopressin|terlipressin|midazolam|diazepam|lorazepam|clonazepam|phenytoin|valproate|levetiracetam|carbamazepine|lamotrigine|pregabalin|morphine|fentanyl|oxycodone|codeine|paracetamol|naproxen|diclofenac|celecoxib|colchicine|allopurinol|febuxostat|ranitidine|esomeprazole|rabeprazole|ondansetron|metoclopramide|domperidone|loperamide|lactulose|bisacodyl|senna|salbutamol|formoterol|salmeterol|tiotropium|ipratropium|budesonide|fluticasone|beclomethasone|fexofenadine|cetirizine|loratadine|chlorpheniramine|promethazine|haloperidol|risperidone|olanzapine|quetiapine|aripiprazole|clozapine|lithium|paroxetine|citalopram|venlafaxine|mirtazapine|amitriptyline|nortriptyline|bupropion|trazodone|zolpidem|melatonin|sildenafil|tadalafil|finasteride|doxazosin|oxybutynin|solifenacin|tolterodine|alendronate|risedronate|ibandronate|denosumab|teriparatide|calcitriol|cholecalciferol)\b",
+    # Abbreviations and thrombolytics
+    r"\b(?:tPA|rtPA|TNKase|GTN|NTG|ORS|KCl|MgSO4|NaCl|IV|IM|SC|PO|PR|SL|INR|ACE|ARB|NSAID|PPI|SSRI|SNRI|TCA|MAOI|DOAC|NOAC|LMWH|UFH)\b",
+    # Brand names commonly used in clinical practice
+    r"\b(?:Augmentin|Tazocin|Lasix|Flagyl|Zosyn|Cipro|Zithromax|Amoxil|Keflex)\b",
+    # Compound salts and electrolytes used as drugs
+    r"\b(?:magnesium\s+sulf(?:ate|ide)|potassium\s+chloride|calcium\s+gluconate|sodium\s+bicarbonate|calcium\s+chloride|potassium\s+phosphate|sodium\s+chloride)\b",
+    # Drug class names (allow plural/suffixed forms with \w*)
+    r"\b(?:beta\s*block\w*|calcium\s+channel\s+block\w*|ACE\s+inhibit\w*|angiotensin\w*|anticoagulant\w*|antiplatelet\w*|antiarrhythmic\w*|antihypertensive\w*|antibiotic\w*|antifungal\w*|antiviral\w*|analgesic\w*|antipyretic\w*|antiemetic\w*|bronchodilator\w*|diuretic\w*|vasopressor\w*|inotrope\w*|sedative\w*|anxiolytic\w*|antipsychotic\w*|antidepressant\w*|anticonvulsant\w*|antiepileptic\w*|corticosteroid\w*|immunosuppressant\w*|antihistamine\w*|proton\s+pump\w*|thrombolytic\w*|fibrinolytic\w*|steroid\w*)\b",
+    # Dose adjustment context
+    r"\b(?:renal\s+dos|hepatic\s+dos|dose\s+adjust|loading\s+dose|maintenance\s+dose|max(?:imum)?\s+dose|pediatric\s+dose|infusion\s+rate|sliding\s+scale)\b",
+    # Specific non-INN drugs that need explicit listing
+    r"\b(?:tranexamic\s+acid|hypertonic\s+saline|normal\s+saline|Ringer|Hartmann|mannitol|N-?acetylcysteine|NAC|activated\s+charcoal|naloxone|flumazenil|protamine|vitamin\s+K|phytomenadione)\b",
+    # Drug safety/toxicity qualifiers (when paired with "drugs")
+    r"\b(?:nephrotoxic|hepatotoxic|ototoxic|cardiotoxic|neurotoxic|teratogenic|QT\s+prolong\w*)\s+drug\w*\b",
+    # Opioid/drug conversion and tapering
+    r"\b(?:opioid\s+(?:conversion|equivalen|rotation|taper)|equianalges|steroid\s+taper|taper(?:ing)?\s+(?:of|schedule|regimen))\b",
+    # Anticoagulation as drug concept
+    r"\b(?:anticoagulation|anticoagulat\w+)\b",
 ]
 
 DISEASE_PATTERNS = [
@@ -24,12 +42,51 @@ DISEASE_PATTERNS = [
     r"\b(?:treatment of|management of|therapy for|guidelines for)\b",
     r"\b(?:hypertension|diabetes|asthma|COPD|pneumonia|heart failure)\b",
     r"\b(?:stroke|myocardial infarction|atrial fibrillation|chronic kidney disease|cirrhosis|hepatitis|tuberculosis|HIV|sepsis|meningitis)\b",
+    r"\b(?:acute\s+MI|STEMI|NSTEMI|ACS|acute coronary)\b",
     r"\b(?:epilepsy|migraine|Parkinson|Alzheimer|multiple sclerosis|lupus|rheumatoid arthritis|osteoporosis|gout|anemia)\b",
     r"\b(?:depression|anxiety|bipolar|schizophrenia|cancer|lymphoma|leukemia|melanoma|pancreatitis|appendicitis)\b",
     # Medical abbreviations for diseases
-    r"\b(?:DVT|PE|VTE|CLABSI|MRSA|UTI|AKI|CKD|IHD|CAD|CHF|HFrEF|HFpEF|AF|SVT|VT|VF|SBP|HBP|T2DM|T1DM|SLE|RA|IBD|UC|CD|IBS|GERD|PUD|NASH|NAFLD|CLD|SCA|AML|CML|ALL|CLL|NHL|MM|HCC|RCC|GBM|PCA)\b",
+    r"\b(?:DVT|PE|VTE|CLABSI|MRSA|UTI|AKI|CKD|IHD|CAD|CHF|HFrEF|HFpEF|AF|SVT|VT|VF|SBP|HBP|T2DM|T1DM|SLE|RA|IBD|UC|CD|IBS|GERD|PUD|NASH|NAFLD|CLD|SCA|AML|CML|ALL|CLL|NHL|MM|HCC|RCC|GBM|PCA|DKA|HHS|ARDS|MODS|TTP|HUS|DIC|HELLP|GBS|MAS|NEC)\b",
     # Pathological terms
     r"\b(?:thrombosis|embolism|infarction|insufficiency|failure|deficiency|malignancy|carcinoma|sarcoma|encephalopathy|neuropathy|retinopathy|nephropathy|myopathy|vasculitis|fibrosis)\b",
+    # Emergency/acute conditions
+    r"\b(?:anaphylaxis|anaphylactic|status\s+epilepticus|status\s+asthmaticus|cardiac\s+arrest|shock|tamponade|hemorrhage|haemorrhage|trauma|polytrauma|burn|drowning|hypothermia|hyperthermia|poisoning|overdose|envenomation)\b",
+    r"\b(?:tension\s+pneumothorax|pneumothorax|hemothorax|pleural\s+effusion|pericardial\s+effusion|pulmonary\s+edema|pulmonary\s+oedema)\b",
+    # Named clinical conditions
+    r"\b(?:endocarditis|myocarditis|pericarditis|cellulitis|necrotizing\s+fasciitis|osteomyelitis|abscess|empyema)\b",
+    r"\b(?:bronchitis|pharyngitis|tonsillitis|sinusitis|otitis|conjunctivitis|gastritis|colitis|cystitis|urethritis|prostatitis|orchitis|mastitis|cholecystitis|cholangitis|diverticulitis|dermatitis|arthritis)\b",
+    r"\b(?:preeclampsia|eclampsia|placenta\s+previa|abruption|ectopic\s+pregnancy|miscarriage|pregnancy|breastfeeding|lactation|postpartum|antepartum|intrapartum)\b",
+    r"\b(?:subarachnoid|subdural|epidural\s+hematoma|intracerebral|intracranial)\b",
+    r"\b(?:acute\s+abdomen|bowel\s+obstruction|intestinal\s+obstruction|ileus|volvulus|intussusception|peritonitis)\b",
+    r"\b(?:community\s+acquired|hospital\s+acquired|ventilator\s+associated|healthcare\s+associated)\b",
+    # Broad clinical terms that indicate disease context
+    r"\b(?:exacerbation|flare|relapse|remission|staging|grading|classification|criteria)\b",
+    # Therapy/management context (the user wants disease management info)
+    r"\b(?:oxygen\s+therapy|fluid\s+therapy|fluid\s+resuscitation|nutritional\s+support|palliative|supportive\s+care|wound\s+care)\b",
+    r"\b(?:\w+\s+management|management\s+of)\b",
+    # Electrolyte and metabolic disorders
+    r"\b(?:hyponatremia|hypernatremia|hypokalemia|hyperkalemia|hypocalcemia|hypercalcemia|hypomagnesemia|hypermagnesemia|hypophosphatemia|hyperphosphatemia)\b",
+    r"\b(?:metabolic\s+acidosis|metabolic\s+alkalosis|respiratory\s+acidosis|respiratory\s+alkalosis|lactic\s+acidosis|ketoacidosis)\b",
+    # Clinical scoring systems (used to assess disease severity) — exclude GCS/Glasgow (procedure)
+    r"\b(?:SOFA|qSOFA|APACHE|CURB-?65|Wells\s+score|CHA2DS2|CHADS|HAS-?BLED|Child-?Pugh|MELD|NEWS|NIHSS|Ranson|Bishop|Apgar|TIMI|GRACE)\b",
+    # Toxicology and poisoning (disease context — management of toxicity)
+    r"\b(?:toxicity|toxic\w*|intoxication|withdrawal|dependence|abuse)\b",
+    # Pediatric conditions
+    r"\b(?:neonatal\s+\w+|febrile\s+(?:seizure|convulsion)|Kawasaki|croup|bronchiolitis|pyloric\s+stenosis|Hirschsprung|kernicterus|jaundice)\b",
+    # Surgical complications and perioperative conditions
+    r"\b(?:post-?operative|surgical\s+site\s+infection|wound\s+dehiscence|anastomotic\s+leak|ileus|SSI)\b",
+    r"\b(?:fever|pyrexia)\b",
+    # Hematological conditions
+    r"\b(?:thrombocytopenia|neutropenia|pancytopenia|coagulopathy|hemolytic|sickle\s+cell)\b",
+    # Prophylaxis as disease-management concept
+    r"\b(?:prophylaxis|prophylact\w+|prevention|preventive|screening)\b",
+    # Renal/hepatic failure contexts
+    r"\b(?:renal\s+failure|hepatic\s+failure|liver\s+failure|kidney\s+failure|acute\s+kidney|acute\s+liver)\b",
+    # Additional named conditions
+    r"\b(?:myasthenia\s+gravis|G6PD|Guillain-?Barr|Addison|Cushing|Graves|Hashimoto|Crohn|celiac|coeliac)\b",
+    r"\b(?:contrast.induced|rhabdomyolysis|compartment\s+syndrome|fat\s+embolism|air\s+embolism|amniotic\s+fluid)\b",
+    # Bites and envenomation
+    r"\b(?:snake\s*bite|scorpion\s+sting|spider\s+bite|dog\s+bite|animal\s+bite|rabies)\b",
 ]
 
 COMPARATIVE_PATTERNS = [
@@ -40,7 +97,8 @@ COMPARATIVE_PATTERNS = [
 ]
 
 PROCEDURE_PATTERNS = [
-    r"\b(?:when to|indication(?:s)? for|steps for|how to|procedure for)\b",
+    r"\b(?:when to|indication(?:s)? for|steps for|procedure for)\b",
+    r"\bhow to\s+(?:insert|remove|perform|place|do|manage|intubate|extubate|drain|suture|cannulate|catheter|defibrillat|resuscitat|prone|interpret)\b",
     r"\b(?:change|insert|remove|perform|place|replace)\s+(?:a |the )?(?:central line|catheter|tube|drain|line|stent|pacemaker|tracheostomy)\b",
     r"\b(?:intubation|extubation|lumbar puncture|paracentesis|thoracentesis|bronchoscopy|endoscopy|colonoscopy)\b",
     r"\b(?:CPR|resuscitation|defibrillation|cardioversion|chest tube|arterial line|swan ganz)\b",
@@ -49,6 +107,21 @@ PROCEDURE_PATTERNS = [
     r"\b(?:Foley|foley|nasogastric|NGT|PEG|CVC|PICC|intercostal drain|pericardiocentesis|pericardial drain|intercostal|pleural drain|ascitic drain|epidural|spinal|cricothyrotomy|tracheostomy|proning|prone position|CPAP|BiPAP|NIV|HFNO|high flow)\b",
     # Temporal action phrases for procedures
     r"\b(?:when (?:to |do (?:you )?)?(?:change|replace|insert|remove|perform|start|stop|initiate|discontinue|wean|extubate|intubate))\b",
+    # Procedure-specific terms
+    r"\b(?:insertion\s+(?:of|steps|technique)|cannulation|catheterization|blood\s+gas|ABG\s+interpret|ABG\s+analysis)\b",
+    r"\b(?:ventilator\s*\w*|mechanical\s+ventilation|vent\s+setting\w*)\b",
+    r"\b(?:blood\s+transfusion|transfusion\s+(?:reaction|protocol|guideline|threshold|trigger))\b",
+    r"\b(?:central\s+line\s+(?:insertion|placement|care|removal)|arterial\s+(?:line|blood|cannul))\b",
+    r"\b(?:prone\s+position(?:ing)?|proning\s+protocol)\b",
+    # Diagnostic interpretation procedures
+    r"\b(?:ECG\s+interpret\w*|EKG\s+interpret\w*|chest\s+(?:X-?ray|x-?ray|xray)\s*\w*|CT\s+(?:head|scan|brain|abdomen|chest)\w*|MRI\s+\w+|troponin\s+interpret\w*)\b",
+    r"\b(?:interpret(?:ation|ing)?\s+(?:of|for)?\s*(?:ECG|EKG|ABG|X-?ray|CXR|CT|MRI|blood\s+gas|troponin|lactate))\b",
+    # Scoring/assessment tools (when used as procedure to perform)
+    r"\b(?:Glasgow\s+coma\s+scale|GCS\s+assess\w*)\b",
+    # Perioperative procedures
+    r"\b(?:pre-?operative\s+(?:assessment|evaluation|workup|check|clearance|preparation|optimization))\b",
+    r"\b(?:pre-?op\s+(?:assessment|eval|workup|check|clearance))\b",
+    r"\b(?:rapid\s+sequence\s+intubation|RSI|difficult\s+airway|airway\s+management)\b",
 ]
 
 EVIDENCE_PATTERNS = [
@@ -56,6 +129,12 @@ EVIDENCE_PATTERNS = [
     r"\b(?:can|should|is)\s+\w+\s+(?:be )?(?:given|used|prescribed|recommended)\s+(?:in|for)\b",
     r"\b(?:off[- ]?label|evidence for|studies on|trial|clinical evidence)\b",
     r"\b(?:benefit|efficacy|safety)\s+(?:of|in)\b",
+    # "can we give X in Y" pattern
+    r"\b(?:can\s+(?:we|you|I)\s+give)\b",
+    # "drugs safe/to avoid in X" pattern
+    r"\b(?:drug\w*\s+(?:safe|unsafe|avoid|contraindicated)\s+(?:in|during|for))\b",
+    r"\b(?:drug\w*\s+to\s+avoid\s+in)\b",
+    r"\b(?:safe\s+in\s+(?:pregnancy|breastfeeding|lactation|renal|hepatic|liver|kidney|elderly|pediatric|children|neonat))\b",
 ]
 
 # Queries asking for highlights/summary/quick-reference rather than a full reference entry
@@ -117,6 +196,65 @@ def classify_query(query: str, user_hint: str | None = None) -> tuple[str, float
     else:
         best_type = max(scores, key=scores.get)
         best_score = scores[best_type]
+
+    # Evidence priority: only reclassify drug→evidence when the query uses EXPLICIT
+    # evidence-seeking language. Bare "in/for" (e.g. "digoxin in AF", "metformin for
+    # diabetes") stays as drug — user wants a drug monograph with condition context,
+    # not a literature review.
+    if best_type == "drug" and scores["drug"] > 0:
+        _EVIDENCE_SEEKING = re.compile(
+            r"\b(?:safe\s+in|effective\s+(?:in|for)|role\s+(?:of|in)|"
+            r"evidence\s+(?:for|of|on)|benefit\s+(?:in|for)|"
+            r"efficacy\s+(?:in|for)|safety\s+(?:in|for)|"
+            r"indicated\s+in)\b",
+            re.IGNORECASE,
+        )
+        if _EVIDENCE_SEEKING.search(query) and (
+            scores["disease"] > 0 or scores["evidence"] > 0
+        ):
+            best_type = "evidence"
+            best_score = max(scores.get("evidence", 0), 0.80)
+
+    # Drug-class + condition evidence: when a drug CLASS name or specific drug
+    # appears with "in/for" + a condition, the user wants evidence about a
+    # drug's role in that condition, not a drug monograph or disease summary.
+    # This check runs on drug/disease winners OR when the class regex fires.
+    _CLASS_EVIDENCE = re.compile(
+        r"\b(?:beta\s*block|calcium\s+channel|ACE\s+inhibit|anticoagulant|"
+        r"antiplatelet|statin|steroid|corticosteroid|antibiotic\w*|diuretic|"
+        r"vasopressor|thrombolytic|NSAID|PPI|SSRI|DOAC|LMWH)\w*"
+        r"\s+(?:in|for)\s+",
+        re.IGNORECASE,
+    )
+    if best_type in ("drug", "disease") and _CLASS_EVIDENCE.search(query):
+        best_type = "evidence"
+        best_score = max(scores.get("evidence", 0), 0.80)
+
+    # "drugs safe/to avoid in X" — always evidence regardless of what else matched
+    _DRUGS_IN = re.compile(
+        r"\b(?:drug\w*|medication\w*)\s+(?:safe|unsafe|to\s+avoid|contraindicated)\s+(?:in|for|during)\b",
+        re.IGNORECASE,
+    )
+    if _DRUGS_IN.search(query):
+        best_type = "evidence"
+        best_score = max(scores.get("evidence", 0), 0.85)
+
+    # Toxicity/overdose priority: "digoxin toxicity" or "paracetamol overdose"
+    # is a disease management query, not a drug monograph request.
+    if best_type == "drug" and scores["disease"] > 0:
+        _TOXICITY = re.compile(
+            r"\b(?:toxicity|toxic\w*|overdose|poisoning|intoxication|withdrawal)\b",
+            re.IGNORECASE,
+        )
+        if _TOXICITY.search(query):
+            best_type = "disease"
+            best_score = max(scores["disease"], 0.80)
+
+    # Heparin-induced thrombocytopenia, drug-induced X — disease not drug
+    _DRUG_INDUCED = re.compile(r"\b\w+[- ]induced\s+\w+", re.IGNORECASE)
+    if best_type == "drug" and _DRUG_INDUCED.search(query) and scores["disease"] > 0:
+        best_type = "disease"
+        best_score = max(scores["disease"], 0.80)
 
     if best_score < settings.classifier_confidence_threshold:
         return "general", best_score

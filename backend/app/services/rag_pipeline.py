@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import re
 import time
 
 import pybreaker
@@ -61,6 +62,84 @@ RESPONSE_MODELS = {
     "evidence": EvidenceResponse,
     "general": GeneralResponse,
 }
+
+# Regex to extract condition from drug queries like "digoxin in AF", "metformin for diabetes"
+_CONDITION_RE = re.compile(
+    r"\b(?:in|for)\s+([A-Za-z][A-Za-z0-9\s\-]{2,40}?)(?:\s*[,?.]|$)",
+    re.IGNORECASE,
+)
+
+
+def _is_critically_sparse(data: dict, query_type: str) -> tuple[bool, list[str]]:
+    """Detect if an LLM response is critically sparse and needs a retry.
+
+    Returns (is_sparse, list_of_reasons).
+    """
+    reasons: list[str] = []
+    if query_type == "disease":
+        if len(data.get("clinical_features", [])) < 4:
+            reasons.append(
+                f"clinical_features only {len(data.get('clinical_features', []))} entries (need 8+)"
+            )
+        if not data.get("treatment", {}).get("first_line"):
+            reasons.append("treatment.first_line empty")
+        if len(data.get("diagnostic_criteria", [])) < 3:
+            reasons.append(
+                f"diagnostic_criteria only {len(data.get('diagnostic_criteria', []))} entries (need 6+)"
+            )
+        if not data.get("etiology"):
+            reasons.append("etiology empty")
+        if not data.get("prognosis"):
+            reasons.append("prognosis missing")
+        return len(reasons) >= 2, reasons
+    elif query_type == "drug":
+        if not data.get("dosing") and not data.get("indications"):
+            reasons.append("dosing and indications both empty")
+            return True, reasons
+        if (
+            len(data.get("side_effects", [])) < 3
+            and len(data.get("interactions", [])) < 3
+        ):
+            reasons.append(
+                f"side_effects={len(data.get('side_effects', []))} and interactions={len(data.get('interactions', []))} both < 3"
+            )
+            return True, reasons
+    elif query_type == "comparative":
+        n_dims = len(data.get("detailed_comparison", []))
+        if n_dims < 6:
+            reasons.append(f"detailed_comparison only {n_dims} dimensions (need 8+)")
+            return True, reasons
+    elif query_type == "evidence":
+        n_supporting = len(data.get("supporting_studies", []))
+        if n_supporting < 2:
+            reasons.append(f"supporting_studies only {n_supporting} (need 3+)")
+            return True, reasons
+        summary = data.get("summary", "")
+        if not summary or len(summary) < 100:
+            reasons.append("summary too short (need 4-6 sentences)")
+            return True, reasons
+    elif query_type == "procedure":
+        n_steps = len(data.get("technique_steps", []))
+        if n_steps < 3:
+            reasons.append(f"technique_steps only {n_steps} (need 5+)")
+            return True, reasons
+    return False, []
+
+
+# Model tier ranking — higher number = more capable
+# Used to ensure user's model choice is never downgraded by routing
+def _model_tier(model_id: str) -> int:
+    """Return a tier number for a model — higher = more capable."""
+    m = model_id.lower()
+    if "opus" in m:
+        return 3
+    if "sonnet" in m:
+        return 2
+    if "haiku" in m:
+        return 1
+    # Unknown models (e.g. OpenRouter) — treat as mid-tier
+    return 2
+
 
 # Async log queue
 _log_queue: asyncio.Queue | None = None
@@ -199,20 +278,52 @@ _VALID_COR = {"I", "IIa", "IIb", "III-no-benefit", "III-harm"}
 
 
 def _coerce_evidenced_claims(obj: object) -> None:
-    """Recursively fill missing/invalid required EvidencedClaim fields with safe defaults."""
+    """Recursively fill missing/invalid required EvidencedClaim fields with safe defaults.
+
+    Safety rule: claims with no source get LOE III + COR IIb + low confidence
+    to prevent unsourced claims from appearing authoritative.
+    """
     if isinstance(obj, dict):
         if "value" in obj or (_CLAIM_FIELDS & obj.keys()):
-            # Looks like an EvidencedClaim — fill missing/invalid required fields
+            has_source = bool(
+                obj.get("source")
+                and obj["source"] not in ("Clinical guidelines", "Expert opinion")
+            )
+
             loe = obj.get("loe") or ""
+            if isinstance(loe, str):
+                loe = loe.strip()
             if not loe or loe not in _VALID_LOE:
                 obj["loe"] = "III"
+
             cor = obj.get("cor") or ""
+            if isinstance(cor, str):
+                cor = cor.strip()
             if not cor or cor not in _VALID_COR:
-                obj["cor"] = "I"
+                # Unsourced claims must NOT get Class I (strongest recommendation)
+                obj["cor"] = "IIb" if not has_source else "IIa"
+
+            # LOE↔COR consistency enforcement (patient safety)
+            final_loe = obj["loe"]
+            final_cor = obj.get("cor", "IIb")
+            if final_loe == "III" and final_cor == "I":
+                # LOE III (expert opinion) must never claim COR I (strongest)
+                obj["cor"] = "IIb"
+            elif final_loe == "I" and final_cor == "IIb":
+                # LOE I (RCT) shouldn't be downgraded to IIb
+                obj["cor"] = "IIa"
+
             if not obj.get("source"):
-                obj["source"] = "Clinical guidelines"
-            if not obj.get("confidence"):
-                obj["confidence"] = "low"
+                obj["source"] = "Expert opinion"
+
+            # Normalize confidence to lowercase (LLM may return "MODERATE")
+            conf = obj.get("confidence") or ""
+            if isinstance(conf, str):
+                conf = conf.strip().lower()
+            if conf not in ("high", "moderate", "low"):
+                obj["confidence"] = "low" if not has_source else "moderate"
+            else:
+                obj["confidence"] = conf
         for v in obj.values():
             _coerce_evidenced_claims(v)
     elif isinstance(obj, list):
@@ -258,6 +369,21 @@ def _validate_response(data: dict, query_type: str) -> tuple[dict | None, list[s
         treatment = data.get("treatment", {})
         if not treatment.get("first_line"):
             warnings.append("No first-line treatment provided")
+        if not data.get("diagnostic_criteria"):
+            warnings.append("No diagnostic criteria provided")
+        if (
+            not data.get("clinical_features")
+            or len(data.get("clinical_features", [])) < 3
+        ):
+            warnings.append("Insufficient clinical features — expected 6+ entries")
+        if not data.get("etiology"):
+            warnings.append("No etiology provided")
+        if not data.get("prognosis"):
+            warnings.append("No prognosis provided")
+        if not data.get("pathophysiology"):
+            warnings.append("No pathophysiology provided")
+        if not treatment.get("non_pharmacological"):
+            warnings.append("No non-pharmacological treatment provided")
 
     elif query_type == "comparative":
         compared = data.get("entities_compared", [])
@@ -344,9 +470,33 @@ async def process_query(
     # Classify
     query_type, confidence = classify_query(request.query, request.query_type)
     query_intent = detect_intent(request.query)
-    # Highlights queries use general schema (compact, smart, not rigid)
-    if query_intent == "highlights":
+    # Only override to general for highlights when query is already unstructured.
+    # Keep drug/disease/comparative/procedure/evidence types so structured schemas are preserved.
+    if query_intent == "highlights" and query_type not in (
+        "drug",
+        "disease",
+        "comparative",
+        "procedure",
+        "evidence",
+    ):
         query_type = "general"
+
+    # Extract condition context for drug queries (e.g. "digoxin in AF" → condition = "AF")
+    condition_context: str | None = None
+    if query_type == "drug":
+        m = _CONDITION_RE.search(request.query)
+        condition_context = m.group(1).strip() if m else None
+
+    # Track query frequency for self-improvement (fire-and-forget)
+    if redis_client:
+        try:
+            normalized = request.query.strip().lower()
+            await redis_client.zincrby(
+                "iatronix:query_freq", 1, f"{query_type}:{normalized}"
+            )
+            await redis_client.zincrby("iatronix:type_freq", 1, query_type)
+        except Exception:
+            pass  # non-critical
 
     # Cache check
     cached_data = await cache_get(
@@ -404,6 +554,7 @@ async def process_query(
                         user_key_id,
                         user_llm_key,
                         user_llm_provider,
+                        user=user,
                     )
                 )
             return response
@@ -437,13 +588,18 @@ async def process_query(
 
     fetched_data: FetchedData | None = None
     vector_results = []
+    routing = None
 
     tasks = {}
     if use_api_fetch:
         routing = route_query(request.query, query_type)
         if routing.fetch_enabled:
             tasks["api"] = asyncio.wait_for(
-                fetch_data_for_query(query_type, routing.entities),
+                fetch_data_for_query(
+                    query_type,
+                    routing.entities,
+                    condition_context=condition_context,
+                ),
                 timeout=settings.api_fetch_timeout_seconds + 1.0,
             )
 
@@ -486,21 +642,52 @@ async def process_query(
             )
 
     # Model and token budget selection
+    # If user explicitly chose a model, respect it unconditionally.
+    # Routing only applies when user is on the default (auto) model.
     effective_model = request.model_id
     max_tokens = settings.llm_max_tokens_generate
     if (
         settings.model_routing_enabled
+        and not request.model_explicit  # user did NOT explicitly pick — allow routing
+        and routing is not None  # only set when api fetch path was taken
         and fetched_data is not None
         and not fetched_data.fallback_to_llm
-        and use_api_fetch  # routing is only set when api fetch was used
         and (user_llm_provider == "anthropic" or "/" not in request.model_id)
     ):
         effective_model = routing.preferred_model
-        # Disease format mode needs more tokens: classifications, pathophysiology, full treatment
         if query_type == "disease":
             max_tokens = settings.llm_max_tokens_format_disease
+        elif query_type == "evidence":
+            max_tokens = settings.llm_max_tokens_format_evidence
+        elif query_type == "procedure":
+            max_tokens = settings.llm_max_tokens_format_procedure
+        elif query_type == "drug" and condition_context:
+            max_tokens = settings.llm_max_tokens_format_drug_context
+            # Drug-in-condition needs synthesis capability — upgrade to Sonnet
+            if not request.model_explicit and (
+                user_llm_provider == "anthropic" or "/" not in request.model_id
+            ):
+                effective_model = settings.model_sonnet
         else:
             max_tokens = settings.llm_max_tokens_format
+    elif query_type == "disease":
+        # Disease generate mode — force Sonnet when routing wasn't set (no entities extracted)
+        max_tokens = settings.llm_max_tokens_format_disease
+        if not request.model_explicit and (
+            user_llm_provider == "anthropic" or "/" not in request.model_id
+        ):
+            effective_model = settings.model_sonnet
+    elif query_type == "evidence":
+        max_tokens = settings.llm_max_tokens_format_evidence
+    elif query_type == "procedure":
+        max_tokens = settings.llm_max_tokens_format_procedure
+    elif query_type == "drug" and condition_context:
+        max_tokens = settings.llm_max_tokens_format_drug_context
+        # Drug-in-condition needs synthesis capability — upgrade to Sonnet
+        if not request.model_explicit and (
+            user_llm_provider == "anthropic" or "/" not in request.model_id
+        ):
+            effective_model = settings.model_sonnet
 
     prompt_mode = (
         "format" if (fetched_data and not fetched_data.fallback_to_llm) else "generate"
@@ -509,7 +696,12 @@ async def process_query(
 
     # Build prompt (format-mode if API data available, generate-mode otherwise)
     prompt = build_prompt(
-        request.query, query_type, fetched_data, vector_results, intent=query_intent
+        request.query,
+        query_type,
+        fetched_data,
+        vector_results,
+        intent=query_intent,
+        condition_context=condition_context,
     )
 
     # LLM call with retry
@@ -542,7 +734,7 @@ async def process_query(
                     raw_sources["guidelines_count"] = len(
                         fetched_data.disease_data.guideline_abstracts or []
                     )
-            return QueryResponse(
+            resp = QueryResponse(
                 query_type=query_type,
                 model_used=effective_model,
                 response=DegradedResponse(
@@ -555,6 +747,12 @@ async def process_query(
                 ),
                 latency_ms=latency_ms,
             )
+            # Log to search history even for degraded responses
+            if user and user.id:
+                asyncio.create_task(
+                    _log_search_history(user.id, request.query, query_type, {})
+                )
+            return resp
         raise
 
     raw_response2: str | None = None
@@ -616,6 +814,45 @@ async def process_query(
             latency_ms=latency_ms,
         )
 
+    # Sparse response retry — if LLM returned critically sparse content, retry once with
+    # an expansion instruction. Only for disease/drug/comparative types.
+    if settings.retry_on_sparse_enabled and query_type in (
+        "disease",
+        "drug",
+        "comparative",
+        "evidence",
+        "procedure",
+    ):
+        is_sparse, sparse_reasons = _is_critically_sparse(validated_data, query_type)
+        if is_sparse:
+            logger.info(
+                "Response critically sparse (%s) — retrying with expansion instruction",
+                sparse_reasons,
+            )
+            expansion_suffix = (
+                "\n\nIMPORTANT: Your previous response was critically sparse. "
+                "You MUST expand these sections: " + ", ".join(sparse_reasons) + ". "
+                "Meet ALL minimum entry counts. Use the FULL token budget. Do NOT truncate."
+            )
+            try:
+                raw_expansion = await _call_llm(
+                    effective_model,
+                    prompt + expansion_suffix,
+                    max_tokens=max_tokens,
+                    user_key=user_llm_key,
+                    user_provider=user_llm_provider,
+                )
+                if raw_expansion:
+                    parsed_expansion = parse_llm_json(raw_expansion)
+                    if parsed_expansion:
+                        v2, _ = _validate_response(parsed_expansion, query_type)
+                        if v2 is not None:
+                            validated_data = v2
+            except Exception:
+                logger.debug(
+                    "Sparse retry failed — keeping original response", exc_info=True
+                )
+
     # Enrich references with deterministic URLs (no LLM guessing)
     # Must run BEFORE citation validation so URL warnings reflect final values
     try:
@@ -641,6 +878,13 @@ async def process_query(
 
     latency_ms = int((time.time() - start_time) * 1000)
 
+    # Warn user when response is AI-generated rather than sourced from databases
+    if prompt_mode == "generate":
+        validation_warnings.append(
+            "This response was generated by AI without data from medical databases. "
+            "Verify claims against authoritative sources before clinical use."
+        )
+
     response = QueryResponse(
         query_type=query_type,
         model_used=effective_model,
@@ -654,10 +898,10 @@ async def process_query(
         latency_ms=latency_ms,
     )
 
-    # Cache write (Redis exact + semantic pgvector — fire-and-forget)
+    # Cache write (Redis exact + semantic pgvector — both fire-and-forget, B4)
     cache_data = response.model_dump()
-    await cache_set(
-        redis_client, request.query, query_type, request.model_id, cache_data
+    asyncio.create_task(
+        cache_set(redis_client, request.query, query_type, request.model_id, cache_data)
     )
     asyncio.create_task(
         semantic_cache_set(request.query, query_type, request.model_id, cache_data)
@@ -696,6 +940,7 @@ async def _revalidate_semantic_cache(
     user_key_id,
     user_llm_key,
     user_llm_provider,
+    user=None,
 ) -> None:
     """
     Background SWR revalidation: re-run the pipeline for a stale cache entry
@@ -707,7 +952,7 @@ async def _revalidate_semantic_cache(
             request,
             redis_client=redis_client,
             user_key_id=user_key_id,
-            user=None,
+            user=user,
         )
         await semantic_cache_revalidate(cache_id, fresh_response.model_dump())
         logger.debug("SWR revalidation complete for semantic cache id=%d", cache_id)

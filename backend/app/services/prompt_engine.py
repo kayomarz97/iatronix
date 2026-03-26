@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 from app.config import settings
 
 if TYPE_CHECKING:
-    from app.services.data_fetcher import FetchedData
+    from app.services.data_fetcher import DiseaseFetchResult, FetchedData
     from app.services.vector_search import SearchResult
 
 APPROVED_SOURCES = """
@@ -18,24 +18,42 @@ APPROVED CITATION SOURCES (you MUST only cite from this list):
 """
 
 EVIDENCE_RULES = """
-CRITICAL: Every factual claim must include:
-- loe: Level of Evidence (I, II-1, II-2, II-3, III per USPSTF)
-- cor: Class of Recommendation (I, IIa, IIb, III-no-benefit, III-harm per AHA/ACC)
-- source: Name of guideline/database (MUST be from approved sources list)
-- source_year: Year of the cited guideline/edition
-- confidence: "high", "moderate", or "low"
-If you cannot cite an approved source for a claim, you MUST set confidence to "low"
-and prepend the claim with "[Unverified]".
+CRITICAL: Every factual claim must include loe, cor, source, source_year, confidence.
+
+LOE (Level of Evidence — USPSTF):
+- "I"    = RCTs, systematic reviews, meta-analyses (e.g. DAPA-HF trial, Cochrane review)
+- "II-1" = Well-designed controlled trials without randomization
+- "II-2" = Cohort or case-control studies
+- "II-3" = Case series, uncontrolled studies
+- "III"  = Expert opinion, physiologic rationale, consensus statements
+
+COR (Class of Recommendation — AHA/ACC):
+- "I"             = Strong evidence of benefit — ONLY use when ≥1 large RCT or meta-analysis supports the claim
+- "IIa"           = Weight of evidence favors benefit — use when multiple observational studies or smaller RCTs support
+- "IIb"           = Benefit uncertain — use when evidence is limited, conflicting, or from expert opinion only
+- "III-no-benefit" = Not useful — evidence shows no benefit
+- "III-harm"       = Harmful — evidence shows risk outweighs benefit
+
+MATCHING RULES:
+- LOE I claims → COR I or IIa (never IIb)
+- LOE III claims → COR IIb (never COR I — expert opinion cannot be "strongly recommended")
+- If you cannot name a specific RCT/guideline → LOE III, COR IIb, confidence "low"
+
+source: Name the SPECIFIC guideline (e.g. "AHA/ACC 2022 Heart Failure Guideline", "NICE CG181")
+source_year: Year of the cited guideline/edition
+
+confidence:
+- "high"     = Claim backed by LOE I or II-1 evidence from a named source
+- "moderate" = Claim backed by LOE II-2/II-3 or well-established clinical practice
+- "low"      = Expert opinion, limited evidence, or no specific source
 
 IMPORTANT: Do NOT include LOE, COR, source names, or evidence markers inline in
-"value" text fields. The "value" field should contain ONLY the clinical content.
-Put evidence metadata ONLY in the dedicated JSON fields. For example:
+"value" text fields. Put evidence metadata ONLY in the dedicated JSON fields:
   WRONG: {{"value": "Reduces HbA1c by 1-1.5% (LOE I, ADA 2024)", ...}}
   RIGHT: {{"value": "Reduces HbA1c by 1-1.5%", "loe": "I", "source": "ADA", "source_year": 2024, ...}}
 
-When evidence is insufficient or absent:
-- Set confidence to "low"
-- Do NOT fabricate data, statistics, or trial names
+When evidence is insufficient: set confidence "low", loe "III", cor "IIb".
+Do NOT fabricate trial names, statistics, or sources.
 """
 
 JSON_CONTRACT_RULES = """
@@ -62,22 +80,36 @@ DRUG_PROMPT = """You are a clinical pharmacology reference assistant.
 {evidence_rules}
 {json_contract_rules}
 
-BLUF RULE: Populate "bluf" first with 1-3 sentences directly answering what the user asked about this drug.
-Example — query "metformin for diabetes": bluf = "Metformin is first-line for type 2 diabetes (ADA 2024): 500 mg BD with meals, titrate to 1000 mg BD; reduces HbA1c by 1.0-1.5%."
-Example — query "warfarin interactions": bluf = "Warfarin has narrow therapeutic index with major interactions with NSAIDs, antibiotics (fluoroquinolones, metronidazole), and amiodarone — all can precipitate bleeding."
-Populate "additional_clinical_context" with query-specific nuance not captured by schema fields (e.g. off-label context, monitoring pearls, Indian market equivalents). Output null if nothing to add.
+{condition_context_block}
 
-Be COMPREHENSIVE. Cover ALL of the following thoroughly:
-- Mechanism of action: full pharmacodynamic detail
-- ALL approved indications (FDA and major international), including off-label uses with evidence
-- ALL dosing routes, forms, and regimens (oral, IV, SC, etc.) with dose ranges for each indication
-- ALL significant contraindications (absolute and relative)
-- ALL common AND serious side effects with approximate incidence rates
-- ALL clinically significant drug interactions (aim for at least 8-10 major ones)
-- Full pharmacokinetics (absorption, distribution, metabolism, excretion, half-life)
-- ALL special populations (renal impairment, hepatic impairment, pediatric, geriatric, pregnancy, lactation)
-- ALL recommended monitoring parameters
-Do NOT omit sections. Populate every array with multiple entries where applicable.
+MINIMUM ENTRY COUNTS (mandatory — short, sparse responses are FAILED responses):
+- indications: 3+ entries
+- dosing: 4+ entries (include ALL common routes/regimens)
+- contraindications: 3+ entries
+- side_effects: 5+ entries (both common AND serious)
+- interactions: 5+ entries with severity ratings
+- monitoring: 2+ entries
+
+ANSWER STRATEGY — Read the query carefully and follow these steps:
+1. BLUF FIRST: Write "bluf" as 1-3 sentences that DIRECTLY answer the specific question asked.
+   Example — "metformin for diabetes": "Metformin is first-line for type 2 diabetes (ADA 2024): 500 mg BD, titrate to 1000 mg BD; reduces HbA1c 1.0-1.5%."
+   Example — "warfarin interactions": "Warfarin has narrow therapeutic index with major interactions with NSAIDs, antibiotics (fluoroquinolones, metronidazole), and amiodarone — all precipitate bleeding."
+
+2. EXPAND on the SPECIFIC AREA the user asked about — give it the MOST detail:
+   - If they asked about dosing → dosing array should have 6+ entries with every route/regimen
+   - If they asked about interactions → interactions array should have 10+ entries
+   - If they asked about side effects → side_effects array should be exhaustive
+   - If they asked about a specific indication → indications should detail that indication first, then list others
+
+3. COMPLETE the remaining sections with standard coverage (3-5 entries each).
+
+4. "additional_clinical_context": Add query-specific nuance not captured by schema fields (off-label context, monitoring pearls, clinical tips). null if nothing to add.
+
+Sections to populate:
+- Mechanism of action, indications, dosing (routes/forms/regimens), contraindications
+- Side effects (common AND serious with approximate incidence), interactions
+- Pharmacokinetics, special populations, monitoring parameters
+Populate every array — but give MORE depth to sections the user specifically asked about.
 
 Respond with a JSON object matching this EXACT structure:
 {{
@@ -99,29 +131,44 @@ Respond with a JSON object matching this EXACT structure:
 
 Query: {query}"""
 
-DISEASE_PROMPT = """You are a senior clinician writing a comprehensive disease reference for medical trainees.
+DISEASE_PROMPT = """You are a senior clinician writing a comprehensive disease reference equivalent to a Harrison's chapter summary for medical trainees and practicing physicians.
 {approved_sources}
 {evidence_rules}
 {json_contract_rules}
 
-BLUF RULE: Populate "bluf" first with 1-3 sentences directly answering what the user asked.
-Example — query "first-line treatment for PAH": bluf = "First-line: ambrisentan or macitentan (ERA) combined with tadalafil or sildenafil (PDE5i) per ESC/ERS 2022."
-Example — query "what is sepsis": bluf = "Sepsis is life-threatening organ dysfunction caused by dysregulated host response to infection (Sepsis-3 definition, JAMA 2016)."
-Populate "additional_clinical_context" with any query-specific nuance not captured by the fixed schema fields (e.g. special populations, emerging therapies, bedside tips). Output null if nothing to add.
+ANSWER STRATEGY — Read the query carefully and follow these steps:
+1. BLUF FIRST: Write "bluf" as 2-4 sentences that DIRECTLY answer the specific question with SPECIFIC clinical numbers.
+   Example — "pulmonary embolism": "PE is an occlusion of pulmonary arteries by thrombus, most commonly from DVT (>90%). First-line: anticoagulation with rivaroxaban (15mg BD ×21d, then 20mg OD) or LMWH bridged to warfarin (INR 2-3). Massive PE (sBP <90): thrombolysis with alteplase 100mg IV/2h. Mortality: 1-3% low-risk, 3-15% submassive, 25-65% massive."
+   Example — "aortic aneurysm surgical management": "Surgical repair indicated when AAA ≥5.5cm (men) or ≥5.0cm (women), or growth >1cm/year: EVAR preferred if anatomy suitable (60-70% of cases), open repair for younger/complex cases. Perioperative mortality: EVAR 1-2%, open 4-5%."
 
-CONTENT DEPTH — populate sections relevant to the query; sections not relevant to the specific question may be [] or null:
-- etiology: 4-8 entries covering ALL causes (genetic, autoimmune, infectious, structural, toxic, idiopathic, risk factors)
-- pathophysiology: detailed mechanistic explanation (≥150 words) — include vasoconstriction, inflammation, fibrosis, remodeling, hemodynamic changes, cellular/molecular mechanisms as applicable
-- clinical_features: 6-10 entries — ALL symptoms and signs PLUS if the disease has a CLASSIFICATION SYSTEM (WHO groups, NYHA classes, Child-Pugh, GOLD stages, etc.) include EVERY CLASS/STAGE with its specific criteria as separate entries
-- diagnostic_criteria: 5-8 entries with SPECIFIC threshold values (e.g. "mPAP ≥ 25 mmHg at rest on RHC", NOT just "elevated pressures")
-- treatment.first_line: 3-6 entries — SPECIFIC drug name + dose + route + frequency (NOT drug class names)
-  RIGHT: "Ambrisentan (ERA) 5-10 mg orally once daily, or Bosentan 62.5 mg BD × 4 weeks then 125 mg BD"
-  WRONG: "Endothelin receptor antagonists are used"
-- treatment.second_line: 2-4 specific drugs with doses
-- treatment.non_pharmacological: 3+ entries (oxygen therapy, exercise, anticoagulation, transplant criteria, etc.)
-- complications: 4-6 entries
-- CLASSIFICATION SYSTEMS: list each class explicitly in clinical_features where applicable
-If evidence is limited, use loe="III", confidence="moderate", source="Clinical consensus".
+2. EXPAND on the SPECIFIC AREA the user asked about — give it the MOST detail:
+   - "medical management" → treatment.first_line and treatment.second_line should have 6+ entries each with specific drugs/doses
+   - "surgical management" → treatment.non_pharmacological should detail EVERY surgical approach with indications and criteria
+   - "diagnosis" → diagnostic_criteria should have 8+ entries with specific threshold values and test characteristics
+   - "pathophysiology" → pathophysiology should be ≥250 words with cellular/molecular detail
+   - If the query is just the disease name → give EQUAL depth to ALL sections
+
+3. COMPLETE remaining sections thoroughly (NOT sparsely). Every section should have the MINIMUM entries listed below.
+
+4. "additional_clinical_context": Query-specific nuance (surveillance intervals, emerging therapies, bedside tips, scoring systems, risk stratification). null if nothing.
+
+Sections to populate — MINIMUM entry counts are MANDATORY:
+- etiology: 5-8 entries (all causes — be SPECIFIC: name the genes, organisms, risk factors with incidence data)
+- pathophysiology: detailed mechanism (≥200 words with specific physiological numbers)
+- epidemiology: incidence, prevalence, age/sex distribution, geographic variation
+- clinical_features: 8-12 entries — include FREQUENCY data (e.g. "Dyspnea (73%)"), CLASSIFICATION/SEVERITY SYSTEMS with each class as separate entry (e.g. Wells score, NYHA, Child-Pugh, CURB-65)
+- diagnostic_criteria: 6-10 entries with SPECIFIC threshold values AND test characteristics (sensitivity/specificity):
+  RIGHT: "CT pulmonary angiography: sensitivity 83-100%, specificity 89-97%"  WRONG: "Imaging is useful"
+  RIGHT: "D-dimer ELISA: sensitivity >95%; age-adjusted cutoff (age × 10 µg/L) for patients >50"  WRONG: "Blood tests may help"
+- treatment.first_line: 4-8 entries — SPECIFIC drug + dose + route + frequency + duration:
+  RIGHT: "Rivaroxaban 15 mg PO BD ×21 days then 20 mg OD"  WRONG: "Anticoagulation is recommended"
+  RIGHT: "Enoxaparin 1 mg/kg SC BD, bridge to warfarin INR 2.0-3.0"  WRONG: "LMWH may be used"
+- treatment.second_line: 3-5 specific drugs with doses and criteria for use
+- treatment.adjunctive: 2-4 entries
+- treatment.non_pharmacological: 3-5 entries (interventions, surgery, lifestyle, transplant criteria with specific indications)
+- complications: 5-8 entries with incidence rates where known
+- prognosis: mortality rates, recurrence rates, prognostic factors
+If a section has fewer than the minimum entries above, you have NOT met the depth requirement.
 
 Respond with a JSON object matching this EXACT structure:
 {{
@@ -152,19 +199,17 @@ COMPARATIVE_PROMPT = """You are a clinical comparison assistant.
 {evidence_rules}
 {json_contract_rules}
 
-Be COMPREHENSIVE. Compare the entities thoroughly across ALL of the following dimensions:
-- Efficacy (primary outcomes, NNT where available)
-- Safety profile (side effects, black box warnings, serious adverse events)
-- Dosing convenience (frequency, route, titration complexity)
-- Drug interactions
-- Contraindications
-- Cost and availability
-- Special populations (renal/hepatic impairment, elderly, pediatric, pregnancy)
-- Onset of action and pharmacokinetics
-- Guideline positioning and recommendations
-- Patient adherence and tolerability
+MINIMUM COMPARISON DIMENSIONS (mandatory — you MUST include ALL of these):
+1. Efficacy (primary outcomes, NNT where available)
+2. Safety / adverse effects (including black box warnings)
+3. Contraindications
+4. Drug interactions
+5. Dosing convenience (route, frequency, titration complexity)
+6. Special populations (renal impairment, hepatic impairment, elderly, pregnancy)
+7. Cost / availability
+8. Guideline positioning (which is first-line per major guidelines?)
+Fewer than 8 dimensions is a FAILED response. Include additional dimensions when clinically relevant.
 Provide a thorough clinical preference summary with supporting rationale.
-Do NOT omit dimensions. Include as many comparison dimensions as clinically relevant.
 
 Respond with a JSON object matching this EXACT structure:
 {{
@@ -193,6 +238,11 @@ GENERAL_PROMPT = """You are a medical knowledge assistant.
 
 This query does not fit a specific drug/disease/comparative pattern. Provide a structured response.
 
+DEPTH REQUIREMENTS for medical topics:
+- summary: minimum 3 substantive paragraphs: (1) definition/background and clinical significance, (2) mechanism, pathophysiology, or underlying principle if applicable, (3) clinical relevance, key considerations, and practical application
+- key_points: 5-8 specific, actionable, clinically useful statements — not generic observations. Include specific values, thresholds, or clinical pearls where applicable.
+- For medical queries, provide clinical-grade depth equivalent to a brief UpToDate overview.
+
 key_points rules: plain strings only — no leading markdown bullet prefix ("- "), no numbered prefix ("1."). Each entry is a complete sentence or actionable statement.
 related_drugs rules: generic INN names only — no brand names, no dosing information.
 related_conditions rules: condition names only — no descriptions.
@@ -216,7 +266,14 @@ PROCEDURE_PROMPT = """You are a clinical procedure reference assistant.
 
 {focus_instruction}
 
-HALLUCINATION PREVENTION — CRITICAL: For "indications", "contraindications", and "complications" arrays, ONLY include items you can cite from the approved sources list above. If no approved source supports an item, do NOT include it — output [] for that array rather than fabricating [Unverified] entries. "technique_steps" may use established clinical consensus for well-known procedural steps.
+MINIMUM ENTRY COUNTS (mandatory — incomplete responses are FAILED responses):
+- technique_steps: 5+ sequential steps covering all key procedural phases (prep, insertion/execution, confirmation, post-procedure)
+- indications: 3+ specific evidence-based indications with clinical criteria
+- contraindications: 2+ entries (absolute and relative)
+- complications: 3+ entries with incidence rates where known
+- guidelines: 2+ specific guideline recommendations citing society and year
+
+HALLUCINATION PREVENTION: For "indications", "contraindications", and "complications", prefer items supported by approved sources — but when source data is absent for a well-established procedure, include standard clinical consensus entries rather than outputting empty arrays. "technique_steps" and "guidelines" may use established clinical consensus for well-known procedural steps.
 
 technique_steps rules: steps MUST be sequential; step_number starts at 1 and increments by 1 with no gaps. "notes" is null if not applicable — never output "".
 
@@ -242,6 +299,12 @@ EVIDENCE_PROMPT = """You are a clinical evidence synthesizer.
 
 {focus_instruction}
 
+MINIMUM ENTRY COUNTS (mandatory — shallow responses are FAILED responses):
+- supporting_studies: 3+ entries, each with specific finding, sample size, and LOE
+- summary: 4-6 sentences covering mechanism/rationale, evidence quality, clinical context, and remaining uncertainty
+- clinical_recommendation: REQUIRED when ≥1 supporting study exists (null only when zero evidence found)
+- guideline_status: name SPECIFIC society + year if any formal recommendation exists — do NOT output "No formal guideline exists" without checking
+
 The user is asking about evidence for a clinical question that may not have formal guidelines.
 Your job is to summarize the available studies and provide a balanced recommendation.
 
@@ -254,7 +317,7 @@ guideline_status rule: output EXACTLY one of these three templates (fill in the 
 Respond with a JSON object:
 {{
   "query_topic": "concise topic string",
-  "summary": "2-3 sentence overview of the evidence",
+  "summary": "4-6 sentence overview: rationale/mechanism, evidence quality, key findings, clinical context, residual uncertainty",
   "supporting_studies": [{{
     "title": "study title",
     "pmid": "numeric string or null",
@@ -334,9 +397,21 @@ Your ONLY job: extract and format this data into the required JSON schema.
 - Set loe="I" and cor="I" for FDA-approved indications; loe="II-2" for adverse event frequency data
 - For claims from PubMed guidelines, set source=the society name (e.g., "AHA/ACC", "ADA", "ESC") and source_year from the abstract year
 
-BLUF RULE: Populate "bluf" with 1-3 sentences directly answering what the user asked, drawn from the source data below.
-Example — query "metformin for diabetes": bluf = "Metformin is first-line for T2DM per ADA 2024: 500 mg BD with meals, titrate to 1000 mg BD."
-Populate "additional_clinical_context" with query-specific nuance from the source data (monitoring pearls, off-label uses, special population notes). Output null if nothing relevant.
+{condition_context_block}
+
+MINIMUM ENTRY COUNTS (mandatory — short, sparse responses are FAILED responses):
+- indications: 3+ entries
+- dosing: 4+ entries (include ALL common routes/regimens)
+- contraindications: 3+ entries
+- side_effects: 5+ entries (both common AND serious)
+- interactions: 5+ entries with severity ratings
+- monitoring: 2+ entries
+
+ANSWER STRATEGY — Read the query carefully:
+1. BLUF: Write 1-3 sentences DIRECTLY answering the specific question from source data.
+2. EXPAND: Give most detail to the section the user asked about (dosing/interactions/side effects/etc.)
+3. COMPLETE: Fill remaining sections with standard coverage from source data.
+"additional_clinical_context": query-specific nuance from source data (monitoring pearls, off-label, special populations). null if nothing.
 
 {evidence_rules}
 {json_contract_rules}
@@ -381,27 +456,42 @@ Respond ONLY with a JSON object matching this EXACT structure:
 
 Query: {query}"""
 
-DISEASE_FORMAT_PROMPT = """You are a senior clinician creating a comprehensive disease reference card.
+DISEASE_FORMAT_PROMPT = """You are a senior clinician creating a comprehensive disease reference card equivalent to a Harrison's chapter summary.
 
-Your sources are below. Use them as PRIMARY evidence (cite with society + year). Where source data is absent or incomplete for a specific field, you MAY supplement with established medical knowledge AS A LAST RESORT — but ONLY for widely-accepted facts (classification systems, standard pathophysiology mechanisms, well-established drug doses). ALWAYS mark any supplemented content explicitly with source="Clinical consensus", loe="III", confidence="moderate". Do NOT add supplemented content to fields that can remain [] or null.
+Your sources are below. Use them as PRIMARY evidence (cite with society + year). Where source data is absent or incomplete for a specific field, you MUST supplement with established medical knowledge — this is EXPECTED for a complete reference card. Use well-known sources: "Harrison's Principles of Internal Medicine", "Robbins Pathology", "Braunwald's Heart Disease", "Goldman-Cecil Medicine", or the appropriate specialty textbook. Mark supplemented content with loe="III", cor="IIb", confidence="moderate" when from a named textbook, or confidence="low" if purely from clinical reasoning. The goal is a COMPLETE, CLINICALLY USEFUL reference — NOT a sparse list of only what PubMed returned.
 
-BLUF RULE: Populate "bluf" first with 1-3 sentences directly answering what the user asked.
-Populate "additional_clinical_context" with any query-specific nuance not captured by the fixed schema fields. Output null if nothing to add.
+ANSWER STRATEGY — Read the query carefully:
+1. BLUF: Write 2-4 sentences DIRECTLY answering the specific question with SPECIFIC numbers.
+   "pulmonary embolism" → "PE is an occlusion of pulmonary arteries by thrombus, most commonly from DVT (>90%). Acute massive PE (systolic BP <90 mmHg) carries 25-65% mortality. First-line: anticoagulation with LMWH/UFH bridged to warfarin (INR 2-3) or DOAC monotherapy (rivaroxaban 15mg BD x21d then 20mg OD). Thrombolysis (alteplase 100mg IV/2h) for massive PE with hemodynamic instability."
+   "medical management" → lead with drugs, doses, BP targets, lifestyle
+   "surgical management" → lead with surgical indications, approaches, techniques
+   "diagnosis" → lead with diagnostic criteria, investigations, classification
+2. EXPAND: Give most detail to the section the user asked about.
+   "medical management" → treatment arrays should have 6+ entries with specific drugs/doses
+   "surgical management" → non_pharmacological should detail every surgical approach with indications
+   If the query is just the disease name (e.g. "pulmonary embolism") → give EQUAL depth to ALL sections.
+3. COMPLETE: Fill ALL remaining sections thoroughly. Do NOT leave ANY section sparse.
+"additional_clinical_context": Query-specific nuance from source data. null if nothing.
 
-CONTENT ORDER: populate sections relevant to the query. Sections not relevant to the specific question may be [] or null — do not fabricate content to fill them.
-
-DEPTH REQUIREMENTS — every section MUST be fully populated:
-- etiology: 4-8 entries covering ALL causes (genetic, autoimmune, infectious, structural, toxic, idiopathic, risk factors)
-- pathophysiology: detailed mechanistic explanation (≥150 words) — vasoconstriction, inflammation, fibrosis, remodeling, hemodynamic changes; PRIORITISE data from retrieved guidelines
-- clinical_features: 6-10 entries — ALL symptoms/signs PLUS if this disease has a CLASSIFICATION SYSTEM (WHO groups, NYHA classes, Child-Pugh, GOLD stages, ERS/ESC risk strata etc.) include EVERY CLASS with its specific criteria as separate entries
-- diagnostic_criteria: 5-8 entries with SPECIFIC threshold values (e.g., "mPAP ≥ 25 mmHg at rest on RHC" NOT just "elevated pressures")
-- treatment.first_line: 3-6 entries — SPECIFIC drug name + dose + route + frequency, NOT drug class names
-  RIGHT: "Ambrisentan (ERA): 5–10 mg orally once daily; or Macitentan 10 mg once daily"
-  WRONG: "Endothelin receptor antagonists are recommended"
-- treatment.second_line: 2-4 specific drugs with doses and combination regimens
-- treatment.non_pharmacological: 3+ entries (O2 therapy, cardiac rehab, anticoagulation, transplant criteria)
-- complications: 4-6 entries
-- NEVER leave etiology, pathophysiology, clinical_features, diagnostic_criteria, or treatment empty
+DEPTH REQUIREMENTS — CRITICAL — every section MUST be fully populated with clinically actionable detail:
+- etiology: 5-8 entries covering ALL causes and risk factors — be SPECIFIC (e.g., "Virchow's triad: venous stasis (immobilization >3 days, long-haul flights >4h), endothelial injury (surgery, trauma, central lines), hypercoagulability (Factor V Leiden, protein C/S deficiency, antiphospholipid syndrome, malignancy, OCP use)")
+- pathophysiology: detailed mechanistic explanation (≥200 words) covering the complete pathological cascade — thrombus formation, hemodynamic effects, gas exchange impairment, RV failure mechanism, inflammatory response; include SPECIFIC numbers (e.g., dead space ventilation, V/Q mismatch ratios, PA pressure thresholds)
+- clinical_features: 8-12 entries — ALL symptoms/signs with FREQUENCY data where known (e.g., "Dyspnea (73%)", "Pleuritic chest pain (44%)", "Tachycardia >100bpm (24%)"). MUST include CLASSIFICATION/SEVERITY SYSTEMS as separate entries (e.g., PE severity: massive/submassive/low-risk with criteria for each; Wells score criteria; Geneva score criteria)
+- diagnostic_criteria: 6-10 entries with SPECIFIC threshold values and test characteristics (sensitivity/specificity where known):
+  RIGHT: "CT pulmonary angiography (CTPA): sensitivity 83-100%, specificity 89-97%; first-line imaging for suspected PE"
+  RIGHT: "D-dimer (ELISA): sensitivity >95%, NPV >99% when pre-test probability low; age-adjusted cutoff = age × 10 µg/L for patients >50"
+  WRONG: "Imaging studies are helpful" or "Blood tests may be ordered"
+- treatment.first_line: 4-8 entries — SPECIFIC drug + dose + route + frequency + duration:
+  RIGHT: "Rivaroxaban 15 mg orally twice daily for 21 days, then 20 mg once daily"
+  RIGHT: "Unfractionated heparin: 80 units/kg IV bolus, then 18 units/kg/h infusion, titrate to aPTT 1.5-2.5× control"
+  WRONG: "Anticoagulation is recommended"
+- treatment.second_line: 3-5 specific drugs/interventions with doses and criteria for use
+- treatment.adjunctive: 2-4 entries (IVC filters, hemodynamic support, thrombus aspiration)
+- treatment.non_pharmacological: 3-5 entries (surgical embolectomy indications, catheter-directed therapy, compression stockings, early mobilization, long-term prevention)
+- complications: 5-8 entries with specific incidence rates where known
+- prognosis: Include mortality rates, recurrence rates, and factors affecting prognosis
+- NEVER leave etiology, pathophysiology, clinical_features, diagnostic_criteria, or treatment empty or sparse
+- If a section has fewer than the minimum entries listed above, you have NOT met the depth requirement
 
 {evidence_rules}
 {json_contract_rules}
@@ -418,25 +508,35 @@ DEPTH REQUIREMENTS — every section MUST be fully populated:
 === MEDLINEPLUS / CLASSIFICATION DATA ===
 {medlineplus_summary}
 
+IMPORTANT: Produce a LONG, DETAILED response. Use the FULL token budget. Every array should have the MINIMUM number of entries specified in the depth requirements above. Short, sparse responses are NOT acceptable.
+
+COMPLETION RULE — MANDATORY: You MUST complete ALL sections. Do NOT stop after complications.
+treatment (all 4 sub-sections), complications, AND prognosis are ALL MANDATORY.
+An incomplete response is a FAILED response.
+
+SECTION ORDER: disease_name → bluf → icd_10 → etiology → pathophysiology → epidemiology →
+clinical_features → diagnostic_criteria → treatment → complications → prognosis → references.
+Do NOT skip any section.
+
 Respond ONLY with a JSON object matching this EXACT structure:
 {{
   "disease_name": "string",
-  "bluf": "string — 1-3 sentences directly answering what the user asked (or null)",
-  "additional_clinical_context": "string — query-specific nuance not captured above (or null)",
+  "bluf": "string — 2-4 sentences directly answering what the user asked with specific clinical numbers (or null)",
+  "additional_clinical_context": "string — query-specific nuance: scoring systems, risk stratification, emerging therapies, clinical pearls (or null)",
   "icd_10": "string or null",
-  "etiology": [{{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}}],
-  "pathophysiology": {{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}} or null,
-  "epidemiology": {{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}} or null,
-  "clinical_features": [{{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}}],
-  "diagnostic_criteria": [{{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}}],
+  "etiology": [{{"value": "string — be SPECIFIC: name genes, organisms, risk factors with incidence", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}}],
+  "pathophysiology": {{"value": "string — MUST be ≥200 words with specific physiological numbers and complete pathological cascade", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}} or null,
+  "epidemiology": {{"value": "string — incidence, prevalence, demographics, geographic variation", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}} or null,
+  "clinical_features": [{{"value": "string — include symptom FREQUENCY (e.g., 'Dyspnea (73%)') and severity classification entries", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}}],
+  "diagnostic_criteria": [{{"value": "string — include test sensitivity/specificity and specific threshold values", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}}],
   "treatment": {{
-    "first_line": [{{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low", "drug_names": ["generic_name_only"]}}],
-    "second_line": [{{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low", "drug_names": ["generic_name_only"]}}],
-    "adjunctive": [{{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low", "drug_names": ["generic_name_only"]}}],
-    "non_pharmacological": [{{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}}]
+    "first_line": [{{"value": "string — SPECIFIC drug+dose+route+frequency+duration", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low", "drug_names": ["generic_name_only"]}}],
+    "second_line": [{{"value": "string — SPECIFIC drug+dose with criteria for use", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low", "drug_names": ["generic_name_only"]}}],
+    "adjunctive": [{{"value": "string — supportive interventions with specific indications", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low", "drug_names": ["generic_name_only"]}}],
+    "non_pharmacological": [{{"value": "string — surgical/interventional with specific indications and criteria", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}}]
   }},
-  "complications": [{{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}}],
-  "prognosis": {{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}} or null,
+  "complications": [{{"value": "string — include incidence rate where known", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}}],
+  "prognosis": {{"value": "string — include mortality rates, recurrence rates, prognostic factors", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}} or null,
   "references": [{{"source": "string", "title": "string or null", "year": int_or_null, "url": null}}]
 }}
 
@@ -444,6 +544,17 @@ Query: {query}"""
 
 COMPARATIVE_FORMAT_PROMPT = """You are a medical JSON formatter comparing two entities using retrieved source data.
 Compare them accurately. Do NOT invent efficacy statistics not present in the source data.
+
+MINIMUM COMPARISON DIMENSIONS (mandatory — you MUST include ALL of these):
+1. Efficacy (primary outcomes, NNT where available)
+2. Safety / adverse effects (including black box warnings)
+3. Contraindications
+4. Drug interactions
+5. Dosing convenience (route, frequency, titration complexity)
+6. Special populations (renal impairment, hepatic impairment, elderly, pregnancy)
+7. Cost / availability
+8. Guideline positioning (which is first-line per major guidelines?)
+Fewer than 8 dimensions is a FAILED response.
 
 {evidence_rules}
 {json_contract_rules}
@@ -481,7 +592,14 @@ PROCEDURE_FORMAT_PROMPT = """You are a clinical procedure reference formatter. U
 
 {focus_instruction}
 
-HALLUCINATION PREVENTION — CRITICAL: Base ALL indications, contraindications, and complications ONLY on the retrieved data provided below. Do NOT add items not supported by the retrieved data. If the data is insufficient for a section, output [] rather than fabricating [Unverified] entries.
+MINIMUM ENTRY COUNTS (mandatory — incomplete responses are FAILED responses):
+- technique_steps: 5+ sequential steps covering all key procedural phases
+- indications: 3+ entries — cite from retrieved data where available; supplement with clinical consensus when data is absent
+- contraindications: 2+ entries
+- complications: 3+ entries with incidence rates where known
+- guidelines: 2+ entries — from retrieved data or well-established society recommendations
+
+HALLUCINATION PREVENTION: Prefer items supported by the retrieved data below for indications/contraindications/complications. For technique_steps and guidelines, clinical consensus is acceptable when retrieved data is insufficient. Do NOT output empty arrays for a well-known procedure — provide standard consensus entries.
 
 technique_steps rules: steps MUST be sequential; step_number starts at 1 and increments by 1 with no gaps. "notes" is null if not applicable — never output "".
 
@@ -511,6 +629,12 @@ EVIDENCE_FORMAT_PROMPT = """You are a clinical evidence synthesizer. Use the ret
 
 {focus_instruction}
 
+MINIMUM ENTRY COUNTS (mandatory — shallow responses are FAILED responses):
+- supporting_studies: 3+ entries from the retrieved data, each with specific finding, sample size, and LOE
+- summary: 4-6 sentences covering mechanism/rationale, evidence quality, key findings, clinical context, residual uncertainty
+- clinical_recommendation: REQUIRED when ≥1 supporting study exists in the data (null only when retrieved data shows zero evidence)
+- guideline_status: name SPECIFIC society + year from the guideline mentions section above
+
 pmid rule: numeric string only, no "PMID:" prefix (e.g. "38293847") — output null if unavailable.
 guideline_status rule: output EXACTLY one of these three templates (fill in the blanks):
   "No formal guideline exists"
@@ -529,7 +653,7 @@ guideline_status rule: output EXACTLY one of these three templates (fill in the 
 Respond ONLY with a JSON object:
 {{
   "query_topic": "concise topic string",
-  "summary": "2-3 sentence overview of the evidence",
+  "summary": "4-6 sentence overview: rationale/mechanism, evidence quality, key findings, clinical context, residual uncertainty",
   "supporting_studies": [{{
     "title": "study title",
     "pmid": "numeric string or null",
@@ -618,15 +742,17 @@ def build_prompt(
     fetched_data: "FetchedData | None" = None,
     vector_results: "list[SearchResult] | None" = None,
     intent: str = "full",
+    condition_context: "str | None" = None,
 ) -> str:
     """Build a prompt for the LLM.
 
-    If intent='highlights' → compact clinical pearls response (GeneralResponse schema).
+    If intent='highlights' AND query_type='general' → compact highlights response.
+    If intent='highlights' AND query_type is structured → keep structured prompt with summary modifier.
     If fetched_data is provided and fetch succeeded → format-mode prompt (shorter, cheaper).
-    Otherwise → generate-mode prompt (existing behaviour, full knowledge generation).
+    Otherwise → generate-mode prompt (full knowledge generation).
     Vector results are injected into both modes when available.
     """
-    if intent == "highlights":
+    if intent == "highlights" and query_type == "general":
         vector_context = (
             _format_vector_context(vector_results) if vector_results else ""
         )
@@ -638,19 +764,25 @@ def build_prompt(
         )
 
     if fetched_data is not None and not fetched_data.fallback_to_llm:
-        result = _build_format_prompt(query, query_type, fetched_data, vector_results)
+        result = _build_format_prompt(
+            query, query_type, fetched_data, vector_results, condition_context
+        )
         if result is not None:
             return result
 
-    return _build_generate_prompt(query, query_type, vector_results)
+    return _build_generate_prompt(query, query_type, vector_results, condition_context)
 
 
 def _build_generate_prompt(
-    query: str, query_type: str, vector_results: "list[SearchResult] | None" = None
+    query: str,
+    query_type: str,
+    vector_results: "list[SearchResult] | None" = None,
+    condition_context: "str | None" = None,
 ) -> str:
     template = PROMPTS[query_type]
     vector_context = _format_vector_context(vector_results) if vector_results else ""
     focus_instruction = _detect_focus_instruction(query)
+    condition_context_block = _build_condition_context_block(condition_context)
 
     # Templates that support vector_context and focus_instruction
     if query_type in ("procedure", "evidence"):
@@ -663,7 +795,20 @@ def _build_generate_prompt(
             focus_instruction=focus_instruction,
         )
 
-    # Existing templates — append vector context at the end
+    # Drug template supports condition_context_block
+    if query_type == "drug":
+        prompt = template.format(
+            query=query,
+            approved_sources=APPROVED_SOURCES,
+            evidence_rules=EVIDENCE_RULES,
+            json_contract_rules=JSON_CONTRACT_RULES,
+            condition_context_block=condition_context_block,
+        )
+        if vector_context:
+            prompt = prompt.rstrip() + "\n\n" + vector_context
+        return prompt
+
+    # Other templates — append vector context at the end
     prompt = template.format(
         query=query,
         approved_sources=APPROVED_SOURCES,
@@ -678,6 +823,57 @@ def _build_generate_prompt(
 
 
 # ──────────────────────────────────────────────
+# Condition context block for drug queries
+# ──────────────────────────────────────────────
+
+
+def _build_condition_context_block(condition_context: "str | None") -> str:
+    """Build a condition context instruction block for drug prompts."""
+    if not condition_context:
+        return ""
+    return (
+        f'CONDITION CONTEXT: This drug is being queried in the context of "{condition_context}".\n'
+        f"Prioritize: dosing for this condition, indications relevant to this condition, "
+        f"contraindications in this condition, monitoring specific to this condition."
+    )
+
+
+def _build_condition_data_block(
+    condition_context: "str | None",
+    condition_data: "DiseaseFetchResult | None" = None,
+) -> str:
+    """Build a condition context block for drug-in-condition queries.
+
+    If condition_data has guideline abstracts, injects them as a richer data block
+    so the LLM can cite condition management guidelines alongside the drug data.
+    Falls back to the simple text instruction when no data is available.
+    """
+    if not condition_context:
+        return ""
+    if (
+        condition_data
+        and condition_data.fetch_success
+        and (
+            condition_data.guideline_abstracts
+            or condition_data.systematic_review_abstracts
+        )
+    ):
+        abstracts = (condition_data.guideline_abstracts or []) + (
+            condition_data.systematic_review_abstracts or []
+        )
+        abstracts_text = _format_abstracts(
+            abstracts[:6]
+        )  # cap at 6 to control token use
+        return (
+            f"=== CONDITION MANAGEMENT GUIDELINES ({condition_context.upper()}) ===\n"
+            f"{abstracts_text}\n\n"
+            f"Prioritize: drug's specific role in managing {condition_context}, citing these "
+            f"condition-management guidelines. Include guideline-recommended targets, "
+            f"rate/rhythm control context if applicable, and monitoring in this condition."
+        )
+    return _build_condition_context_block(condition_context)
+
+
 # Vector context formatting
 # ──────────────────────────────────────────────
 
@@ -844,6 +1040,7 @@ def _build_format_prompt(
     query_type: str,
     fetched_data: "FetchedData",
     vector_results: "list[SearchResult] | None" = None,
+    condition_context: "str | None" = None,
 ) -> str | None:
     """Build a format-mode prompt. Returns None if the data is insufficient.
 
@@ -859,6 +1056,9 @@ def _build_format_prompt(
             query=query,
             evidence_rules=EVIDENCE_RULES,
             json_contract_rules=JSON_CONTRACT_RULES,
+            condition_context_block=_build_condition_data_block(
+                condition_context, fetched_data.condition_data
+            ),
             data_source=d.data_source.upper(),
             generic_name=d.generic_name or "Unknown",
             brand_name=d.brand_name or "Unknown",

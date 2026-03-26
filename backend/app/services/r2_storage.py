@@ -1,4 +1,5 @@
 """Cloudflare R2 storage (S3-compatible API via boto3)."""
+
 import asyncio
 import logging
 from typing import Optional
@@ -14,11 +15,18 @@ def _get_client():
     global _s3_client
     if _s3_client is not None:
         return _s3_client
-    if not all([settings.r2_account_id, settings.r2_access_key_id, settings.r2_secret_access_key]):
+    if not all(
+        [
+            settings.r2_account_id,
+            settings.r2_access_key_id,
+            settings.r2_secret_access_key,
+        ]
+    ):
         return None
     try:
         import boto3
         from botocore.config import Config
+
         _s3_client = boto3.client(
             "s3",
             endpoint_url=f"https://{settings.r2_account_id}.r2.cloudflarestorage.com",
@@ -27,7 +35,9 @@ def _get_client():
             config=Config(region_name="auto", retries={"max_attempts": 2}),
         )
     except ImportError:
-        logger.warning("boto3 not installed — R2 storage unavailable. Run: pip install boto3")
+        logger.warning(
+            "boto3 not installed — R2 storage unavailable. Run: pip install boto3"
+        )
         return None
     return _s3_client
 
@@ -36,7 +46,12 @@ def _r2_configured() -> bool:
     return bool(settings.r2_account_id and settings.r2_access_key_id)
 
 
-def _upload_sync(file_bytes: bytes, key: str, content_type: str = "application/pdf", metadata: dict = None) -> str:
+def _upload_sync(
+    file_bytes: bytes,
+    key: str,
+    content_type: str = "application/pdf",
+    metadata: dict = None,
+) -> str:
     client = _get_client()
     if not client:
         raise RuntimeError(
@@ -68,9 +83,13 @@ def is_configured() -> bool:
     return _r2_configured()
 
 
-async def upload_pdf(file_bytes: bytes, file_key: str, metadata: Optional[dict] = None) -> str:
+async def upload_pdf(
+    file_bytes: bytes, file_key: str, metadata: Optional[dict] = None
+) -> str:
     """Upload PDF to R2. Returns public URL. Raises RuntimeError if not configured."""
-    return await asyncio.to_thread(_upload_sync, file_bytes, file_key, "application/pdf", metadata or {})
+    return await asyncio.to_thread(
+        _upload_sync, file_bytes, file_key, "application/pdf", metadata or {}
+    )
 
 
 async def delete_pdf(file_key: str) -> bool:

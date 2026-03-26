@@ -56,10 +56,10 @@ export function EvidenceResult({ data }: EvidenceResultProps) {
         <ReactMarkdown>{data.summary}</ReactMarkdown>
       </div>
 
-      {data.supporting_studies.length > 0 && (
+      {data.supporting_studies?.length > 0 && (
         <Accordion
           title="Supporting Studies"
-          count={data.supporting_studies.length}
+          count={data.supporting_studies?.length}
           defaultOpen
         >
           <div className="space-y-2">
@@ -70,10 +70,10 @@ export function EvidenceResult({ data }: EvidenceResultProps) {
         </Accordion>
       )}
 
-      {data.opposing_studies.length > 0 && (
+      {data.opposing_studies?.length > 0 && (
         <Accordion
           title="Opposing / Contradictory Studies"
-          count={data.opposing_studies.length}
+          count={data.opposing_studies?.length}
         >
           <div className="space-y-2">
             {data.opposing_studies.map((s, i) => (
@@ -97,7 +97,7 @@ export function EvidenceResult({ data }: EvidenceResultProps) {
         {data.guideline_status}
       </div>
 
-      {data.references.length > 0 && (
+      {data.references?.length > 0 && (
         <ReferenceList references={data.references} />
       )}
     </div>
