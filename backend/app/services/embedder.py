@@ -32,13 +32,9 @@ class Embedder:
     def embed_text(self, text: str) -> list[float]:
         """Embed a single text string. Returns normalized vector."""
         self._load_model()
-        return self._model.encode(
-            text, normalize_embeddings=True
-        ).tolist()
+        return self._model.encode(text, normalize_embeddings=True).tolist()
 
-    def embed_texts(
-        self, texts: list[str], batch_size: int = 32
-    ) -> list[list[float]]:
+    def embed_texts(self, texts: list[str], batch_size: int = 32) -> list[list[float]]:
         """Embed multiple texts in batch. Returns list of normalized vectors."""
         self._load_model()
         return self._model.encode(

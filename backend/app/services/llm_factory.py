@@ -28,20 +28,20 @@ def create_llm(
     Uses user's own key (BYOK) if provided, otherwise falls back to server key.
     Raises HTTP 402 only if neither user key nor server key is available.
     """
-    effective_max_tokens = max_tokens if max_tokens is not None else settings.llm_max_tokens
-
-    # Resolve provider and key: user key takes priority, then server key
-    provider = user_provider or ("anthropic" if "/" not in model_id else "openai")
-    api_key = user_key or (
-        settings.anthropic_api_key if provider == "anthropic" else settings.openai_api_key
+    effective_max_tokens = (
+        max_tokens if max_tokens is not None else settings.llm_max_tokens
     )
+
+    # Only user's own BYOK key is used — no server .env fallback
+    provider = user_provider or ("anthropic" if "/" not in model_id else "openai")
+    api_key = user_key
 
     if not api_key:
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
             detail={
                 "error": "no_api_key",
-                "message": "No API key configured. Please add your Anthropic or OpenAI API key in Settings.",
+                "message": "No API key configured. Please add your Anthropic or OpenAI API key in Settings → LLM API Key.",
                 "settings_url": "/settings",
             },
         )

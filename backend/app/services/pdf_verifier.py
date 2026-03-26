@@ -15,25 +15,55 @@ import pdfplumber
 logger = logging.getLogger(__name__)
 
 KNOWN_PUBLISHERS = [
-    "elsevier", "springer", "wiley", "wolters kluwer", "lippincott",
-    "mcgraw-hill", "mcgraw hill", "oxford university press", "cambridge university press",
-    "nature", "bmj", "lancet", "nejm", "new england journal",
-    "aha", "american heart association", "acc", "american college of cardiology",
-    "esc", "european society of cardiology",
-    "who", "world health organization",
-    "nice", "national institute for health",
-    "fda", "food and drug administration",
-    "acp", "american college of physicians",
-    "idsa", "infectious diseases society",
-    "acog", "american college of obstetricians",
-    "acs", "american chemical society",
-    "thieme", "karger", "taylor & francis", "sage publications",
-    "jama", "annals of internal medicine", "chest journal",
-    "cochrane", "uptodate",
+    "elsevier",
+    "springer",
+    "wiley",
+    "wolters kluwer",
+    "lippincott",
+    "mcgraw-hill",
+    "mcgraw hill",
+    "oxford university press",
+    "cambridge university press",
+    "nature",
+    "bmj",
+    "lancet",
+    "nejm",
+    "new england journal",
+    "aha",
+    "american heart association",
+    "acc",
+    "american college of cardiology",
+    "esc",
+    "european society of cardiology",
+    "who",
+    "world health organization",
+    "nice",
+    "national institute for health",
+    "fda",
+    "food and drug administration",
+    "acp",
+    "american college of physicians",
+    "idsa",
+    "infectious diseases society",
+    "acog",
+    "american college of obstetricians",
+    "acs",
+    "american chemical society",
+    "thieme",
+    "karger",
+    "taylor & francis",
+    "sage publications",
+    "jama",
+    "annals of internal medicine",
+    "chest journal",
+    "cochrane",
+    "uptodate",
 ]
 
 DOI_PATTERN = re.compile(r"10\.\d{4,9}/[^\s,;\"')\]]+")
-ISBN_PATTERN = re.compile(r"(?:ISBN[-\s]?(?:13|10)?[-:\s]?)?(97[89][-\s]?\d{1,5}[-\s]?\d{1,7}[-\s]?\d{1,7}[-\s]?\d)")
+ISBN_PATTERN = re.compile(
+    r"(?:ISBN[-\s]?(?:13|10)?[-:\s]?)?(97[89][-\s]?\d{1,5}[-\s]?\d{1,7}[-\s]?\d{1,7}[-\s]?\d)"
+)
 
 
 def verify_pdf(file_bytes: bytes) -> tuple[bool, Optional[str]]:

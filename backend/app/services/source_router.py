@@ -27,7 +27,7 @@ _DISEASE_STRIP = re.compile(
 )
 
 _COMPARATIVE_SPLIT = re.compile(
-    r"\s+(?:vs\.?|versus|compared?\s+to|and)\s+",
+    r"\s+(?:vs\.?|versus|compared?\s+to|rather\s+than|instead\s+of|or|and)\s+",
     re.IGNORECASE,
 )
 
@@ -134,9 +134,15 @@ def route_query(query: str, query_type: str) -> RoutingDecision:
         preferred = settings.model_haiku
         fallback = settings.model_sonnet
     elif query_type == "comparative":
-        # Single-word entities are likely drug names → Haiku; multi-word → likely diseases → Sonnet
+        # Comparative with disease context (e.g. "SGLT2 vs GLP-1 in DKD") → Sonnet
+        # Simple drug vs drug without disease context → Haiku
+        _COMP_DISEASE_CONTEXT = re.compile(r"\b(?:in|for)\s+[A-Za-z]{3}", re.IGNORECASE)
+        has_disease_context = bool(_COMP_DISEASE_CONTEXT.search(query))
         likely_drugs = sum(1 for e in entities if len(e.split()) == 1)
-        preferred = settings.model_haiku if likely_drugs >= 1 else settings.model_sonnet
+        if has_disease_context or likely_drugs == 0:
+            preferred = settings.model_sonnet
+        else:
+            preferred = settings.model_haiku
         fallback = settings.model_sonnet
     else:
         # disease and general: Sonnet (synthesis across multiple society guidelines / pure generation)

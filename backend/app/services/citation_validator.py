@@ -51,9 +51,10 @@ APPROVED_SOURCES = {
     "easl",
     "esh",
     "isth",
-    # Other
-    "clinical guidelines",
-    "clinical consensus",
+    # Other — "Expert opinion" is the coerced default for missing sources;
+    # do NOT add generic terms like "clinical guidelines" here as they
+    # would let hallucinated citations pass validation.
+    "expert consensus",
 }
 
 CURRENT_YEAR = datetime.now().year

@@ -4,7 +4,9 @@ export async function submitQuery(
   query: string,
   modelId: string,
   apiKey: string,
-  queryType?: string
+  queryType?: string,
+  sourceMode?: string,
+  modelExplicit?: boolean
 ): Promise<QueryResponse> {
   const res = await fetch("/api/query", {
     method: "POST",
@@ -15,7 +17,9 @@ export async function submitQuery(
     body: JSON.stringify({
       query,
       model_id: modelId,
+      model_explicit: modelExplicit ?? false,
       query_type: queryType || null,
+      source_mode: sourceMode || "ai",
     }),
   });
 
@@ -28,15 +32,5 @@ export async function submitQuery(
 }
 
 export async function fetchModels(apiKey: string): Promise<ModelInfo[]> {
-  const res = await fetch("/api/query", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-API-Key": apiKey,
-    },
-    body: JSON.stringify({ _models: true }),
-  });
-
-  // Models are fetched from a hardcoded list on the frontend for now
   return [];
 }

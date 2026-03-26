@@ -56,6 +56,8 @@ export default function RegisterPage() {
   const [specialtyInput, setSpecialtyInput] = useState("");
   const [showSpecialtySuggestions, setShowSpecialtySuggestions] = useState(false);
   const [institutionType, setInstitutionType] = useState("");
+  const [age, setAge] = useState("");
+  const [gender, setGender] = useState("");
   const [newsletter, setNewsletter] = useState(false);
 
   // Step 3 fields
@@ -108,6 +110,8 @@ export default function RegisterPage() {
           institute: institute || undefined,
           specialty: specialty || undefined,
           institution_type: institutionType || undefined,
+          age: age ? Number(age) : undefined,
+          gender: gender || undefined,
           newsletter_consent: newsletter,
           anthropic_key: skip ? undefined : anthropicKey || undefined,
           openai_key: skip ? undefined : openaiKey || undefined,
@@ -364,6 +368,36 @@ export default function RegisterPage() {
                 onFocus={focusStyle}
                 onBlur={blurStyle}
               />
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.875rem" }}>
+              <div>
+                <label style={labelStyle}>Age</label>
+                <input
+                  type="number"
+                  value={age}
+                  onChange={(e) => setAge(e.target.value)}
+                  min={16}
+                  max={100}
+                  placeholder="e.g. 28"
+                  style={inputStyle}
+                  onFocus={focusStyle}
+                  onBlur={blurStyle}
+                />
+              </div>
+              <div>
+                <label style={labelStyle}>Gender</label>
+                <select
+                  value={gender}
+                  onChange={(e) => setGender(e.target.value)}
+                  style={{ ...inputStyle, appearance: "auto" }}
+                >
+                  <option value="">Select</option>
+                  {["Male", "Female", "Non-binary", "Prefer not to say", "Other"].map((g) => (
+                    <option key={g} value={g}>{g}</option>
+                  ))}
+                </select>
+              </div>
             </div>
 
             <div>

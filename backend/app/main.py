@@ -14,6 +14,7 @@ from app.middleware.api_key_auth import ApiKeyAuthMiddleware
 from app.middleware.payload_limit import PayloadLimitMiddleware
 from app.middleware.rate_limit import PreAuthRateLimitMiddleware
 from app.services.drug_linker import load_drug_dictionary
+from app.services.data_fetcher import init_http_client, shutdown_http_client
 from app.services.rag_pipeline import init_log_queue, shutdown_log_queue
 
 # Configure logging
@@ -28,6 +29,23 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting Iatronix backend...")
+    await init_http_client()
+
+    # Schema migrations (additive only — safe to run on existing tables)
+    try:
+        from app.db.session import engine
+        from sqlalchemy import text
+
+        async with engine.begin() as conn:
+            await conn.execute(
+                text("ALTER TABLE users ADD COLUMN IF NOT EXISTS age INTEGER")
+            )
+            await conn.execute(
+                text("ALTER TABLE users ADD COLUMN IF NOT EXISTS gender VARCHAR(20)")
+            )
+        logger.info("Schema migration complete")
+    except Exception as _e:
+        logger.warning(f"Schema migration skipped: {_e}")
 
     # Sentry
     if settings.sentry_dsn:
@@ -75,7 +93,9 @@ async def lifespan(app: FastAPI):
                         await session.delete(doc)
                     if expired:
                         await session.commit()
-                        logger.info(f"Cleanup: removed {len(expired)} expired documents")
+                        logger.info(
+                            f"Cleanup: removed {len(expired)} expired documents"
+                        )
             except Exception as exc:
                 logger.error(f"Cleanup task error: {exc}")
 
@@ -94,6 +114,7 @@ async def lifespan(app: FastAPI):
     yield
 
     # Shutdown
+    await shutdown_http_client()
     await shutdown_log_queue()
     if app.state.redis:
         await app.state.redis.close()

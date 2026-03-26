@@ -6,6 +6,12 @@ import type { ModelInfo } from "@/lib/types";
 
 const MODELS: ModelInfo[] = [
   {
+    id: "claude-haiku-4-5-20251001",
+    name: "Claude Haiku 4.5",
+    provider: "anthropic",
+    description: "Fast and efficient for drug lookups",
+  },
+  {
     id: "claude-sonnet-4-20250514",
     name: "Claude Sonnet 4",
     provider: "anthropic",
@@ -16,18 +22,6 @@ const MODELS: ModelInfo[] = [
     name: "Claude Opus 4",
     provider: "anthropic",
     description: "Most capable, slower responses",
-  },
-  {
-    id: "anthropic/claude-sonnet-4-20250514",
-    name: "Claude Sonnet 4 (OpenRouter)",
-    provider: "openrouter",
-    description: "Claude Sonnet 4 via OpenRouter",
-  },
-  {
-    id: "google/gemini-2.5-pro-preview",
-    name: "Gemini 2.5 Pro (OpenRouter)",
-    provider: "openrouter",
-    description: "Google Gemini 2.5 Pro via OpenRouter",
   },
 ];
 

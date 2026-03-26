@@ -24,7 +24,7 @@ export function ReferenceList({ references }: ReferenceListProps) {
     <Accordion title="References" count={references.length}>
       <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: "0.5rem" }}>
         {references.map((ref, i) => {
-          const safeUrl = ref.url && ref.url.startsWith("https://") ? ref.url : null;
+          const safeUrl = ref.url && (ref.url.startsWith("https://") || ref.url.startsWith("http://")) ? ref.url : null;
           const url = safeUrl || buildFallbackUrl(ref);
           return (
             <li key={i} style={{ fontSize: "0.8rem", lineHeight: 1.5 }}>

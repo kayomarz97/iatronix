@@ -28,7 +28,9 @@ class Settings(BaseSettings):
 
     # Semantic query cache (pgvector SWR)
     semantic_cache_enabled: bool = True
-    semantic_cache_threshold: float = 0.95  # cosine similarity minimum for a cache hit
+    semantic_cache_threshold: float = (
+        0.98  # cosine similarity — 0.98 ensures only near-identical queries match
+    )
     semantic_cache_swr_ttl_seconds: int = (
         604800  # 7 days — beyond this, revalidate in background
     )
@@ -44,7 +46,9 @@ class Settings(BaseSettings):
     sentry_dsn: Optional[str] = None
 
     # Prompt versioning
-    prompt_version: int = 1
+    prompt_version: int = (
+        3  # v3: deeper disease prompts, higher token budgets, model respect
+    )
 
     # Logging
     log_level: str = "INFO"
@@ -60,7 +64,7 @@ class Settings(BaseSettings):
     rate_limit_key_per_minute: int = 10
 
     # LLM
-    llm_timeout_seconds: int = 75  # disease format at 4096 tokens needs ~41s on Sonnet
+    llm_timeout_seconds: int = 90  # disease format at 6144 tokens needs ~55s on Sonnet
     llm_max_tokens: int = 4096
     llm_retry_max_attempts: int = 1
     llm_retry_backoff_seconds: float = 2.0
@@ -102,7 +106,8 @@ class Settings(BaseSettings):
     model_sonnet: str = "claude-sonnet-4-20250514"
     model_routing_enabled: bool = True
 
-    # LLM server-side fallback keys (used when user has no BYOK key set)
+    # BYOK-only: these fields are unused (kept for backward compat with .env files)
+    # All LLM calls use the user's own key from the frontend Settings page
     anthropic_api_key: Optional[str] = None
     openai_api_key: Optional[str] = None
 
@@ -114,12 +119,24 @@ class Settings(BaseSettings):
     nice_api_key: Optional[str] = None
 
     # Token budgets
-    llm_max_tokens_format: int = 2048  # format mode — drug/procedure/evidence (Haiku)
+    llm_max_tokens_format: int = 2048  # format mode — drug/procedure (Haiku)
+    llm_max_tokens_format_drug_context: int = (
+        4096  # drug-in-condition: synthesize drug + condition management guidelines
+    )
+    llm_max_tokens_format_evidence: int = (
+        3072  # evidence queries need more for study tables
+    )
+    llm_max_tokens_format_procedure: int = (
+        3072  # procedure format mode: needs room for 5+ steps + all sections
+    )
     llm_max_tokens_format_disease: int = (
-        4096  # format mode — disease (Sonnet, needs more for classifications)
+        6144  # format mode — disease (Sonnet, needs depth for path/dx/tx/complications)
     )
     llm_max_tokens_generate: int = (
-        2048  # generate/fallback mode — 2048 is sufficient for summary + key_points
+        4096  # generate/fallback mode — disease/drug schemas need full depth
+    )
+    retry_on_sparse_enabled: bool = (
+        True  # retry LLM call when response is critically sparse
     )
 
     # Cloudflare R2 Storage (for PDF uploads)

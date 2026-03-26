@@ -1,9 +1,9 @@
 "use client";
 
 import type { DiseaseResponse } from "@/lib/types";
-import { Accordion } from "@/components/ui/Accordion";
 import { ClaimItem } from "./ClaimItem";
 import { EvidencedText } from "./EvidenceBadge";
+import { ReferenceList } from "./ReferenceList";
 import { TruncatedList } from "./TruncatedList";
 
 interface DiseaseInfoResultProps {
@@ -21,13 +21,13 @@ export function DiseaseInfoResult({ data }: DiseaseInfoResultProps) {
       </div>
 
       {data.bluf && (
-        <div style={{ background: "var(--surface-2)", borderLeft: "3px solid var(--accent)", padding: "0.75rem 1rem", borderRadius: "0 4px 4px 0" }}>
+        <div style={{ background: "var(--bg-elevated)", borderLeft: "3px solid var(--accent)", padding: "0.75rem 1rem", borderRadius: "0 4px 4px 0" }}>
           <p className="text-sm font-medium leading-relaxed">{data.bluf}</p>
         </div>
       )}
 
       {data.additional_clinical_context && (
-        <div style={{ background: "var(--surface-2)", padding: "0.75rem 1rem", borderRadius: "4px" }}>
+        <div style={{ background: "var(--bg-elevated)", padding: "0.75rem 1rem", borderRadius: "4px" }}>
           <p className="text-xs text-text-secondary leading-relaxed">{data.additional_clinical_context}</p>
         </div>
       )}
@@ -43,7 +43,7 @@ export function DiseaseInfoResult({ data }: DiseaseInfoResultProps) {
         </Section>
       )}
 
-      {data.clinical_features.length > 0 && (
+      {data.clinical_features?.length > 0 && (
         <Section title="Signs &amp; Symptoms">
           <ul className="list-disc list-inside space-y-1">
             <TruncatedList
@@ -70,7 +70,7 @@ export function DiseaseInfoResult({ data }: DiseaseInfoResultProps) {
         </Section>
       )}
 
-      {data.diagnostic_criteria.length > 0 && (
+      {data.diagnostic_criteria?.length > 0 && (
         <Section title="Diagnosis">
           <ul className="list-disc list-inside space-y-1">
             <TruncatedList
@@ -83,7 +83,7 @@ export function DiseaseInfoResult({ data }: DiseaseInfoResultProps) {
 
       <Section title="Management">
         <div className="space-y-4">
-          {data.treatment.first_line.length > 0 && (
+          {data.treatment?.first_line?.length > 0 && (
             <div>
               <h4 className="text-sm font-semibold text-primary mb-2">First Line</h4>
               <TruncatedList
@@ -93,7 +93,7 @@ export function DiseaseInfoResult({ data }: DiseaseInfoResultProps) {
                     <p className="text-sm leading-relaxed">
                       <EvidencedText claim={entry} />
                     </p>
-                    {entry.drug_names.length > 0 && (
+                    {entry.drug_names?.length > 0 && (
                       <p className="text-xs text-primary-light mt-1">
                         {entry.drug_names.join(", ")}
                       </p>
@@ -104,7 +104,7 @@ export function DiseaseInfoResult({ data }: DiseaseInfoResultProps) {
             </div>
           )}
 
-          {data.treatment.second_line.length > 0 && (
+          {data.treatment?.second_line?.length > 0 && (
             <div>
               <h4 className="text-sm font-semibold text-text-secondary mb-2">Second Line</h4>
               <TruncatedList
@@ -114,7 +114,7 @@ export function DiseaseInfoResult({ data }: DiseaseInfoResultProps) {
                     <p className="text-sm leading-relaxed">
                       <EvidencedText claim={entry} />
                     </p>
-                    {entry.drug_names.length > 0 && (
+                    {entry.drug_names?.length > 0 && (
                       <p className="text-xs text-primary-light mt-1">
                         {entry.drug_names.join(", ")}
                       </p>
@@ -125,7 +125,7 @@ export function DiseaseInfoResult({ data }: DiseaseInfoResultProps) {
             </div>
           )}
 
-          {data.treatment.adjunctive.length > 0 && (
+          {data.treatment?.adjunctive?.length > 0 && (
             <div>
               <h4 className="text-sm font-semibold text-text-secondary mb-2">Adjunctive Therapy</h4>
               <TruncatedList
@@ -141,7 +141,7 @@ export function DiseaseInfoResult({ data }: DiseaseInfoResultProps) {
             </div>
           )}
 
-          {data.treatment.non_pharmacological.length > 0 && (
+          {data.treatment?.non_pharmacological?.length > 0 && (
             <div>
               <h4 className="text-sm font-semibold text-text-secondary mb-2">Non-Pharmacological</h4>
               <ul className="list-disc list-inside space-y-1">
@@ -155,7 +155,7 @@ export function DiseaseInfoResult({ data }: DiseaseInfoResultProps) {
         </div>
       </Section>
 
-      {data.complications.length > 0 && (
+      {data.complications?.length > 0 && (
         <Section title="Complications">
           <ul className="list-disc list-inside space-y-1">
             <TruncatedList
@@ -174,18 +174,8 @@ export function DiseaseInfoResult({ data }: DiseaseInfoResultProps) {
         </Section>
       )}
 
-      {data.references.length > 0 && (
-        <Accordion title="References" count={data.references.length}>
-          <ul className="text-xs text-text-muted space-y-1">
-            {data.references.map((ref, i) => (
-              <li key={i}>
-                {ref.source}
-                {ref.title ? ` — ${ref.title}` : ""}
-                {ref.year ? ` (${ref.year})` : ""}
-              </li>
-            ))}
-          </ul>
-        </Accordion>
+      {data.references?.length > 0 && (
+        <ReferenceList references={data.references} />
       )}
     </div>
   );

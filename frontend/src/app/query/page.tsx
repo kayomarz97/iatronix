@@ -110,13 +110,18 @@ function QueryContent() {
               <EvidenceResult data={result.response as EvidenceResponse} />
             )}
 
-          {/* Text nodes */}
-          {result.text_nodes.length > 0 && (
-            <Card>
-              <h3 className="font-medium text-sm mb-2">Linked Content</h3>
-              <TextNodeRenderer nodes={result.text_nodes} />
-            </Card>
-          )}
+          {/* Text nodes — only show when no typed result rendered (fallback) */}
+          {result.text_nodes.length > 0 &&
+            !("drug_name" in result.response) &&
+            !("disease_name" in result.response) &&
+            !("entities_compared" in result.response) &&
+            !("procedure_name" in result.response) &&
+            !("query_topic" in result.response) &&
+            !("key_points" in result.response) && (
+              <Card>
+                <TextNodeRenderer nodes={result.text_nodes} />
+              </Card>
+            )}
         </div>
       )}
     </div>
