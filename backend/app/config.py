@@ -111,6 +111,9 @@ class Settings(BaseSettings):
     anthropic_api_key: Optional[str] = None
     openai_api_key: Optional[str] = None
 
+    # DSPy adaptive pipeline
+    dspy_enabled: bool = False
+
     # External API fetching
     api_fetch_enabled: bool = True
     api_fetch_timeout_seconds: float = 5.0

@@ -12,6 +12,7 @@ import { ComparativeResult } from "@/components/results/ComparativeResult";
 import { GeneralResult } from "@/components/results/GeneralResult";
 import { ProcedureResult } from "@/components/results/ProcedureResult";
 import { EvidenceResult } from "@/components/results/EvidenceResult";
+import { AdaptiveResultRenderer } from "@/components/results/AdaptiveResultRenderer";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { useQueryContext } from "@/components/providers/QueryProvider";
@@ -24,6 +25,7 @@ import type {
   ProcedureResponse,
   EvidenceResponse,
   DegradedResponse,
+  AdaptiveResponse,
 } from "@/lib/types";
 
 function QueryContent() {
@@ -108,6 +110,11 @@ function QueryContent() {
           {result.query_type === "evidence" &&
             "query_topic" in result.response && (
               <EvidenceResult data={result.response as EvidenceResponse} />
+            )}
+
+          {result.query_type === "adaptive" &&
+            "sections" in result.response && (
+              <AdaptiveResultRenderer data={result.response as AdaptiveResponse} />
             )}
 
           {/* Text nodes — only show when no typed result rendered (fallback) */}

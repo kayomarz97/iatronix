@@ -1,4 +1,4 @@
-from typing import Literal, Optional, Union
+from typing import Any, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -172,6 +172,25 @@ class DegradedResponse(BaseModel):
     cached_similar: Optional["QueryResponse"] = None
 
 
+# --- Adaptive (DSPy) ---
+
+
+class AdaptiveSection(BaseModel):
+    title: str
+    content: Any
+    loe: Optional[str] = None
+    cor: Optional[str] = None
+
+
+class AdaptiveResponse(BaseModel):
+    query_type: str
+    bluf: str
+    sections: list[AdaptiveSection]
+    references: list[str] = []
+    response_focus: str
+    depth: str
+
+
 # --- Text Nodes ---
 
 
@@ -199,7 +218,7 @@ class QueryRequest(BaseModel):
 
 class QueryResponse(BaseModel):
     query_type: Literal[
-        "drug", "disease", "comparative", "general", "procedure", "evidence"
+        "drug", "disease", "comparative", "general", "procedure", "evidence", "adaptive"
     ]
     model_used: str
     response: Union[
@@ -209,6 +228,7 @@ class QueryResponse(BaseModel):
         ProcedureResponse,
         EvidenceResponse,
         GeneralResponse,
+        AdaptiveResponse,
         DegradedResponse,
     ]
     text_nodes: list[TextNode] = []

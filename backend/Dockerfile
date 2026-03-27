@@ -41,7 +41,8 @@ RUN pip install --no-cache-dir \
     "cryptography>=43.0.0" \
     "email-validator>=2.0.0" \
     "boto3>=1.34.0" \
-    "aiofiles>=23.0.0"
+    "aiofiles>=23.0.0" \
+    "dspy-ai>=2.5.0"
 
 COPY app/ app/
 COPY alembic.ini .
