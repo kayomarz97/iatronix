@@ -142,6 +142,24 @@ export interface EvidenceResponse {
   references: Reference[];
 }
 
+// --- Adaptive (DSPy) ---
+
+export interface AdaptiveSection {
+  title: string;
+  content: unknown;
+  loe?: string;
+  cor?: string;
+}
+
+export interface AdaptiveResponse {
+  query_type: string;
+  bluf: string;
+  sections: AdaptiveSection[];
+  references: string[];
+  response_focus: string;
+  depth: string;
+}
+
 // --- Text Nodes ---
 
 export interface TextNode {
@@ -160,7 +178,8 @@ export interface QueryResponse {
     | "comparative"
     | "general"
     | "procedure"
-    | "evidence";
+    | "evidence"
+    | "adaptive";
   model_used: string;
   response:
     | DrugResponse
@@ -169,6 +188,7 @@ export interface QueryResponse {
     | GeneralResponse
     | ProcedureResponse
     | EvidenceResponse
+    | AdaptiveResponse
     | DegradedResponse;
   text_nodes: TextNode[];
   safety_warnings: string[];
