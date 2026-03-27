@@ -38,6 +38,8 @@ services:
       iatronix-redis:
         condition: service_healthy
     env_file: .env
+    environment:
+      DSPY_ENABLED: "true"
     ports:
       - "127.0.0.1:8200:8000"
     volumes:
