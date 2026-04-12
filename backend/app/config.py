@@ -12,8 +12,8 @@ class Settings(BaseSettings):
     redis_url: str = "redis://iatronix-redis:6379/0"
 
     # Embedding & Vector search
-    embedding_dim: int = 384
-    embedding_model: str = "all-MiniLM-L6-v2"
+    embedding_dim: int = 768
+    embedding_model: str = "google/embeddinggemma-300m"
     vector_search_enabled: bool = True
     vector_top_k: int = 5
     vector_min_similarity: float = 0.3
@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     pubmed_vector_cache_enabled: bool = True
 
     # Semantic query cache (pgvector SWR)
-    semantic_cache_enabled: bool = True
+    semantic_cache_enabled: bool = False
     semantic_cache_threshold: float = (
         0.98  # cosine similarity — 0.98 ensures only near-identical queries match
     )
@@ -62,6 +62,8 @@ class Settings(BaseSettings):
     # Rate limiting
     rate_limit_ip_per_minute: int = 30
     rate_limit_key_per_minute: int = 10
+    rate_limit_free_key_per_minute: int = 20
+    rate_limit_premium_key_per_minute: int = 60
 
     # LLM
     llm_timeout_seconds: int = 90  # disease format at 6144 tokens needs ~55s on Sonnet
@@ -104,6 +106,9 @@ class Settings(BaseSettings):
     # Model routing (RAG optimization)
     model_haiku: str = "claude-haiku-4-5-20251001"
     model_sonnet: str = "claude-sonnet-4-20250514"
+    openai_default_model: str = "gpt-4o-mini"
+    openrouter_default_model: str = "meta-llama/llama-3.3-70b-instruct:free"
+    openrouter_api_base: str = "https://openrouter.ai/api/v1"
     model_routing_enabled: bool = True
 
     # BYOK-only: these fields are unused (kept for backward compat with .env files)
@@ -112,11 +117,13 @@ class Settings(BaseSettings):
     openai_api_key: Optional[str] = None
 
     # DSPy adaptive pipeline
-    dspy_enabled: bool = False
+    dspy_enabled: bool = True
+    adaptive_second_pass_enabled: bool = True
+    fail_closed_evidence_only: bool = True
 
     # External API fetching
     api_fetch_enabled: bool = True
-    api_fetch_timeout_seconds: float = 5.0
+    api_fetch_timeout_seconds: float = 12.0
     pubmed_api_key: Optional[str] = None
     openfda_api_key: Optional[str] = None
     nice_api_key: Optional[str] = None

@@ -53,9 +53,9 @@ const API_SOURCES = [
 
 const HOW_IT_WORKS = [
   { step: "1", title: "You type a query", desc: "Ask about a drug, disease, procedure, or evidence review in plain clinical language." },
-  { step: "2", title: "Query is classified", desc: "The system detects whether you are asking about a drug, disease, comparison, procedure, or evidence — and routes accordingly." },
-  { step: "3", title: "Data is fetched", desc: "Relevant data is pulled in parallel from OpenFDA, PubMed, RxNorm, DailyMed, MedlinePlus, and your uploaded PDFs — zero AI tokens at this stage." },
-  { step: "4", title: "LLM structures the response", desc: "Claude formats the fetched data into a schema with evidence grading (LOE I–III, Class I–IIb), approved citations, and drug safety flags." },
+  { step: "2", title: "Query is classified", desc: "Regex pattern scoring instantly classifies the query. For ambiguous phrasing (confidence < 85%), a lightweight Haiku call resolves the type — so any medical question routes correctly, not just pre-enumerated patterns." },
+  { step: "3", title: "Data is fetched", desc: "Relevant data is pulled in parallel from OpenFDA, PubMed, PMC/StatPearls, RxNorm, DailyMed, MedlinePlus, and your uploaded PDFs — zero AI tokens at this stage." },
+  { step: "4", title: "LLM structures the response", desc: "The adaptive pipeline analyses what you actually need, then formats the fetched data into evidence-graded sections (LOE I–III, Class I–IIb) with approved citations. A Bottom Line Up Front (BLUF) banner is generated at the top — scaled to data richness: headline only for simple lookups; headline + summary + action bullets + safety caveats for complex queries." },
   { step: "5", title: "Validation & safety checks", desc: "Citations are verified against approved sources (NICE, AHA/ACC, ESC, FDA, WHO). Safety warnings are applied. Results are cached for 30 days." },
 ];
 
@@ -90,6 +90,31 @@ export default function AboutPage() {
             </div>
           ))}
         </div>
+      </section>
+
+      {/* BLUF / Response format */}
+      <section>
+        <h2 style={sectionHeading}>Response Format</h2>
+        <p style={{ margin: "0 0 1rem", fontSize: "0.875rem", color: "var(--text-secondary)" }}>
+          Adaptive responses open with a <strong style={{ color: "var(--text-primary)" }}>Bottom Line Up Front (BLUF)</strong> — the most important clinical takeaway, right at the top.
+          The BLUF scales to how much data was found:
+        </p>
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+          {[
+            { label: "Headline", desc: "Always shown — single most important clinical sentence." },
+            { label: "Summary", desc: "2–6 sentence elaboration. Included when sufficient data is available." },
+            { label: "Key action points", desc: "Bulleted list with specific doses, thresholds, and timelines. Included for data-rich responses." },
+            { label: "Caveats", desc: "Safety warnings highlighted separately. Omitted when there are none." },
+          ].map((row) => (
+            <div key={row.label} style={{ display: "flex", gap: "0.75rem", padding: "0.75rem 1rem", background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)" }}>
+              <span style={{ fontWeight: 600, fontSize: "0.825rem", color: "var(--accent)", minWidth: 130, flexShrink: 0 }}>{row.label}</span>
+              <span style={{ fontSize: "0.825rem", color: "var(--text-secondary)", lineHeight: 1.5 }}>{row.desc}</span>
+            </div>
+          ))}
+        </div>
+        <p style={{ margin: "0.875rem 0 0", fontSize: "0.8rem", color: "var(--text-muted)" }}>
+          Below the BLUF, the response is broken into evidence-graded section cards — each claim carries a Level of Evidence (I–III) and Class of Recommendation (I–IIb) badge.
+        </p>
       </section>
 
       {/* Search Modes (explanation only — toggle is in Settings) */}
@@ -156,10 +181,10 @@ export default function AboutPage() {
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: "0.5rem" }}>
           {[
             { name: "OpenFDA", url: "https://open.fda.gov/", desc: "Drug labels & adverse events" },
-            { name: "PubMed", url: "https://pubmed.ncbi.nlm.nih.gov/", desc: "Clinical guidelines & RCTs" },
+            { name: "PubMed / PMC", url: "https://pubmed.ncbi.nlm.nih.gov/", desc: "Guidelines, RCTs & StatPearls monographs" },
             { name: "RxNorm", url: "https://www.nlm.nih.gov/research/umls/rxnorm/", desc: "Drug names & interactions" },
             { name: "DailyMed", url: "https://dailymed.nlm.nih.gov/", desc: "Full prescribing information" },
-            { name: "MedlinePlus", url: "https://medlineplus.gov/", desc: "Patient-friendly drug info" },
+            { name: "MedlinePlus", url: "https://medlineplus.gov/", desc: "Drug & disease summaries" },
             { name: "Semantic Scholar", url: "https://www.semanticscholar.org/", desc: "Medical literature search" },
           ].map((src) => (
             <a

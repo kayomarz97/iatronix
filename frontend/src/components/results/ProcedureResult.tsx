@@ -2,22 +2,36 @@
 
 import type { ProcedureResponse } from "@/lib/types";
 import { ClaimItem } from "@/components/results/ClaimItem";
-import { Accordion } from "@/components/ui/Accordion";
 import { ReferenceList } from "@/components/results/ReferenceList";
+import { ResultHero, ResultMetaCard, ResultSection } from "@/components/results/ResultChrome";
 
 interface ProcedureResultProps {
   data: ProcedureResponse;
 }
 
 export function ProcedureResult({ data }: ProcedureResultProps) {
+  const directAnswer =
+    data.guidelines?.[0]?.value ??
+    data.indications?.[0]?.value ??
+    (data.technique_steps?.length
+      ? `${data.procedure_name} includes ${data.technique_steps.length} key procedural steps in this response.`
+      : undefined);
+
   return (
-    <div className="space-y-5">
-      <div className="border-b border-border pb-4">
-        <h2 className="text-2xl font-bold">{data.procedure_name}</h2>
-      </div>
+    <div className="space-y-6">
+      <ResultHero
+        eyebrow="Procedure Reference"
+        title={data.procedure_name}
+        stats={[
+          { label: "indications", value: data.indications?.length ?? 0 },
+          { label: "steps", value: data.technique_steps?.length ?? 0 },
+          { label: "guidelines", value: data.guidelines?.length ?? 0 },
+        ]}
+        directAnswer={directAnswer}
+      />
 
       {data.indications?.length > 0 && (
-        <Accordion title="Indications" count={data.indications?.length} defaultOpen>
+        <ResultSection title="Indications" eyebrow="When to use it">
           <ul className="space-y-2">
             {data.indications.map((item, i) => (
               <li key={i}>
@@ -25,73 +39,76 @@ export function ProcedureResult({ data }: ProcedureResultProps) {
               </li>
             ))}
           </ul>
-        </Accordion>
-      )}
-
-      {data.contraindications?.length > 0 && (
-        <Accordion title="Contraindications" count={data.contraindications?.length}>
-          <ul className="space-y-2">
-            {data.contraindications.map((item, i) => (
-              <li key={i}>
-                <ClaimItem claim={item} />
-              </li>
-            ))}
-          </ul>
-        </Accordion>
+        </ResultSection>
       )}
 
       {data.technique_steps?.length > 0 && (
-        <Accordion title="Technique / Steps" count={data.technique_steps?.length} defaultOpen>
+        <ResultSection title="Technique and Sequence" eyebrow="Step-by-step">
           <ol className="space-y-3">
             {data.technique_steps.map((step) => (
               <li key={step.step_number} className="flex gap-3">
-                <span className="flex-shrink-0 w-7 h-7 rounded-full bg-primary/10 text-primary text-sm font-bold flex items-center justify-center">
-                  {step.step_number}
-                </span>
-                <div>
-                  <p className="text-sm">{step.description}</p>
-                  {step.notes && (
-                    <p className="text-xs text-text-muted mt-1">{step.notes}</p>
-                  )}
+                <div className="flex flex-col items-center">
+                  <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full border border-sky-500/20 bg-sky-500/10 text-sm font-semibold text-sky-300">
+                    {step.step_number}
+                  </span>
+                  <span className="mt-2 h-full w-px bg-border/70" />
                 </div>
+                <ResultMetaCard className="flex-1">
+                  <p className="text-sm leading-7 text-text">{step.description}</p>
+                  {step.notes && (
+                    <p className="mt-2 text-xs leading-6 text-text-muted">{step.notes}</p>
+                  )}
+                </ResultMetaCard>
               </li>
             ))}
           </ol>
-        </Accordion>
+        </ResultSection>
       )}
 
-      {data.complications?.length > 0 && (
-        <Accordion title="Complications" count={data.complications?.length}>
-          <ul className="space-y-2">
-            {data.complications.map((item, i) => (
-              <li key={i}>
-                <ClaimItem claim={item} />
-              </li>
-            ))}
-          </ul>
-        </Accordion>
-      )}
+      <div className="grid gap-4 lg:grid-cols-2">
+        {data.contraindications?.length > 0 && (
+          <ResultSection title="Contraindications" eyebrow="Avoid or defer">
+            <ul className="space-y-2">
+              {data.contraindications.map((item, i) => (
+                <li key={i}>
+                  <ClaimItem claim={item} />
+                </li>
+              ))}
+            </ul>
+          </ResultSection>
+        )}
+
+        {data.complications?.length > 0 && (
+          <ResultSection title="Complications" eyebrow="Risks">
+            <ul className="space-y-2">
+              {data.complications.map((item, i) => (
+                <li key={i}>
+                  <ClaimItem claim={item} />
+                </li>
+              ))}
+            </ul>
+          </ResultSection>
+        )}
+      </div>
 
       {data.guidelines?.length > 0 && (
-        <Accordion title="Guidelines & Recommendations" count={data.guidelines?.length}>
-          <ul className="space-y-2">
+        <ResultSection title="Guidelines and Recommendations" eyebrow="Practice points">
+          <div className="space-y-3">
             {data.guidelines.map((g, i) => (
-              <li key={i}>
+              <ResultMetaCard key={i}>
                 <ClaimItem claim={g} />
                 {g.society && (
-                  <span className="text-xs text-text-muted ml-2">
-                    — {g.society}
-                  </span>
+                  <p className="mt-2 text-xs uppercase tracking-[0.18em] text-text-muted">
+                    {g.society}
+                  </p>
                 )}
-              </li>
+              </ResultMetaCard>
             ))}
-          </ul>
-        </Accordion>
+          </div>
+        </ResultSection>
       )}
 
-      {data.references?.length > 0 && (
-        <ReferenceList references={data.references} />
-      )}
+      {data.references?.length > 0 && <ReferenceList references={data.references} />}
     </div>
   );
 }

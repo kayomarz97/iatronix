@@ -1,7 +1,8 @@
 import hashlib
-import json
 import logging
 import re
+
+import orjson
 
 from app.config import settings
 
@@ -12,7 +13,8 @@ def normalize_query(query: str) -> str:
     """Normalize query for cache key generation."""
     q = query.lower().strip()
     q = re.sub(r"\s+", " ", q)
-    q = re.sub(r"[?.!,;:]+$", "", q)
+    q = re.sub(r"[?.!,;:]", "", q)  # strip internal + trailing punctuation
+    q = q.strip()
     return q
 
 
@@ -39,7 +41,7 @@ async def cache_get(
     try:
         data = await redis_client.get(key)
         if data:
-            return json.loads(data)
+            return orjson.loads(data)
     except Exception:
         logger.warning("Redis cache get failed", exc_info=True)
     return None
@@ -54,7 +56,7 @@ async def cache_set(
     key = make_cache_key(query, query_type, model_id)
     ttl = _ttl_for_type(query_type)
     try:
-        await redis_client.setex(key, ttl, json.dumps(response))
+        await redis_client.setex(key, ttl, orjson.dumps(response))
     except Exception:
         logger.warning("Redis cache set failed", exc_info=True)
 
@@ -72,7 +74,7 @@ async def cache_get_any_version(
         async for key in redis_client.scan_iter(match=pattern, count=10):
             data = await redis_client.get(key)
             if data:
-                return json.loads(data)
+                return orjson.loads(data)
     except Exception:
         logger.warning("Redis cache scan failed", exc_info=True)
     return None

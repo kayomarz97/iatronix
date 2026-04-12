@@ -1,0 +1,22 @@
+[security-agent] 13:29:47 Starting security agent
+[security-agent] 13:29:47 Scanning injection risks
+[security-agent] 13:29:47   Found 1 potential injection patterns
+[security-agent] 13:29:47 Scanning auth code
+[security-agent] 13:29:47 Scanning for hardcoded secrets
+[security-agent] 13:29:47   Found 3 potential secret patterns
+[security-agent] 13:29:47 Scanning nginx security headers
+[security-agent] 13:29:47 Checking installed packages
+[security-agent] 13:29:48 Asking Ollama for security analysis
+[security-agent] 13:31:21   Security analysis:
+Based on the provided code snippets, here are the top 5 security vulnerabilities identified as per the OWASP Top 10 focus:
+
+### 1. **Injection Risks**
+**Severity:** High  
+**Vulnerability Type:** SQL Injection  
+**Location:** `query_classifier.py` (line 118)  
+**Description:** The use of `format_in_sql` pattern in `prompt = LLM_CLASSIFY_PROMPT.format(query=query)` could lead to SQL injection if the `query` parameter is not properly sanitized or validated.  
+**Recommended Fix:** Use parameterized queries instead of string formatting for database interactions.
+
+### 2. **Hardcoded Secrets**
+**Sev
+[security-agent] 13:31:21 Report written to /root/projects/med-ai-project/scripts/report_security.json

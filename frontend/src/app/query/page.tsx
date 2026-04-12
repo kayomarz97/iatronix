@@ -2,7 +2,6 @@
 
 import { Suspense } from "react";
 import { SearchBar } from "@/components/ui/SearchBar";
-import { ModelSelector } from "@/components/ui/ModelSelector";
 import { ThinkingAnimation } from "@/components/ui/ThinkingAnimation";
 import { DisclaimerBanner } from "@/components/results/DisclaimerBanner";
 import { TextNodeRenderer } from "@/components/results/TextNodeRenderer";
@@ -29,14 +28,16 @@ import type {
 } from "@/lib/types";
 
 function QueryContent() {
-  const { result, isLoading, error, submitQuery } = useQueryContext();
+  const { result, isLoading, loadingStage, error, activeModelName, submitQuery } = useQueryContext();
 
   return (
     <div className="space-y-6">
       <div className="space-y-3">
         <SearchBar onSubmit={submitQuery} isLoading={isLoading} />
         <div className="flex justify-end">
-          <ModelSelector />
+          <span className="rounded-full bg-surface-alt px-2.5 py-1 text-xs text-text-muted">
+            {activeModelName}
+          </span>
         </div>
       </div>
 
@@ -46,25 +47,23 @@ function QueryContent() {
         </Card>
       )}
 
-      {isLoading && <ThinkingAnimation />}
+      {isLoading && <ThinkingAnimation stage={loadingStage} />}
 
       {result && !isLoading && (
         <div className="space-y-6">
-          {/* Meta info */}
-          <div className="flex flex-wrap items-center gap-2 text-xs text-text-muted">
-            <Badge>{result.query_type}</Badge>
-            <span>{result.model_used}</span>
-            <span>{formatLatency(result.latency_ms)}</span>
-            {result.cached && <Badge variant="success">cached</Badge>}
-            {result.truncated && <Badge variant="warning">truncated</Badge>}
+          <div className="rounded-[24px] border border-border/70 bg-background/70 px-4 py-3 shadow-[0_12px_30px_rgba(2,8,23,0.08)]">
+            <div className="flex flex-wrap items-center gap-2 text-xs text-text-muted">
+              <Badge>{result.query_type}</Badge>
+              <span className="rounded-full bg-surface-alt px-2.5 py-1">
+                {result.model_used}
+              </span>
+              <span className="rounded-full bg-surface-alt px-2.5 py-1">
+                {formatLatency(result.latency_ms)}
+              </span>
+              {result.cached && <Badge variant="success">cached</Badge>}
+              {result.truncated && <Badge variant="warning">truncated</Badge>}
+            </div>
           </div>
-
-          {/* Warnings */}
-          <DisclaimerBanner
-            disclaimer={result.disclaimer}
-            safetyWarnings={result.safety_warnings}
-            validationWarnings={result.validation_warnings}
-          />
 
           {/* Degraded response */}
           {"message" in result.response && "suggestion" in result.response && (
@@ -129,6 +128,12 @@ function QueryContent() {
                 <TextNodeRenderer nodes={result.text_nodes} />
               </Card>
             )}
+
+          <DisclaimerBanner
+            disclaimer={result.disclaimer}
+            safetyWarnings={result.safety_warnings}
+            validationWarnings={result.validation_warnings}
+          />
         </div>
       )}
     </div>

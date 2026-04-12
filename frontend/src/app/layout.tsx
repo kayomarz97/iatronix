@@ -3,6 +3,7 @@ import "./globals.css";
 import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
 import { QueryProvider } from "@/components/providers/QueryProvider";
+import { AuthProvider } from "@/components/providers/AuthProvider";
 
 export const metadata: Metadata = {
   title: "Iatronix — Medical Reference",
@@ -26,11 +27,13 @@ export default function RootLayout({
       </head>
       <body style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
         <QueryProvider>
-          <Header />
-          <main style={{ flex: 1 }}>
-            {children}
-          </main>
-          <Footer />
+          <AuthProvider>
+            <Header />
+            <main style={{ flex: 1 }}>
+              {children}
+            </main>
+            <Footer />
+          </AuthProvider>
         </QueryProvider>
       </body>
     </html>

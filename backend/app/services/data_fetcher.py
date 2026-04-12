@@ -117,6 +117,10 @@ _SPECIALTY_MAP: dict[str, list[str]] = {
     "anemia": ["hematology"],
     "coagul": ["hematology"],
     "thrombosis": ["hematology"],
+    "pulmonary": ["pulmonology", "cardiology"],
+    "pah": ["pulmonology", "cardiology"],
+    "pulmonary hypertension": ["pulmonology", "cardiology"],
+    "right heart": ["cardiology", "pulmonology"],
     "prostate": ["urology"],
     "bladder": ["urology"],
     "urinary": ["urology"],
@@ -186,8 +190,12 @@ class DrugFetchResult:
     fda_label_source_year: Optional[int] = None
     top_adverse_events: list = field(default_factory=list)
     rxcui: Optional[str] = None
+    chembl_mechanism: Optional[str] = None
+    chembl_atc_class: Optional[str] = None
+    drug_interaction_pairs: list = field(default_factory=list)  # RxNorm DDI pairs
     guideline_abstracts: list = field(default_factory=list)
     systematic_review_abstracts: list = field(default_factory=list)
+    clinical_trial_abstracts: list = field(default_factory=list)
     data_source: str = "unknown"
     fetch_success: bool = False
 
@@ -227,39 +235,15 @@ class FetchedData:
     )
     procedure_data: Optional[ProcedureFetchResult] = None
     evidence_data: Optional[EvidenceFetchResult] = None
+    comparative_evidence: Optional[EvidenceFetchResult] = None
     comparative_drug_data: list = field(default_factory=list)
+    drug_interactions: list = field(default_factory=list)  # RxNorm DDI pairs for 2-drug queries
     total_fetch_time_ms: int = 0
     fallback_to_llm: bool = False
 
 
-# ------------------------------------------------------------------
-# Indian drugs local database
-# ------------------------------------------------------------------
-
-_INDIAN_DRUGS: dict = {}
-
-
-def _load_indian_drugs() -> None:
-    global _INDIAN_DRUGS
-    try:
-        path = os.path.join(
-            os.path.dirname(__file__), "..", "..", "data", "indian_drugs.json"
-        )
-        path = os.path.normpath(path)
-        if os.path.exists(path):
-            with open(path, encoding="utf-8") as f:
-                drugs = json.load(f)
-            for d in drugs:
-                key = d.get("generic_name", "").lower().strip()
-                if key:
-                    _INDIAN_DRUGS[key] = d
-                for bn in d.get("brand_names_india", []):
-                    _INDIAN_DRUGS[bn.lower().strip()] = d
-    except Exception:
-        logger.warning("Failed to load indian_drugs.json", exc_info=True)
-
-
-_load_indian_drugs()
+# Local Indian drug repositories were intentionally removed.
+# Drug-brand resolution must happen against live online sources.
 
 
 # ------------------------------------------------------------------
@@ -404,16 +388,35 @@ async def _fetch_fda_label(client: httpx.AsyncClient, drug_name: str) -> dict | 
     name_lower = drug_name.lower().strip()
 
     def _best_result(data: dict | None) -> dict | None:
-        """Return a synthetic single-result dict preferring exact generic_name matches."""
+        """Return a synthetic single-result dict preferring exact single-ingredient matches."""
         if not data or not data.get("results"):
             return None
         results = data["results"]
-        # Prefer result whose generic_name is exactly (or starts with) the query drug
+        ranked: list[tuple[int, dict]] = []
         for r in results:
-            names = [n.lower() for n in r.get("openfda", {}).get("generic_name", [])]
-            if any(n == name_lower or n.startswith(name_lower + " ") for n in names):
-                return {"results": [r]}
-        # Fall back to first result
+            names = [n.lower().strip() for n in r.get("openfda", {}).get("generic_name", [])]
+            brands = [n.lower().strip() for n in r.get("openfda", {}).get("brand_name", [])]
+            score = 0
+            for n in names:
+                if n == name_lower:
+                    score = max(score, 100)
+                elif any(part.strip() == name_lower for part in re.split(r"\s*(?:/|,| and )\s*", n)):
+                    score = max(score, 85)
+                elif n.startswith(name_lower + " "):
+                    score = max(score, 70)
+            if any(b == name_lower for b in brands):
+                score = max(score, 90)
+            ingredient_penalty = 0
+            if names:
+                min_parts = min(
+                    len([part for part in re.split(r"\s*(?:/|,| and )\s*", n) if part.strip()])
+                    for n in names
+                )
+                ingredient_penalty = max(0, min_parts - 1) * 10
+            ranked.append((score - ingredient_penalty, r))
+        ranked.sort(key=lambda item: item[0], reverse=True)
+        if ranked and ranked[0][0] > 0:
+            return {"results": [ranked[0][1]]}
         return {"results": [results[0]]}
 
     # Try generic name search first (fetch 3 to find best match)
@@ -422,7 +425,7 @@ async def _fetch_fda_label(client: httpx.AsyncClient, drug_name: str) -> dict | 
         base_url,
         params={
             "search": f'openfda.generic_name:"{drug_name}"',
-            "limit": 3,
+            "limit": 10,
             **extra,
         },
     )
@@ -571,6 +574,115 @@ async def _fetch_rxnorm_class_chain(
     return await _fetch_rxnorm_class(client, rxcui)
 
 
+async def _fetch_rxnorm_approximate_rxcui(
+    client: httpx.AsyncClient, drug_name: str
+) -> Optional[str]:
+    data = await _safe_get(
+        client,
+        "https://rxnav.nlm.nih.gov/REST/approximateTerm.json",
+        params={
+            "term": drug_name,
+            "maxEntries": 1,
+        },
+    )
+    candidates = data.get("approximateGroup", {}).get("candidate", []) if data else []
+    if not candidates:
+        return None
+    return candidates[0].get("rxcui")
+
+
+async def _fetch_rxnorm_name(client: httpx.AsyncClient, rxcui: str) -> Optional[str]:
+    data = await _safe_get(
+        client,
+        f"https://rxnav.nlm.nih.gov/REST/rxcui/{rxcui}/properties.json",
+    )
+    props = data.get("properties") if data else None
+    if not props:
+        return None
+    return props.get("name")
+
+
+async def _fetch_rxnorm_ingredient(client: httpx.AsyncClient, rxcui: str) -> Optional[str]:
+    """Resolve a brand RxCUI to its ingredient (salt) RxCUI.
+
+    Uses /related.json?tty=IN — returns the active ingredient rxcui for brand names.
+    Example: Lipitor rxcui → atorvastatin rxcui.
+    """
+    data = await _safe_get(
+        client,
+        f"https://rxnav.nlm.nih.gov/REST/rxcui/{rxcui}/related.json",
+        params={"tty": "IN"},
+    )
+    if not data:
+        return None
+    concept_group = data.get("relatedGroup", {}).get("conceptGroup", [])
+    for group in concept_group:
+        if group.get("tty") == "IN":
+            props = group.get("conceptProperties", [])
+            if props:
+                return props[0].get("rxcui")
+    return None
+
+
+async def _resolve_drug_name_online(client: httpx.AsyncClient, drug_name: str) -> dict:
+    """Resolve a brand or misspelled drug name to its generic (salt) name.
+
+    Resolution order:
+    1. RxNorm exact match → follow /related?tty=IN to get ingredient rxcui
+    2. RxNorm approximate match → same ingredient lookup
+    3. OpenFDA brand search → extract openfda.generic_name directly
+    4. Fallback to original name
+    """
+    exact_rxcui, approx_rxcui = await asyncio.gather(
+        _fetch_rxnorm_cui(client, drug_name),
+        _fetch_rxnorm_approximate_rxcui(client, drug_name),
+        return_exceptions=True,
+    )
+    exact_rxcui = exact_rxcui if not isinstance(exact_rxcui, Exception) else None
+    approx_rxcui = approx_rxcui if not isinstance(approx_rxcui, Exception) else None
+    rxcui = exact_rxcui or approx_rxcui
+
+    # Try to resolve to ingredient (salt) rxcui — this converts brand → generic
+    ingredient_rxcui = None
+    if rxcui:
+        ingredient_rxcui = await _fetch_rxnorm_ingredient(client, rxcui)
+
+    final_rxcui = ingredient_rxcui or rxcui
+    resolved_name = await _fetch_rxnorm_name(client, final_rxcui) if final_rxcui else None
+
+    # Fallback: OpenFDA brand search → extract generic_name directly
+    if not resolved_name or resolved_name.lower() == drug_name.lower():
+        fda_data = await _safe_get(
+            client,
+            "https://api.fda.gov/drug/label.json",
+            params={
+                "search": f'openfda.brand_name:"{drug_name}"',
+                "limit": 1,
+                **({"api_key": settings.openfda_api_key} if settings.openfda_api_key else {}),
+            },
+        )
+        if fda_data and fda_data.get("results"):
+            generic = _first(
+                fda_data["results"][0].get("openfda", {}).get("generic_name")
+            )
+            if generic and generic.lower() != drug_name.lower():
+                resolved_name = generic
+
+    if resolved_name and resolved_name.lower() != drug_name.lower():
+        return {
+            "query_name": drug_name,
+            "resolved_name": resolved_name,
+            "rxcui": final_rxcui,
+            "confidence": 0.95 if exact_rxcui else 0.75,
+        }
+    return {
+        "query_name": drug_name,
+        "resolved_name": drug_name,
+        "rxcui": rxcui,
+        "confidence": 0.0,
+    }
+
+
 # ------------------------------------------------------------------
 # PubMed Entrez (guidelines + systematic reviews)
 # ------------------------------------------------------------------
@@ -581,35 +693,40 @@ async def _fetch_pubmed_abstracts(
 ) -> list:
     """Fetch PubMed guideline or systematic review abstracts for an entity.
 
-    Uses journal registry to boost results from top-ranked specialty journals.
-    Two parallel searches: one broad (publication type filter) + one journal-targeted.
-    Results are merged and deduplicated by PMID.
+    Searches the broad PubMed corpus first. Journal registry is used only to boost
+    priority sources, never to restrict the evidence base.
     """
     if pub_type == "guideline":
         pt_filter = "(Practice Guideline[pt] OR Guideline[pt])"
-        retmax = 8  # More guidelines = richer disease coverage
+        retmax = 16
+        broad_fallback = (
+            f"{entity}[Title/Abstract] AND (guideline OR consensus OR recommendation) "
+            "AND 2010:2026[dp]"
+        )
     else:
         pt_filter = "(Systematic Review[pt] OR Meta-Analysis[pt])"
-        retmax = 6
+        retmax = 12
+        broad_fallback = (
+            f"{entity}[Title/Abstract] AND (systematic review OR meta-analysis OR review) "
+            "AND 2010:2026[dp]"
+        )
 
-    # Broad search (existing behavior)
     term = f"{entity}[Title/Abstract] AND {pt_filter} AND 2010:2026[dp]"
-
-    # Journal-targeted search (new: uses top specialty journals)
     journal_filter = _get_journal_filter(entity)
     journal_term = (
         f"{entity}[Title/Abstract] AND {journal_filter} AND 2010:2026[dp]"
         if journal_filter
         else None
     )
-    # Run broad search + journal-targeted search in parallel
-    search_tasks = [_pubmed_esearch(client, term, retmax)]
+    search_tasks = [
+        _pubmed_esearch(client, term, retmax),
+        _pubmed_esearch(client, broad_fallback, max(retmax // 2, 6)),
+    ]
     if journal_term:
-        search_tasks.append(_pubmed_esearch(client, journal_term, 4))
+        search_tasks.append(_pubmed_esearch(client, journal_term, 6))
 
     search_results = await asyncio.gather(*search_tasks, return_exceptions=True)
 
-    # Merge PMIDs from both searches, deduplicate
     all_ids: list[str] = []
     seen_ids: set[str] = set()
     for result in search_results:
@@ -623,14 +740,13 @@ async def _fetch_pubmed_abstracts(
     if not all_ids:
         return []
 
-    # Single batch efetch for all merged PMIDs
     return await _pubmed_efetch(client, all_ids)
 
 
 async def _pubmed_esearch(
     client: httpx.AsyncClient, term: str, retmax: int
 ) -> list[str]:
-    """PubMed esearch → list of PMID strings."""
+    """PubMed esearch → list of PMID strings with exponential-backoff retry."""
     params: dict = {
         "db": "pubmed",
         "term": term,
@@ -641,14 +757,18 @@ async def _pubmed_esearch(
     if settings.pubmed_api_key:
         params["api_key"] = settings.pubmed_api_key
 
-    search_data = await _safe_get(
-        client,
-        "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi",
-        params=params,
-    )
-    if not search_data:
-        return []
-    return search_data.get("esearchresult", {}).get("idlist", [])
+    for attempt in range(3):
+        search_data = await _safe_get(
+            client,
+            "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi",
+            params=params,
+        )
+        if search_data:
+            return search_data.get("esearchresult", {}).get("idlist", [])
+        if attempt < 2:
+            await asyncio.sleep(2 ** attempt)  # 1s, 2s
+    logger.warning("PubMed esearch failed after 3 attempts: %s", term[:80])
+    return []
 
 
 async def _pubmed_efetch(client: httpx.AsyncClient, ids: list[str]) -> list:
@@ -721,7 +841,7 @@ def _parse_pubmed_xml(xml_text: str) -> list:
             journal_el = article.find(".//Journal/Title")
             journal = journal_el.text if journal_el is not None else None
 
-            if title and abstract:
+            if title:
                 results.append(
                     {
                         "pmid": pmid,
@@ -914,29 +1034,6 @@ async def _fetch_dailymed(
 
 
 # ------------------------------------------------------------------
-# Indian drugs local lookup
-# ------------------------------------------------------------------
-
-
-def _check_indian_drugs(drug_name: str) -> Optional[dict]:
-    key = drug_name.lower().strip()
-    return _INDIAN_DRUGS.get(key)
-
-
-def _merge_indian_drug(result: DrugFetchResult, entry: dict) -> None:
-    result.generic_name = entry.get("generic_name", result.generic_name)
-    result.drug_class = entry.get("drug_class", result.drug_class)
-    result.indications_raw = _truncate(entry.get("indications"), 800)
-    result.dosing_raw = _truncate(entry.get("dosing_india"), 800)
-    result.contraindications_raw = _truncate(entry.get("contraindications"), 600)
-    result.warnings_raw = _truncate(entry.get("warnings"), 500)
-    result.adverse_reactions_raw = _truncate(entry.get("adverse_reactions"), 600)
-    result.pharmacokinetics_raw = _truncate(entry.get("pharmacokinetics"), 400)
-    result.data_source = "indian_local"
-    result.fetch_success = bool(result.indications_raw)
-
-
-# ------------------------------------------------------------------
 # MedIndia HTML fallback
 # ------------------------------------------------------------------
 
@@ -988,22 +1085,209 @@ async def _fetch_medindia(
 
 
 # ------------------------------------------------------------------
+# PMC / StatPearls
+# ------------------------------------------------------------------
+
+
+async def _fetch_pmc_statpearls(client: httpx.AsyncClient, entity: str) -> Optional[str]:
+    """Fetch StatPearls content from PMC for detailed clinical pharmacology."""
+    # Search PMC for StatPearls articles about this entity
+    search_data = await _safe_get(
+        client,
+        "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi",
+        params={
+            "db": "pmc",
+            "term": f"{entity}[Title] AND StatPearls[journal]",
+            "retmax": 3,
+            "retmode": "json",
+            **({"api_key": settings.pubmed_api_key} if settings.pubmed_api_key else {}),
+        },
+    )
+    if not search_data:
+        return None
+    ids = search_data.get("esearchresult", {}).get("idlist", [])
+    if not ids:
+        # Fallback: broader search
+        search_data = await _safe_get(
+            client,
+            "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi",
+            params={
+                "db": "pmc",
+                "term": f"{entity} dosing pharmacology[Title/Abstract] AND StatPearls[journal]",
+                "retmax": 2,
+                "retmode": "json",
+                **({"api_key": settings.pubmed_api_key} if settings.pubmed_api_key else {}),
+            },
+        )
+        if search_data:
+            ids = search_data.get("esearchresult", {}).get("idlist", [])
+    if not ids:
+        return None
+    # Fetch abstract/summary from PMC
+    fetch_data = await _safe_get_text(
+        client,
+        "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi",
+        params={
+            "db": "pmc",
+            "id": ",".join(ids[:2]),
+            "rettype": "abstract",
+            "retmode": "text",
+            **({"api_key": settings.pubmed_api_key} if settings.pubmed_api_key else {}),
+        },
+    )
+    if fetch_data:
+        return fetch_data[:1200]
+    return None
+
+
+# ------------------------------------------------------------------
+# ChEMBL — additional drug pharmacology source
+# ------------------------------------------------------------------
+
+
+async def _fetch_chembl(client: httpx.AsyncClient, drug_name: str) -> Optional[dict]:
+    """Fetch drug mechanism, drug class, and targets from ChEMBL. Redis-cached for 7 days."""
+    # Check Redis cache first
+    try:
+        import redis.asyncio as aioredis
+        _r = aioredis.from_url(settings.redis_url, decode_responses=True)
+        cache_key = f"chembl:{drug_name.lower().strip()}"
+        cached = await _r.get(cache_key)
+        await _r.aclose()
+        if cached is not None:
+            return json.loads(cached) if cached != "null" else None
+    except Exception:
+        _r = None
+
+    result = await _fetch_chembl_remote(client, drug_name)
+
+    # Store in Redis (7 days TTL — ChEMBL data rarely changes)
+    try:
+        _r2 = aioredis.from_url(settings.redis_url, decode_responses=True)
+        await _r2.setex(cache_key, 604800, json.dumps(result))
+        await _r2.aclose()
+    except Exception:
+        pass
+
+    return result
+
+
+async def _fetch_chembl_remote(client: httpx.AsyncClient, drug_name: str) -> Optional[dict]:
+    """Internal: actually fetch from ChEMBL API."""
+    search = await _safe_get(
+        client,
+        "https://www.ebi.ac.uk/chembl/api/data/molecule.json",
+        params={"pref_name__iexact": drug_name, "format": "json", "limit": 1},
+    )
+    if not search or not search.get("molecules"):
+        # Fallback: case-insensitive contains search
+        search = await _safe_get(
+            client,
+            "https://www.ebi.ac.uk/chembl/api/data/molecule.json",
+            params={"pref_name__icontains": drug_name, "format": "json", "limit": 1},
+        )
+    if not search or not search.get("molecules"):
+        return None
+
+    mol = search["molecules"][0]
+    chembl_id = mol.get("molecule_chembl_id")
+    if not chembl_id:
+        return None
+
+    # Fetch mechanism of action
+    mech_data = await _safe_get(
+        client,
+        f"https://www.ebi.ac.uk/chembl/api/data/mechanism.json",
+        params={"molecule_chembl_id": chembl_id, "format": "json", "limit": 5},
+    )
+    mechanisms = []
+    if mech_data and mech_data.get("mechanisms"):
+        for m in mech_data["mechanisms"][:3]:
+            mech_str = m.get("mechanism_of_action") or ""
+            target = m.get("target_chembl_id") or ""
+            if mech_str:
+                mechanisms.append(mech_str)
+
+    drug_class = None
+    if mol.get("molecule_properties"):
+        # ChEMBL stores therapeutic flags
+        pass
+    atc = mol.get("atc_classifications", [])
+    if atc:
+        drug_class = atc[0]  # ATC code
+
+    if not mechanisms and not drug_class:
+        return None
+
+    return {
+        "chembl_id": chembl_id,
+        "mechanism": "; ".join(mechanisms[:2]) if mechanisms else None,
+        "atc_class": drug_class,
+    }
+
+
+# ------------------------------------------------------------------
+# RxNorm Drug-Drug Interaction API
+# ------------------------------------------------------------------
+
+
+async def _fetch_rxnorm_interactions(
+    client: httpx.AsyncClient, rxcui1: str, rxcui2: str
+) -> list[dict]:
+    """Fetch drug-drug interactions between two drugs using RxNav interaction API.
+
+    Returns a list of interaction dicts with severity, description, drugs involved.
+    Endpoint: rxnav.nlm.nih.gov/REST/interaction/list.json?rxcuis=rxcui1+rxcui2
+    """
+    data = await _safe_get(
+        client,
+        "https://rxnav.nlm.nih.gov/REST/interaction/list.json",
+        params={"rxcuis": f"{rxcui1} {rxcui2}"},
+    )
+    if not data:
+        return []
+
+    interactions = []
+    full_interaction_type_group = data.get("fullInteractionTypeGroup", [])
+    for group in full_interaction_type_group:
+        source = group.get("sourceName", "RxNorm")
+        for fit in group.get("fullInteractionType", []):
+            for pair in fit.get("interactionPair", []):
+                severity = pair.get("severity", "").lower()
+                description = pair.get("description", "")
+                drugs = [
+                    c.get("minConceptItem", {}).get("name", "")
+                    for c in pair.get("interactionConcept", [])
+                    if c.get("minConceptItem")
+                ]
+                if description:
+                    interactions.append({
+                        "severity": severity or "moderate",
+                        "description": description[:500],
+                        "drugs": [d for d in drugs if d],
+                        "source": source,
+                    })
+    return interactions[:10]
+
+
+# ------------------------------------------------------------------
 # High-level fetch orchestrators
 # ------------------------------------------------------------------
 
 
 async def fetch_drug_data(drug_name: str) -> DrugFetchResult:
-    """Fetch drug data: OpenFDA (primary) → DailyMed → Indian local → MedIndia.
-
-    Speed optimizations vs previous version:
-    - RxNorm CUI+class now chains into a single parallel coroutine (B2)
-    - DailyMed fetch runs in parallel with FDA (B3) — result used if FDA fails
-    - Indian local check is synchronous (no I/O), checked immediately after Phase 1
-    """
+    """Fetch drug data using live online resolution rather than local repositories."""
     result = DrugFetchResult()
 
     async with _make_client() as client:
-        # Phase 1: ALL parallel sources including DailyMed fallback and RxNorm chain
+        resolution = await _resolve_drug_name_online(client, drug_name)
+        search_name = resolution.get("resolved_name") or drug_name
+        result.generic_name = search_name
+        if search_name.lower() != drug_name.lower():
+            result.brand_name = drug_name
+        if resolution.get("rxcui"):
+            result.rxcui = resolution["rxcui"]
+
         (
             fda_label,
             fda_events,
@@ -1011,15 +1295,19 @@ async def fetch_drug_data(drug_name: str) -> DrugFetchResult:
             guidelines,
             sysreviews,
             dailymed_result,
+            medlineplus_drug,
+            statpearls_text,
+            chembl_data,
         ) = await asyncio.gather(
-            _fetch_fda_label(client, drug_name),
-            _fetch_fda_events(client, drug_name),
-            _fetch_rxnorm_class_chain(client, drug_name),  # CUI→class in one call (B2)
-            _fetch_pubmed_abstracts(client, drug_name, "guideline"),
-            _fetch_pubmed_abstracts(client, drug_name, "systematic_review"),
-            _fetch_dailymed(
-                client, drug_name
-            ),  # run in parallel, use if FDA fails (B3)
+            _fetch_fda_label(client, search_name),
+            _fetch_fda_events(client, search_name),
+            _fetch_rxnorm_class_chain(client, search_name),
+            _fetch_pubmed_abstracts(client, search_name, "guideline"),
+            _fetch_pubmed_abstracts(client, search_name, "systematic_review"),
+            _fetch_dailymed(client, search_name),
+            _fetch_medlineplus(client, search_name),
+            _fetch_pmc_statpearls(client, search_name),
+            _fetch_chembl(client, search_name),
             return_exceptions=True,
         )
 
@@ -1041,27 +1329,57 @@ async def fetch_drug_data(drug_name: str) -> DrugFetchResult:
         ):
             result.drug_class_rxnorm = rxnorm_class
 
+        if isinstance(medlineplus_drug, str) and medlineplus_drug:
+            if result.indications_raw:
+                result.indications_raw = result.indications_raw + f"\n[MedlinePlus]: {medlineplus_drug[:300]}"
+            else:
+                result.indications_raw = medlineplus_drug[:400]
+
+        if isinstance(statpearls_text, str) and statpearls_text:
+            if result.dosing_raw:
+                result.dosing_raw = result.dosing_raw + f"\n[StatPearls]: {statpearls_text[:400]}"
+            else:
+                result.dosing_raw = statpearls_text[:600]
+
+        # ChEMBL: enrich mechanism and drug class
+        if isinstance(chembl_data, dict) and chembl_data:
+            if chembl_data.get("mechanism") and not result.mechanism_raw:
+                result.mechanism_raw = f"[ChEMBL]: {chembl_data['mechanism']}"
+            elif chembl_data.get("mechanism"):
+                result.mechanism_raw += f"\n[ChEMBL]: {chembl_data['mechanism']}"
+            if chembl_data.get("atc_class") and not result.drug_class:
+                result.drug_class = chembl_data["atc_class"]
+            result.chembl_mechanism = chembl_data.get("mechanism")
+            result.chembl_atc_class = chembl_data.get("atc_class")
+
+        # OpenFDA→RxNorm fallback (item 20): if no indications, try DailyMed before giving up
+        if not result.indications_raw and not result.dosing_raw:
+            logger.info(
+                "OpenFDA returned no label for '%s' — trying DailyMed fallback", search_name
+            )
+
         if result.fetch_success:
             return result
 
-        # Phase 2a: DailyMed result already fetched in parallel — use it now (B3)
         dm = dailymed_result if not isinstance(dailymed_result, Exception) else None
         if dm and dm.fetch_success:
+            if search_name.lower() != drug_name.lower():
+                dm.brand_name = drug_name
+                dm.generic_name = search_name
+            dm.rxcui = result.rxcui
             dm.guideline_abstracts = result.guideline_abstracts
             dm.systematic_review_abstracts = result.systematic_review_abstracts
             dm.top_adverse_events = result.top_adverse_events
             return dm
 
-        # Phase 2b: Indian drugs local lookup (synchronous, no I/O)
-        indian = _check_indian_drugs(drug_name)
-        if indian:
-            _merge_indian_drug(result, indian)
-            if result.fetch_success:
-                return result
-
-        # Phase 3: MedIndia HTML fallback (last resort)
         mi = await _fetch_medindia(client, drug_name)
+        if (not mi or not mi.fetch_success) and search_name.lower() != drug_name.lower():
+            mi = await _fetch_medindia(client, search_name)
         if mi and mi.fetch_success:
+            if search_name.lower() != drug_name.lower():
+                mi.brand_name = drug_name
+                mi.generic_name = search_name
+            mi.rxcui = result.rxcui
             mi.guideline_abstracts = result.guideline_abstracts
             mi.systematic_review_abstracts = result.systematic_review_abstracts
             mi.top_adverse_events = result.top_adverse_events
@@ -1088,6 +1406,12 @@ async def fetch_disease_data(disease_name: str) -> DiseaseFetchResult:
     classification_term = (
         f"{disease_name} classification[Title/Abstract] AND 2010:2026[dp]"
     )
+    broad_guideline_term = (
+        f"{disease_name}[Title/Abstract] AND (guideline OR consensus OR recommendation) AND 2010:2026[dp]"
+    )
+    broad_review_term = (
+        f"{disease_name}[Title/Abstract] AND (systematic review OR meta-analysis OR review) AND 2010:2026[dp]"
+    )
     journal_term = (
         f"{disease_name}[Title/Abstract] AND {journal_filter} AND 2010:2026[dp]"
         if journal_filter
@@ -1097,9 +1421,11 @@ async def fetch_disease_data(disease_name: str) -> DiseaseFetchResult:
     async with _make_client() as client:
         # Phase 1: ALL esearch calls + non-PubMed sources in parallel
         tasks: list = [
-            _pubmed_esearch(client, guideline_term, 12),
-            _pubmed_esearch(client, review_term, 8),
+            _pubmed_esearch(client, guideline_term, 16),
+            _pubmed_esearch(client, review_term, 12),
             _pubmed_esearch(client, classification_term, 6),
+            _pubmed_esearch(client, broad_guideline_term, 8),
+            _pubmed_esearch(client, broad_review_term, 8),
             _fetch_nice(client, disease_name),
             _fetch_medlineplus(client, disease_name),
             _fetch_semantic_scholar(client, disease_name),
@@ -1127,28 +1453,31 @@ async def fetch_disease_data(disease_name: str) -> DiseaseFetchResult:
         guideline_ids = results[0] if isinstance(results[0], list) else []
         review_ids = results[1] if isinstance(results[1], list) else []
         classification_ids = results[2] if isinstance(results[2], list) else []
-        nice_recs = results[3] if isinstance(results[3], list) else []
-        medlineplus = results[4] if isinstance(results[4], str) else None
-        semantic = results[5] if isinstance(results[5], list) else []
+        broad_guideline_ids = results[3] if isinstance(results[3], list) else []
+        broad_review_ids = results[4] if isinstance(results[4], list) else []
+        nice_recs = results[5] if isinstance(results[5], list) else []
+        medlineplus = results[6] if isinstance(results[6], str) else None
+        semantic = results[7] if isinstance(results[7], list) else []
         journal_ids = (
-            results[6] if len(results) > 6 and isinstance(results[6], list) else []
+            results[8] if len(results) > 8 and isinstance(results[8], list) else []
         )
 
-        # Merge journal-targeted PMIDs into guideline set
-        all_guideline_ids = guideline_ids + classification_ids + journal_ids
+        all_guideline_ids = (
+            guideline_ids + broad_guideline_ids + classification_ids + journal_ids
+        )
         # Deduplicate while keeping order
         seen: set[str] = set()
         unique_guideline_ids = [
             pid for pid in all_guideline_ids if pid not in seen and not seen.add(pid)
         ]
 
-        # Phase 2: single batch efetch for ALL PMIDs (guidelines + reviews)
-        all_ids = list(set(unique_guideline_ids + review_ids))
+        all_review_ids = review_ids + broad_review_ids
+        all_ids = list(set(unique_guideline_ids + all_review_ids))
         all_abstracts = await _pubmed_efetch(client, all_ids) if all_ids else []
 
         # Tag abstracts by which search found them (by PMID membership)
         guideline_set = set(unique_guideline_ids)
-        review_set = set(review_ids)
+        review_set = set(all_review_ids)
         guideline_abstracts = []
         review_abstracts = []
         for a in all_abstracts:
@@ -1169,6 +1498,17 @@ async def fetch_disease_data(disease_name: str) -> DiseaseFetchResult:
         or result.systematic_review_abstracts
         or result.medlineplus_summary
     )
+
+    # Fallback: if no PubMed results, retry without [pt] filter
+    if not result.guideline_abstracts and not result.systematic_review_abstracts:
+        fallback_term = f"{disease_name}[Title/Abstract] AND (guideline OR consensus OR recommendation) AND 2015:2026[dp]"
+        async with _make_client() as client:
+            fallback_ids = await _pubmed_esearch(client, fallback_term, 8)
+            if fallback_ids:
+                fallback_abstracts = await _pubmed_efetch(client, fallback_ids)
+                result.guideline_abstracts = _cap_abstracts(fallback_abstracts, 8000)
+                result.fetch_success = bool(result.guideline_abstracts)
+
     return result
 
 
@@ -1177,18 +1517,30 @@ async def fetch_procedure_data(procedure_name: str) -> ProcedureFetchResult:
     result = ProcedureFetchResult()
 
     async with _make_client() as client:
-        guidelines, practice = await asyncio.gather(
+        guidelines, practice, reviews, statpearls = await asyncio.gather(
             _fetch_pubmed_abstracts(client, procedure_name, "guideline"),
             _fetch_pubmed_procedure_guidelines(client, procedure_name),
+            _fetch_pubmed_abstracts(client, procedure_name, "systematic_review"),
+            _fetch_pmc_statpearls(client, procedure_name),
             return_exceptions=True,
         )
 
         result.guideline_abstracts = _cap_abstracts(
-            guidelines if isinstance(guidelines, list) else [], 4000
+            (guidelines if isinstance(guidelines, list) else []) +
+            (practice if isinstance(practice, list) else []) +
+            (reviews if isinstance(reviews, list) else []),
+            6000
         )
-        result.practice_guideline_abstracts = _cap_abstracts(
-            practice if isinstance(practice, list) else [], 3000
-        )
+        result.practice_guideline_abstracts = []  # merged above
+        if isinstance(statpearls, str) and statpearls:
+            # Add StatPearls as a synthetic abstract entry
+            result.guideline_abstracts.insert(0, {
+                "pmid": "",
+                "title": f"StatPearls: {procedure_name}",
+                "abstract": statpearls[:600],
+                "year": 2024,
+                "journal": "StatPearls",
+            })
 
     result.fetch_success = bool(
         result.guideline_abstracts or result.practice_guideline_abstracts
@@ -1223,26 +1575,32 @@ async def fetch_evidence_data(query: str) -> EvidenceFetchResult:
     )
     review_term = f"{query}[Title/Abstract] AND (Systematic Review[pt] OR Meta-Analysis[pt]) AND 2010:2026[dp]"
     guideline_term = f"{query}[Title/Abstract] AND (Practice Guideline[pt] OR Guideline[pt]) AND 2010:2026[dp]"
+    broad_evidence_term = (
+        f"{query}[Title/Abstract] AND (guideline OR review OR trial OR consensus OR recommendation) AND 2010:2026[dp]"
+    )
 
     async with _make_client() as client:
         # Phase 1: all esearch in parallel
-        trial_ids, review_ids, guideline_ids = await asyncio.gather(
+        trial_ids, review_ids, guideline_ids, broad_ids = await asyncio.gather(
             _pubmed_esearch(client, trial_term, 12),
             _pubmed_esearch(client, review_term, 8),
             _pubmed_esearch(client, guideline_term, 10),
+            _pubmed_esearch(client, broad_evidence_term, 12),
             return_exceptions=True,
         )
         trial_ids = trial_ids if isinstance(trial_ids, list) else []
         review_ids = review_ids if isinstance(review_ids, list) else []
         guideline_ids = guideline_ids if isinstance(guideline_ids, list) else []
+        broad_ids = broad_ids if isinstance(broad_ids, list) else []
 
         # Phase 2: single batch efetch
-        all_ids = list(set(trial_ids + review_ids + guideline_ids))
+        all_ids = list(set(trial_ids + review_ids + guideline_ids + broad_ids))
         all_abstracts = await _pubmed_efetch(client, all_ids) if all_ids else []
 
         trial_set = set(trial_ids)
         review_set = set(review_ids)
         guideline_set = set(guideline_ids)
+        broad_set = set(broad_ids)
         for a in all_abstracts:
             pmid = a.get("pmid")
             if pmid in trial_set:
@@ -1250,6 +1608,8 @@ async def fetch_evidence_data(query: str) -> EvidenceFetchResult:
             if pmid in review_set:
                 result.systematic_review_abstracts.append(a)
             if pmid in guideline_set:
+                result.guideline_abstracts.append(a)
+            elif pmid in broad_set:
                 result.guideline_abstracts.append(a)
 
         result.clinical_trial_abstracts = _cap_abstracts(
@@ -1309,9 +1669,10 @@ async def fetch_data_for_query(
         if query_type == "drug" and entities:
             if condition_context:
                 # Fetch drug data AND condition management guidelines in parallel (B6)
-                drug_result, condition_result = await asyncio.gather(
+                drug_result, condition_result, evidence_result = await asyncio.gather(
                     fetch_drug_data(entities[0]),
                     fetch_disease_data(condition_context),
+                    fetch_evidence_data(f"{entities[0]} {condition_context}"),
                     return_exceptions=True,
                 )
                 fetched.drug_data = (
@@ -1324,14 +1685,34 @@ async def fetch_data_for_query(
                     if not isinstance(condition_result, Exception)
                     else None
                 )
+                if (
+                    fetched.drug_data
+                    and isinstance(evidence_result, EvidenceFetchResult)
+                    and evidence_result.fetch_success
+                ):
+                    fetched.drug_data.clinical_trial_abstracts = _cap_abstracts(
+                        evidence_result.clinical_trial_abstracts, 5000
+                    )
+                    fetched.drug_data.systematic_review_abstracts = _cap_abstracts(
+                        (fetched.drug_data.systematic_review_abstracts or [])
+                        + evidence_result.systematic_review_abstracts,
+                        5000,
+                    )
+                    fetched.drug_data.guideline_abstracts = _cap_abstracts(
+                        (fetched.drug_data.guideline_abstracts or [])
+                        + evidence_result.guideline_abstracts,
+                        5000,
+                    )
                 fetched.fallback_to_llm = not fetched.drug_data.fetch_success
                 _fire_and_forget_index(fetched.drug_data.guideline_abstracts)
+                _fire_and_forget_index(fetched.drug_data.clinical_trial_abstracts)
                 if fetched.condition_data:
                     _fire_and_forget_index(fetched.condition_data.guideline_abstracts)
             else:
                 fetched.drug_data = await fetch_drug_data(entities[0])
                 fetched.fallback_to_llm = not fetched.drug_data.fetch_success
                 _fire_and_forget_index(fetched.drug_data.guideline_abstracts)
+                _fire_and_forget_index(fetched.drug_data.clinical_trial_abstracts)
 
         elif query_type == "disease" and entities:
             fetched.disease_data = await fetch_disease_data(entities[0])
@@ -1343,13 +1724,31 @@ async def fetch_data_for_query(
             drug_results = await asyncio.gather(
                 fetch_drug_data(entities[0]),
                 fetch_drug_data(entities[1]),
+                fetch_evidence_data(" vs ".join(entities[:2])),
                 return_exceptions=True,
             )
-            for r in drug_results:
+            for r in drug_results[:2]:
                 if not isinstance(r, Exception):
                     fetched.comparative_drug_data.append(r)
+            comp_evidence = drug_results[2]
+            if isinstance(comp_evidence, EvidenceFetchResult) and comp_evidence.fetch_success:
+                fetched.comparative_evidence = comp_evidence
+                _fire_and_forget_index(comp_evidence.clinical_trial_abstracts)
+                _fire_and_forget_index(comp_evidence.systematic_review_abstracts)
+
+            # Fetch drug-drug interaction data when both drugs have rxcui
+            rxcui1 = fetched.comparative_drug_data[0].rxcui if len(fetched.comparative_drug_data) > 0 else None
+            rxcui2 = fetched.comparative_drug_data[1].rxcui if len(fetched.comparative_drug_data) > 1 else None
+            if rxcui1 and rxcui2:
+                async with _make_client() as client:
+                    ddi = await _fetch_rxnorm_interactions(client, rxcui1, rxcui2)
+                    if ddi:
+                        fetched.drug_interactions = ddi
+
             fetched.fallback_to_llm = not any(
                 r.fetch_success for r in fetched.comparative_drug_data
+            ) and not (
+                fetched.comparative_evidence and fetched.comparative_evidence.fetch_success
             )
 
         elif query_type == "procedure" and entities:

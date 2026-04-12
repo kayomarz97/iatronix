@@ -63,4 +63,7 @@ async def validate_user_key(key: str, provider: str) -> bool:
     if provider == "openai":
         return key.startswith("sk-")
 
+    if provider == "openrouter":
+        return key.startswith("sk-or-v1-")
+
     return False

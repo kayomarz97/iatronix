@@ -73,7 +73,7 @@ class DiseaseResponse(BaseModel):
     epidemiology: Optional[EvidencedClaim] = None
     clinical_features: list[EvidencedClaim] = []
     diagnostic_criteria: list[EvidencedClaim] = []
-    treatment: "TreatmentSection"
+    treatment: "TreatmentSection" = Field(default_factory=lambda: TreatmentSection())
     complications: list[EvidencedClaim] = []
     prognosis: Optional[EvidencedClaim] = None
     references: list[Reference] = []
@@ -175,20 +175,44 @@ class DegradedResponse(BaseModel):
 # --- Adaptive (DSPy) ---
 
 
+class AdaptiveBLUF(BaseModel):
+    headline: str
+    body: Optional[str] = None
+    key_points: list[str] = []
+    caveats: list[str] = []
+
+
+class AdaptiveContentItem(BaseModel):
+    text: str
+    loe: Optional[str] = None
+    cor: Optional[str] = None
+    source: Optional[str] = None
+
+
+class AdaptiveReference(BaseModel):
+    title: str
+    source: Optional[str] = None
+    pmid: Optional[Union[str, int]] = None
+    url: Optional[str] = None
+    year: Optional[Union[str, int]] = None
+
+
 class AdaptiveSection(BaseModel):
     title: str
-    content: Any
+    content: Any = None
+    content_items: list[AdaptiveContentItem] = []
     loe: Optional[str] = None
     cor: Optional[str] = None
 
 
 class AdaptiveResponse(BaseModel):
     query_type: str
-    bluf: str
+    bluf: AdaptiveBLUF
     sections: list[AdaptiveSection]
-    references: list[str] = []
+    references: list[AdaptiveReference] = []
     response_focus: str
     depth: str
+    related_topics: list[str] = []
 
 
 # --- Text Nodes ---

@@ -6,14 +6,14 @@ import redis.asyncio as aioredis
 import sentry_sdk
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import ORJSONResponse
 
-from app.api.v1 import auth, health, models, query
+from app.api.v1 import health, models, query
 from app.api.v1 import auth_routes, documents, history as history_module
 from app.config import settings
-from app.middleware.api_key_auth import ApiKeyAuthMiddleware
+from app.middleware.firebase_auth import FirebaseAuthMiddleware
 from app.middleware.payload_limit import PayloadLimitMiddleware
 from app.middleware.rate_limit import PreAuthRateLimitMiddleware
-from app.services.drug_linker import load_drug_dictionary
 from app.services.data_fetcher import init_http_client, shutdown_http_client
 from app.services.rag_pipeline import init_log_queue, shutdown_log_queue
 
@@ -60,9 +60,6 @@ async def lifespan(app: FastAPI):
         logger.warning("Redis not available, running in degraded mode")
         app.state.redis = None
 
-    # Drug dictionary
-    load_drug_dictionary()
-
     # Log queue
     await init_log_queue()
 
@@ -101,16 +98,6 @@ async def lifespan(app: FastAPI):
 
     asyncio.create_task(_cleanup_expired_documents())
 
-    # Pre-load embedding model in background thread (non-blocking)
-    if settings.vector_search_enabled:
-        try:
-            from app.services.embedder import embedder
-
-            await asyncio.to_thread(embedder.embed_text, "warmup")
-            logger.info("Embedding model loaded")
-        except Exception:
-            logger.warning("Embedding model not available — vector search disabled")
-
     yield
 
     # Shutdown
@@ -125,11 +112,12 @@ app = FastAPI(
     title="Iatronix Medical RAG API",
     version="0.1.0",
     lifespan=lifespan,
+    default_response_class=ORJSONResponse,
 )
 
 # Middleware order: outermost first → Payload → PreAuth Rate Limit → API Key Auth
 # (FastAPI adds in reverse order, so add innermost first)
-app.add_middleware(ApiKeyAuthMiddleware)
+app.add_middleware(FirebaseAuthMiddleware)
 app.add_middleware(PreAuthRateLimitMiddleware)
 app.add_middleware(PayloadLimitMiddleware)
 
@@ -145,7 +133,6 @@ app.add_middleware(
 
 # Routes
 app.include_router(health.router, prefix="/api/v1")
-app.include_router(auth.router, prefix="/api/v1")
 app.include_router(auth_routes.router, prefix="/api/v1")
 app.include_router(models.router, prefix="/api/v1")
 app.include_router(query.router, prefix="/api/v1")

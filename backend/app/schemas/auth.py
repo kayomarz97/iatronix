@@ -79,7 +79,7 @@ class UserProfileResponse(BaseModel):
 
 
 class LlmKeyRequest(BaseModel):
-    provider: str  # 'anthropic' or 'openai'
+    provider: str  # 'anthropic', 'openai', or 'openrouter'
     key: str
 
 

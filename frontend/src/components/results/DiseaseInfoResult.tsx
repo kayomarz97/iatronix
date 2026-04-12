@@ -1,9 +1,10 @@
 "use client";
 
-import type { DiseaseResponse } from "@/lib/types";
+import type { DiseaseResponse, TreatmentEntry } from "@/lib/types";
 import { ClaimItem } from "./ClaimItem";
 import { EvidencedText } from "./EvidenceBadge";
 import { ReferenceList } from "./ReferenceList";
+import { ResultHero, ResultMetaCard, ResultSection } from "./ResultChrome";
 import { TruncatedList } from "./TruncatedList";
 
 interface DiseaseInfoResultProps {
@@ -12,167 +13,154 @@ interface DiseaseInfoResultProps {
 
 export function DiseaseInfoResult({ data }: DiseaseInfoResultProps) {
   return (
-    <div className="space-y-5">
-      <div className="border-b border-border pb-4">
-        <h2 className="text-2xl font-bold">{data.disease_name}</h2>
-        {data.icd_10 && (
-          <p className="text-text-muted text-sm mt-1">ICD-10: {data.icd_10}</p>
-        )}
-      </div>
+    <div className="space-y-6">
+      <ResultHero
+        eyebrow="Disease Reference"
+        title={data.disease_name}
+        subtitle={data.icd_10 ? `ICD-10: ${data.icd_10}` : undefined}
+        stats={[
+          ...(data.clinical_features?.length
+            ? [{ label: "features", value: data.clinical_features.length }]
+            : []),
+          ...(data.diagnostic_criteria?.length
+            ? [{ label: "diagnostics", value: data.diagnostic_criteria.length }]
+            : []),
+          ...(data.treatment?.first_line?.length
+            ? [{ label: "first-line items", value: data.treatment.first_line.length }]
+            : []),
+        ]}
+        directAnswer={data.bluf ?? undefined}
+        context={data.additional_clinical_context ?? undefined}
+      />
 
-      {data.bluf && (
-        <div style={{ background: "var(--bg-elevated)", borderLeft: "3px solid var(--accent)", padding: "0.75rem 1rem", borderRadius: "0 4px 4px 0" }}>
-          <p className="text-sm font-medium leading-relaxed">{data.bluf}</p>
-        </div>
-      )}
-
-      {data.additional_clinical_context && (
-        <div style={{ background: "var(--bg-elevated)", padding: "0.75rem 1rem", borderRadius: "4px" }}>
-          <p className="text-xs text-text-secondary leading-relaxed">{data.additional_clinical_context}</p>
-        </div>
-      )}
-
-      {data.etiology && data.etiology.length > 0 && (
-        <Section title="Etiology">
-          <ul className="list-disc list-inside space-y-1">
-            <TruncatedList
-              items={data.etiology}
-              renderItem={(claim, i) => <ClaimItem key={i} claim={claim} />}
-            />
-          </ul>
-        </Section>
-      )}
-
-      {data.clinical_features?.length > 0 && (
-        <Section title="Signs &amp; Symptoms">
-          <ul className="list-disc list-inside space-y-1">
-            <TruncatedList
-              items={data.clinical_features}
-              renderItem={(claim, i) => <ClaimItem key={i} claim={claim} />}
-            />
-          </ul>
-        </Section>
-      )}
-
-      {data.pathophysiology && (
-        <Section title="Pathophysiology">
-          <p className="text-sm leading-relaxed">
-            <EvidencedText claim={data.pathophysiology} />
-          </p>
-        </Section>
-      )}
-
-      {data.epidemiology && (
-        <Section title="Epidemiology">
-          <p className="text-sm leading-relaxed">
-            <EvidencedText claim={data.epidemiology} />
-          </p>
-        </Section>
-      )}
-
-      {data.diagnostic_criteria?.length > 0 && (
-        <Section title="Diagnosis">
-          <ul className="list-disc list-inside space-y-1">
-            <TruncatedList
-              items={data.diagnostic_criteria}
-              renderItem={(claim, i) => <ClaimItem key={i} claim={claim} />}
-            />
-          </ul>
-        </Section>
-      )}
-
-      <Section title="Management">
+      <div className="grid gap-4 xl:grid-cols-[1.1fr_0.95fr]">
         <div className="space-y-4">
-          {data.treatment?.first_line?.length > 0 && (
-            <div>
-              <h4 className="text-sm font-semibold text-primary mb-2">First Line</h4>
-              <TruncatedList
-                items={data.treatment.first_line}
-                renderItem={(entry, i) => (
-                  <div key={i} className="py-2 border-b border-border/50 last:border-0">
-                    <p className="text-sm leading-relaxed">
-                      <EvidencedText claim={entry} />
-                    </p>
-                    {entry.drug_names?.length > 0 && (
-                      <p className="text-xs text-primary-light mt-1">
-                        {entry.drug_names.join(", ")}
-                      </p>
-                    )}
-                  </div>
-                )}
-              />
-            </div>
-          )}
-
-          {data.treatment?.second_line?.length > 0 && (
-            <div>
-              <h4 className="text-sm font-semibold text-text-secondary mb-2">Second Line</h4>
-              <TruncatedList
-                items={data.treatment.second_line}
-                renderItem={(entry, i) => (
-                  <div key={i} className="py-2 border-b border-border/50 last:border-0">
-                    <p className="text-sm leading-relaxed">
-                      <EvidencedText claim={entry} />
-                    </p>
-                    {entry.drug_names?.length > 0 && (
-                      <p className="text-xs text-primary-light mt-1">
-                        {entry.drug_names.join(", ")}
-                      </p>
-                    )}
-                  </div>
-                )}
-              />
-            </div>
-          )}
-
-          {data.treatment?.adjunctive?.length > 0 && (
-            <div>
-              <h4 className="text-sm font-semibold text-text-secondary mb-2">Adjunctive Therapy</h4>
-              <TruncatedList
-                items={data.treatment.adjunctive}
-                renderItem={(entry, i) => (
-                  <div key={i} className="py-2 border-b border-border/50 last:border-0">
-                    <p className="text-sm leading-relaxed">
-                      <EvidencedText claim={entry} />
-                    </p>
-                  </div>
-                )}
-              />
-            </div>
-          )}
-
-          {data.treatment?.non_pharmacological?.length > 0 && (
-            <div>
-              <h4 className="text-sm font-semibold text-text-secondary mb-2">Non-Pharmacological</h4>
-              <ul className="list-disc list-inside space-y-1">
+          {data.diagnostic_criteria?.length > 0 && (
+            <ResultSection title="Diagnosis and Workup" eyebrow="What confirms it">
+              <ul className="space-y-1">
                 <TruncatedList
-                  items={data.treatment.non_pharmacological}
+                  items={data.diagnostic_criteria}
                   renderItem={(claim, i) => <ClaimItem key={i} claim={claim} />}
                 />
               </ul>
+            </ResultSection>
+          )}
+
+          <ResultSection title="Management" eyebrow="What to do">
+            <div className="space-y-4">
+              {data.treatment?.first_line?.length > 0 && (
+                <TreatmentBlock
+                  title="First Line"
+                  tone="primary"
+                  entries={data.treatment.first_line}
+                />
+              )}
+
+              {data.treatment?.second_line?.length > 0 && (
+                <TreatmentBlock
+                  title="Second Line"
+                  tone="default"
+                  entries={data.treatment.second_line}
+                />
+              )}
+
+              {data.treatment?.adjunctive?.length > 0 && (
+                <TreatmentBlock
+                  title="Adjunctive Therapy"
+                  tone="default"
+                  entries={data.treatment.adjunctive}
+                />
+              )}
+
+              {data.treatment?.non_pharmacological?.length > 0 && (
+                  <ResultMetaCard>
+                    <h4 className="text-sm font-semibold text-text">
+                      Non-Pharmacological
+                    </h4>
+                  <ul className="mt-3 space-y-1">
+                    <TruncatedList
+                      items={data.treatment.non_pharmacological}
+                      renderItem={(claim, i) => <ClaimItem key={i} claim={claim} />}
+                      />
+                    </ul>
+                  </ResultMetaCard>
+              )}
             </div>
+          </ResultSection>
+        </div>
+
+        <div className="space-y-4">
+          {data.clinical_features?.length > 0 && (
+            <ResultSection title="Clinical Features" eyebrow="Presentation">
+              <ul className="space-y-1">
+                <TruncatedList
+                  items={data.clinical_features}
+                  renderItem={(claim, i) => <ClaimItem key={i} claim={claim} />}
+                />
+              </ul>
+            </ResultSection>
+          )}
+
+          {data.complications?.length > 0 && (
+            <ResultSection title="Complications" eyebrow="What can go wrong">
+              <ul className="space-y-1">
+                <TruncatedList
+                  items={data.complications}
+                  renderItem={(claim, i) => <ClaimItem key={i} claim={claim} />}
+                />
+              </ul>
+            </ResultSection>
+          )}
+
+          {data.prognosis && (
+            <ResultSection title="Prognosis" eyebrow="Expected course">
+              <p className="text-sm leading-7">
+                <EvidencedText claim={data.prognosis} />
+              </p>
+            </ResultSection>
           )}
         </div>
-      </Section>
+      </div>
 
-      {data.complications?.length > 0 && (
-        <Section title="Complications">
-          <ul className="list-disc list-inside space-y-1">
-            <TruncatedList
-              items={data.complications}
-              renderItem={(claim, i) => <ClaimItem key={i} claim={claim} />}
-            />
-          </ul>
-        </Section>
-      )}
+      <div className="grid gap-4 lg:grid-cols-2">
+        {data.etiology && data.etiology.length > 0 && (
+          <ResultSection title="Etiology" eyebrow="Causes and risk factors">
+            <ul className="space-y-1">
+              <TruncatedList
+                items={data.etiology}
+                renderItem={(claim, i) => <ClaimItem key={i} claim={claim} />}
+              />
+            </ul>
+          </ResultSection>
+        )}
 
-      {data.prognosis && (
-        <Section title="Prognosis">
-          <p className="text-sm leading-relaxed">
-            <EvidencedText claim={data.prognosis} />
-          </p>
-        </Section>
-      )}
+        {(data.pathophysiology || data.epidemiology) && (
+          <ResultSection title="Background" eyebrow="Mechanism and burden">
+            <div className="space-y-4">
+              {data.pathophysiology && (
+                <div>
+                  <h4 className="text-sm font-semibold text-text">
+                    Pathophysiology
+                  </h4>
+                  <p className="mt-2 text-sm leading-7">
+                    <EvidencedText claim={data.pathophysiology} />
+                  </p>
+                </div>
+              )}
+              {data.epidemiology && (
+                <div>
+                  <h4 className="text-sm font-semibold text-text">
+                    Epidemiology
+                  </h4>
+                  <p className="mt-2 text-sm leading-7">
+                    <EvidencedText claim={data.epidemiology} />
+                  </p>
+                </div>
+              )}
+            </div>
+          </ResultSection>
+        )}
+      </div>
 
       {data.references?.length > 0 && (
         <ReferenceList references={data.references} />
@@ -181,17 +169,40 @@ export function DiseaseInfoResult({ data }: DiseaseInfoResultProps) {
   );
 }
 
-function Section({
+function TreatmentBlock({
   title,
-  children,
+  tone,
+  entries,
 }: {
   title: string;
-  children: React.ReactNode;
+  tone: "primary" | "default";
+  entries: TreatmentEntry[];
 }) {
+  const toneClass =
+    tone === "primary"
+      ? "border-sky-500/20 bg-sky-500/10"
+      : "border-border/60 bg-background/60";
+
   return (
-    <div>
-      <h3 className="text-base font-semibold mb-2 text-text">{title}</h3>
-      {children}
+    <div className={`rounded-xl border p-4 ${toneClass}`}>
+      <h4 className="text-sm font-semibold text-text">{title}</h4>
+      <div className="mt-3 space-y-3">
+        <TruncatedList
+          items={entries}
+          renderItem={(entry, i) => (
+            <ResultMetaCard key={i}>
+              <p className="text-sm leading-7">
+                <EvidencedText claim={entry} />
+              </p>
+              {entry.drug_names?.length > 0 && (
+                <p className="mt-2 text-xs text-text-secondary">
+                  {entry.drug_names.join(", ")}
+                </p>
+              )}
+            </ResultMetaCard>
+          )}
+        />
+      </div>
     </div>
   );
 }

@@ -1,8 +1,8 @@
 "use client";
 
 import type { Reference } from "@/lib/types";
-import { Accordion } from "@/components/ui/Accordion";
 import { ExternalLink } from "lucide-react";
+import { ResultSection } from "./ResultChrome";
 
 interface ReferenceListProps {
   references: Reference[];
@@ -21,41 +21,39 @@ export function ReferenceList({ references }: ReferenceListProps) {
   if (references.length === 0) return null;
 
   return (
-    <Accordion title="References" count={references.length}>
-      <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+    <ResultSection title="References" eyebrow="Source trail">
+      <ul className="space-y-3">
         {references.map((ref, i) => {
-          const safeUrl = ref.url && (ref.url.startsWith("https://") || ref.url.startsWith("http://")) ? ref.url : null;
+          const safeUrl =
+            ref.url &&
+            (ref.url.startsWith("https://") || ref.url.startsWith("http://"))
+              ? ref.url
+              : null;
           const url = safeUrl || buildFallbackUrl(ref);
           return (
-            <li key={i} style={{ fontSize: "0.8rem", lineHeight: 1.5 }}>
+            <li
+              key={i}
+              className="rounded-2xl border border-border/70 bg-background/70 px-4 py-3 text-sm"
+            >
               <a
                 href={url}
                 target="_blank"
                 rel="noopener noreferrer"
-                style={{
-                  color: "var(--accent)",
-                  textDecoration: "none",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: "0.3rem",
-                  fontWeight: 500,
-                }}
-                onMouseOver={(e) => (e.currentTarget.style.textDecoration = "underline")}
-                onMouseOut={(e) => (e.currentTarget.style.textDecoration = "none")}
+                className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"
               >
                 {ref.source}
-                <ExternalLink size={11} style={{ flexShrink: 0 }} />
+                <ExternalLink size={12} className="flex-shrink-0" />
               </a>
               {ref.title && (
-                <span style={{ color: "var(--text-secondary)" }}> — {ref.title}</span>
+                <span className="text-text-secondary"> — {ref.title}</span>
               )}
               {ref.year && (
-                <span style={{ color: "var(--text-muted)" }}> ({ref.year})</span>
+                <span className="text-text-muted"> ({ref.year})</span>
               )}
             </li>
           );
         })}
       </ul>
-    </Accordion>
+    </ResultSection>
   );
 }

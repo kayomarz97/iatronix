@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.schemas.query import QueryRequest, QueryResponse
+from app.services.circuit_breaker import anthropic_breaker, openai_breaker
 from app.services.rag_pipeline import process_query
 
 logger = logging.getLogger(__name__)
@@ -33,7 +34,11 @@ async def query_endpoint(request: Request, body: QueryRequest):
             process_query(body, redis_client, user_key_id, user=user),
             timeout=settings.pipeline_timeout_seconds,
         )
-        return response
+        headers = {
+            "X-CB-Anthropic": anthropic_breaker.current_state,
+            "X-CB-OpenAI": openai_breaker.current_state,
+        }
+        return JSONResponse(content=response.model_dump(), headers=headers)
     except asyncio.TimeoutError:
         logger.error("Pipeline timeout exceeded")
         return JSONResponse(

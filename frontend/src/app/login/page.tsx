@@ -5,6 +5,8 @@ import Link from "next/link";
 import { Activity, Mail } from "lucide-react";
 import { PasswordInput } from "@/components/ui/PasswordInput";
 import { API_KEY_STORAGE_KEY } from "@/lib/constants";
+import { signInWithEmailAndPassword } from "firebase/auth";
+import { auth } from "@/lib/firebase";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -20,26 +22,14 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const res = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        setError(data.detail || "Invalid email or password");
-        setShaking(true);
-        setTimeout(() => setShaking(false), 500);
-        return;
-      }
-
-      localStorage.setItem(API_KEY_STORAGE_KEY, data.api_key);
-      localStorage.setItem("iatronix_email", data.email);
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      const token = await userCredential.user.getIdToken();
+      
+      localStorage.setItem(API_KEY_STORAGE_KEY, token);
+      localStorage.setItem("iatronix_email", userCredential.user.email || email);
       window.location.href = "/";
-    } catch {
-      setError("Network error. Please try again.");
+    } catch (err: any) {
+      setError(err.message || "Invalid email or password");
       setShaking(true);
       setTimeout(() => setShaking(false), 500);
     } finally {

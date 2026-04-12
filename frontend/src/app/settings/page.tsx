@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { Monitor, Moon, Sun, Edit2, Check, X, Brain, Globe, FileText } from "lucide-react";
-import { API_KEY_STORAGE_KEY } from "@/lib/constants";
+import { API_KEY_STORAGE_KEY, LLM_PROVIDER_STORAGE_KEY } from "@/lib/constants";
 import { useTheme } from "@/hooks/useTheme";
 import { SOURCE_MODE_KEY } from "@/components/providers/QueryProvider";
 
@@ -24,7 +24,7 @@ const GENDERS = ["Male", "Female", "Non-binary", "Prefer not to say", "Other"];
 
 export default function SettingsPage() {
   const [llmKey, setLlmKey] = useState("");
-  const [provider, setProvider] = useState<"anthropic" | "openai">("anthropic");
+  const [provider, setProvider] = useState<"anthropic" | "openai" | "openrouter">("anthropic");
   const [llmStatus, setLlmStatus] = useState<{ provider: string; is_set: boolean } | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -89,7 +89,11 @@ export default function SettingsPage() {
     if (!apiKey) return;
     try {
       const res = await fetch("/api/v1/auth/llm-key", { headers: { "X-API-Key": apiKey } });
-      if (res.ok) setLlmStatus(await res.json());
+      if (res.ok) {
+        const data = await res.json();
+        setLlmStatus(data);
+        if (data.is_set && data.provider) localStorage.setItem(LLM_PROVIDER_STORAGE_KEY, data.provider);
+      }
     } catch {}
   };
 
@@ -166,6 +170,7 @@ export default function SettingsPage() {
       } else {
         setMessage("LLM key saved successfully");
         setLlmKey("");
+        localStorage.setItem(LLM_PROVIDER_STORAGE_KEY, provider);
         fetchLlmStatus();
       }
     } catch {
@@ -373,7 +378,7 @@ export default function SettingsPage() {
       <section className="space-y-3">
         <h2 className="text-lg font-semibold">LLM API Key (BYOK)</h2>
         <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
-          Bring your own Claude or OpenAI API key. Your key is encrypted and stored securely.
+          Bring your own Anthropic, OpenAI, or OpenRouter API key. Your key is encrypted and stored securely.
         </p>
 
         {llmStatus && (
@@ -388,11 +393,24 @@ export default function SettingsPage() {
         )}
 
         <div className="space-y-2">
-          <select value={provider} onChange={(e) => setProvider(e.target.value as "anthropic" | "openai")} className="w-full px-3 py-2 rounded-md border border-border bg-surface text-sm min-h-[44px]">
+          <select value={provider} onChange={(e) => setProvider(e.target.value as "anthropic" | "openai" | "openrouter")} className="w-full px-3 py-2 rounded-md border border-border bg-surface text-sm min-h-[44px]">
             <option value="anthropic">Anthropic (Claude)</option>
             <option value="openai">OpenAI (GPT)</option>
+            <option value="openrouter">OpenRouter</option>
           </select>
-          <input type="password" value={llmKey} onChange={(e) => setLlmKey(e.target.value)} placeholder={provider === "anthropic" ? "sk-ant-api03-..." : "sk-..."} className="w-full px-3 py-2 rounded-md border border-border bg-surface text-sm min-h-[44px]" />
+          <input
+            type="password"
+            value={llmKey}
+            onChange={(e) => setLlmKey(e.target.value)}
+            placeholder={
+              provider === "anthropic"
+                ? "sk-ant-..."
+                : provider === "openrouter"
+                ? "sk-or-v1-..."
+                : "sk-..."
+            }
+            className="w-full px-3 py-2 rounded-md border border-border bg-surface text-sm min-h-[44px]"
+          />
           <div className="flex gap-2">
             <button onClick={saveLLMKey} disabled={loading || !llmKey} className="px-4 py-2 bg-primary text-white rounded-md text-sm min-h-[44px] disabled:opacity-50">
               {loading ? "Saving..." : "Save Key"}

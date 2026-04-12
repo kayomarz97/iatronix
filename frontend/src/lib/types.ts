@@ -144,20 +144,44 @@ export interface EvidenceResponse {
 
 // --- Adaptive (DSPy) ---
 
+export interface AdaptiveContentItem {
+  text: string;
+  loe?: string;
+  cor?: string;
+  source?: string;
+}
+
+export interface AdaptiveReference {
+  title: string;
+  source?: string;
+  pmid?: string;
+  url?: string;
+  year?: string;
+}
+
 export interface AdaptiveSection {
   title: string;
-  content: unknown;
+  content?: unknown;
+  content_items: AdaptiveContentItem[];
   loe?: string;
   cor?: string;
 }
 
+export interface AdaptiveBLUF {
+  headline: string;
+  body?: string | null;
+  key_points: string[];
+  caveats: string[];
+}
+
 export interface AdaptiveResponse {
   query_type: string;
-  bluf: string;
+  bluf: AdaptiveBLUF;
   sections: AdaptiveSection[];
-  references: string[];
+  references: AdaptiveReference[];
   response_focus: string;
   depth: string;
+  related_topics: string[];
 }
 
 // --- Text Nodes ---

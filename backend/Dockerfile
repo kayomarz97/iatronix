@@ -3,7 +3,6 @@ FROM python:3.12-slim
 WORKDIR /app
 
 ENV PYTHONPATH=/app
-ENV SENTENCE_TRANSFORMERS_HOME=/app/models
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
@@ -34,23 +33,28 @@ RUN pip install --no-cache-dir \
     "python-Levenshtein>=0.26.0" \
     "metaphone>=0.6" \
     "httpx>=0.27.0" \
-    "sentence-transformers>=3.0.0" \
     "pdfplumber>=0.11.0" \
     "python-multipart>=0.0.9" \
     "lxml>=5.0.0" \
     "cryptography>=43.0.0" \
     "email-validator>=2.0.0" \
     "boto3>=1.34.0" \
+    "orjson>=3.10.0" \
     "aiofiles>=23.0.0" \
-    "dspy-ai>=2.5.0"
+    "dspy-ai>=2.5.0" \
+    "pytest>=8.0.0" \
+    "pytest-asyncio>=0.24.0" \
+    "pytest-httpx>=0.30.0" \
+    "anyio>=4.0.0"
 
 COPY app/ app/
 COPY alembic.ini .
 COPY migrations/ migrations/
 COPY entrypoint.sh .
 COPY data/ data/
+COPY tests/ tests/
 
-RUN chmod +x entrypoint.sh && mkdir -p /app/logs /app/models
+RUN chmod +x entrypoint.sh && mkdir -p /app/logs
 
 EXPOSE 8000
 

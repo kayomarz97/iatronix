@@ -1,153 +1,135 @@
+"""Lightweight routing helpers.
+
+The primary medical analysis path is DSPy/LLM-driven. This module only handles:
+- minimal fallback entity extraction for obvious structural cases
+- model preference selection
 """
-source_router.py — Rule-based query routing.
-Zero AI tokens. Extracts entity names and chooses the preferred model tier.
-"""
+
+from __future__ import annotations
 
 import re
 from dataclasses import dataclass
 
 from app.config import settings
 
-_DRUG_STRIP = re.compile(
-    r"\b(?:what|is|are|the|dose|dosage|dosing|of|for|drug|medication|tell|me|about|"
-    r"side|effects|interactions|contraindications|pharmacokinetics|mechanism|action|"
-    r"how|does|work|info|on|regarding|uses|use|used|indication|indications|"
-    r"give|i|need|information|please|provide|describe|explain|and|in|its|with|"
-    r"adverse|reaction|reactions|profile|safety|efficacy|review|its|a|an)\b",
-    re.IGNORECASE,
-)
-
-_DISEASE_STRIP = re.compile(
-    r"\b(?:what|is|are|the|tell|me|about|how|to|treat|treatment|of|management|"
-    r"manage|for|regarding|guidelines|guideline|etiology|aetiology|pathophysiology|"
-    r"diagnosis|diagnose|signs|symptoms|presentation|clinical|features|prognosis|"
-    r"complication|complications|epidemiology|give|i|need|information|please|"
-    r"provide|describe|explain|and|in|its|with|a|an)\b",
-    re.IGNORECASE,
-)
-
 _COMPARATIVE_SPLIT = re.compile(
-    r"\s+(?:vs\.?|versus|compared?\s+to|rather\s+than|instead\s+of|or|and)\s+",
+    r"\s+(?:vs\.?|versus|compared?\s+to|compared?\s+with|rather\s+than|instead\s+of)\s+",
+    re.IGNORECASE,
+)
+_STOPWORDS = re.compile(
+    r"\b(?:what|is|are|the|about|tell|me|please|explain|give|information|"
+    r"management|treatment|guidelines|guideline|dose|dosing|for|of|in|to|a|an|"
+    r"approach|workup|evaluation|overview|summary|diagnosis|diagnostic|initial)\b",
+    re.IGNORECASE,
+)
+_CONDITION_RE = re.compile(
+    r"\b(?:in|for)\s+([A-Za-z][A-Za-z0-9\s\-/]{2,80}?)(?:\s*[,?.]|$)",
+    re.IGNORECASE,
+)
+_DISEASE_PREFIX_RE = re.compile(
+    r"^\s*(?:approach to|management of|treatment of|diagnosis of|workup of|evaluation of|overview of|summary of|initial management of)\s+",
+    re.IGNORECASE,
+)
+_EVIDENCE_ENTITY_RE = re.compile(
+    r"^\s*(?:is\s+)?(.+?)\s+(?:safe|effective|beneficial|appropriate|useful)\s+(?:in|for)\s+(.+?)\s*$",
     re.IGNORECASE,
 )
 
-_COMPARATIVE_PREFIX = re.compile(
-    r"^(?:compare(?:\s+and\s+contrast)?|what(?:\s+is|\s+are)?\s+(?:the\s+)?"
-    r"(?:difference|differences|comparison)\s+(?:between|of)|"
-    r"difference\s+between|comparison\s+(?:of|between))\s+",
-    re.IGNORECASE,
-)
 
-_PROCEDURE_STRIP = re.compile(
-    r"\b(?:what|is|are|the|when|do|you|how|to|should|we|change|replace|insert|"
-    r"remove|perform|place|steps|for|a|an|in|indication|indications|protocol|"
-    r"guideline|guidelines|procedure|checklist|algorithm)\b",
-    re.IGNORECASE,
-)
+def _normalize_entity_text(value: str) -> str:
+    value = re.sub(r"\s+", " ", value).strip(" ,.-")
+    return value
 
-_EVIDENCE_STRIP = re.compile(
-    r"\b(?:is|can|should|be|given|used|prescribed|recommended|safe|effective|"
-    r"in|for|the|a|an|role|of|evidence|studies|trial|benefit|efficacy|safety)\b",
-    re.IGNORECASE,
-)
+
+def _strip_condition_suffix(value: str) -> str:
+    return _normalize_entity_text(_CONDITION_RE.sub("", value, count=1))
 
 
 @dataclass
 class RoutingDecision:
     query_type: str
-    entities: list
+    entities: list[str]
     fetch_enabled: bool
     preferred_model: str
     fallback_model: str
+    condition_context: str | None = None
 
 
-def extract_entities(query: str, query_type: str) -> list:
-    """Extract drug/disease entity names from a query using regex stripping.
-    No AI tokens used.
+def extract_entities(query: str, query_type: str) -> list[str]:
+    """Fallback-only entity extraction.
+
+    This intentionally avoids medical dictionaries and only does generic cleanup.
     """
-    _TRAILING_NOISE = re.compile(
-        r"\s+(?:comparison|compare|versus|vs\.?|and|or|difference|between|"
-        r"info|information|dosage|dose|side|effects|uses|review)\s*$",
-        re.IGNORECASE,
-    )
+    cleaned = re.sub(r"[^\w\s\-/]", " ", query)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
 
     if query_type == "comparative":
-        cleaned = _COMPARATIVE_PREFIX.sub("", query).strip()
-        parts = _COMPARATIVE_SPLIT.split(cleaned)
-        return [
-            _clean_entity(_TRAILING_NOISE.sub("", p)) for p in parts[:2] if p.strip()
-        ]
+        parts = [_strip_condition_suffix(p) for p in _COMPARATIVE_SPLIT.split(cleaned) if p.strip()]
+        return parts[:2]
 
     if query_type == "drug":
-        stripped = _DRUG_STRIP.sub(" ", query)
-        entity = _clean_entity(stripped)
-        return [entity] if entity else []
-
-    if query_type == "disease":
-        stripped = _DISEASE_STRIP.sub(" ", query)
-        entity = _clean_entity(stripped)
-        return [entity] if entity else []
-
-    if query_type == "procedure":
-        stripped = _PROCEDURE_STRIP.sub(" ", query)
-        entity = _clean_entity(stripped)
-        return [entity] if entity else []
+        condition_match = _CONDITION_RE.search(cleaned)
+        if condition_match:
+            left = cleaned[: condition_match.start()].strip()
+            if left:
+                return [left]
 
     if query_type == "evidence":
-        stripped = _EVIDENCE_STRIP.sub(" ", query)
-        entity = _clean_entity(stripped)
-        # Evidence queries often have multiple terms (drug + condition)
-        # Return the full stripped string as a single entity
-        return [entity] if entity else []
+        match = _EVIDENCE_ENTITY_RE.match(cleaned)
+        if match:
+            left = _normalize_entity_text(match.group(1))
+            right = _normalize_entity_text(match.group(2))
+            return [left, right] if left and right else ([left] if left else [])
 
-    return []
+    if query_type == "disease":
+        cleaned = _DISEASE_PREFIX_RE.sub("", cleaned).strip()
+
+    collapsed = _STOPWORDS.sub(" ", cleaned)
+    collapsed = re.sub(r"\s+", " ", collapsed).strip()
+    return [collapsed] if collapsed else []
 
 
-def _clean_entity(text: str) -> str:
-    """Remove punctuation, collapse whitespace, strip."""
-    text = re.sub(r"[^\w\s\-]", "", text).strip()
-    return re.sub(r"\s+", " ", text).strip()
+def extract_condition_context(query: str, query_type: str) -> str | None:
+    if query_type not in {"drug", "comparative"}:
+        return None
+    match = _CONDITION_RE.search(query)
+    if not match:
+        return None
+    value = re.sub(r"\s+", " ", match.group(1)).strip()
+    return value or None
 
 
-def route_query(query: str, query_type: str) -> RoutingDecision:
-    """Produce a RoutingDecision from classified query type.
-
-    Model selection logic:
-    - drug → Haiku (FDA label is structured; LLM just formats)
-    - disease → Sonnet (PubMed abstracts require synthesis from multiple societies)
-    - comparative drug-vs-drug → Haiku
-    - comparative disease-vs-disease → Sonnet
-    - general → Sonnet (pure generation, no API data)
-    """
-    entities = extract_entities(query, query_type)
-    fetch_enabled = query_type in (
+def route_query(
+    query: str,
+    query_type: str,
+    *,
+    entities: list[str] | None = None,
+    requested_model: str | None = None,
+    user_provider: str | None = None,
+    model_explicit: bool = False,
+    condition_context: str | None = None,
+) -> RoutingDecision:
+    entities = entities if entities is not None else extract_entities(query, query_type)
+    condition_context = condition_context or extract_condition_context(query, query_type)
+    fetch_enabled = query_type in {
         "drug",
         "disease",
         "comparative",
         "procedure",
         "evidence",
-    ) and bool(entities)
+    } and bool(entities)
 
-    if query_type in ("drug", "procedure", "evidence"):
-        # Haiku: structured fetched data (FDA label, PubMed practice guidelines, RCT abstracts)
-        # — LLM is only formatting, not synthesising from scratch
-        preferred = settings.model_haiku
-        fallback = settings.model_sonnet
-    elif query_type == "comparative":
-        # Comparative with disease context (e.g. "SGLT2 vs GLP-1 in DKD") → Sonnet
-        # Simple drug vs drug without disease context → Haiku
-        _COMP_DISEASE_CONTEXT = re.compile(r"\b(?:in|for)\s+[A-Za-z]{3}", re.IGNORECASE)
-        has_disease_context = bool(_COMP_DISEASE_CONTEXT.search(query))
-        likely_drugs = sum(1 for e in entities if len(e.split()) == 1)
-        if has_disease_context or likely_drugs == 0:
-            preferred = settings.model_sonnet
-        else:
+    requested_model = requested_model or settings.model_sonnet
+    preferred = requested_model
+    fallback = requested_model
+
+    if user_provider == "anthropic" and not model_explicit:
+        if query_type in {"drug", "procedure"} and not condition_context:
             preferred = settings.model_haiku
-        fallback = settings.model_sonnet
-    else:
-        # disease and general: Sonnet (synthesis across multiple society guidelines / pure generation)
-        preferred = settings.model_sonnet
-        fallback = settings.model_sonnet
+            fallback = settings.model_sonnet
+        else:
+            preferred = settings.model_sonnet
+            fallback = settings.model_sonnet
 
     return RoutingDecision(
         query_type=query_type,
@@ -155,4 +137,5 @@ def route_query(query: str, query_type: str) -> RoutingDecision:
         fetch_enabled=fetch_enabled,
         preferred_model=preferred,
         fallback_model=fallback,
+        condition_context=condition_context,
     )

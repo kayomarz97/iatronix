@@ -4,6 +4,8 @@ import logging
 import re
 import time
 
+import openai
+import orjson
 import pybreaker
 from fastapi import HTTPException
 from pydantic import ValidationError
@@ -25,7 +27,16 @@ from app.schemas.query import (
 from app.services.cache import cache_get, cache_get_any_version, cache_set
 from app.services.circuit_breaker import get_breaker, is_provider_available
 from app.services.citation_validator import validate_citations
-from app.services.data_fetcher import FetchedData, fetch_data_for_query
+from app.services.data_fetcher import (
+    DiseaseFetchResult,
+    EvidenceFetchResult,
+    FetchedData,
+    ProcedureFetchResult,
+    fetch_data_for_query,
+    fetch_disease_data,
+    fetch_evidence_data,
+    fetch_procedure_data,
+)
 from app.services.scraping_response import _build_scraping_response
 from app.services.semantic_cache import (
     is_stale,
@@ -37,7 +48,7 @@ from app.services.drug_linker import process_text_nodes
 from app.services.json_repair import parse_llm_json
 from app.services.llm_factory import create_llm, get_provider
 from app.services.prompt_engine import build_prompt
-from app.services.query_classifier import classify_query, detect_intent
+from app.services.query_classifier import classify_query, classify_query_llm, detect_intent
 from app.services.safety_checker import check_safety
 from app.services.url_builder import enrich_references
 from app.services.source_router import route_query
@@ -47,11 +58,48 @@ from app.services.vector_search import search as vector_search
 
 
 logger = logging.getLogger(__name__)
+_INSUFFICIENT_DATA_RE = re.compile(
+    r"\binsufficient data\b|\bno data available\b|\bnot available from available sources\b",
+    re.IGNORECASE,
+)
 
 
-def _summarize_fetched(fetched_data: "FetchedData") -> str:
-    """Summarize fetched API data for DSPy input — include all raw fields."""
+def _summarize_fetched(
+    fetched_data: "FetchedData",
+    *,
+    query_type: str | None = None,
+    condition_context: str | None = None,
+) -> str:
+    """Summarize fetched API data for DSPy input with enough depth for adaptive output."""
     parts = []
+    if fetched_data.condition_data:
+        dd = fetched_data.condition_data
+        if dd.medlineplus_summary:
+            parts.append(
+                f"[SOURCE: MedlinePlus][condition_summary]: {dd.medlineplus_summary[:900]}"
+            )
+        for rec in (dd.nice_recommendations or [])[:5]:
+            text = str(rec.get("text", "") or "")[:420]
+            if text:
+                parts.append(f"[SOURCE: NICE][condition_recommendation]: {text}")
+        for ab in (dd.guideline_abstracts or [])[:6]:
+            title = ab.get("title", "")
+            abstract = ab.get("abstract", "")[:500]
+            _pmid = ab.get("pmid", "")
+            _pmid_str = f" PMID {_pmid}" if _pmid else ""
+            if title or abstract:
+                parts.append(
+                    f"[SOURCE: PubMed{_pmid_str}][condition_guideline]: {title} — {abstract}"
+                )
+        for ab in (dd.systematic_review_abstracts or [])[:4]:
+            title = ab.get("title", "")
+            abstract = ab.get("abstract", "")[:500]
+            _pmid = ab.get("pmid", "")
+            _pmid_str = f" PMID {_pmid}" if _pmid else ""
+            if title or abstract:
+                parts.append(
+                    f"[SOURCE: PubMed{_pmid_str}][condition_review]: {title} — {abstract}"
+                )
     if fetched_data.drug_data:
         d = fetched_data.drug_data
         raw_fields = [
@@ -66,46 +114,156 @@ def _summarize_fetched(fetched_data: "FetchedData") -> str:
             ("pharmacokinetics", d.pharmacokinetics_raw or ""),
             ("interactions", d.drug_interactions_raw or ""),
         ]
+        _drug_source = d.data_source or "FDA label"
         for label, val in raw_fields:
             if val:
-                parts.append(f"[{label}]: {val[:600]}")
-        for ab in (d.guideline_abstracts or [])[:3]:
+                parts.append(f"[SOURCE: {_drug_source}][{label}]: {val[:900]}")
+        for ab in (d.guideline_abstracts or [])[:6]:
             title = ab.get("title", "")
-            abstract = ab.get("abstract", "")[:300]
+            abstract = ab.get("abstract", "")[:500]
+            _pmid = ab.get("pmid", "")
+            _pmid_str = f" PMID {_pmid}" if _pmid else ""
             if title or abstract:
-                parts.append(f"[guideline]: {title} — {abstract}")
-        for ab in (d.systematic_review_abstracts or [])[:2]:
+                parts.append(
+                    f"[SOURCE: PubMed{_pmid_str}][drug_guideline]: {title} — {abstract}"
+                )
+        for ab in (d.systematic_review_abstracts or [])[:5]:
             title = ab.get("title", "")
-            abstract = ab.get("abstract", "")[:300]
+            abstract = ab.get("abstract", "")[:500]
+            _pmid = ab.get("pmid", "")
+            _pmid_str = f" PMID {_pmid}" if _pmid else ""
             if title or abstract:
-                parts.append(f"[systematic_review]: {title} — {abstract}")
+                parts.append(
+                    f"[SOURCE: PubMed{_pmid_str}][drug_systematic_review]: {title} — {abstract}"
+                )
+        for ab in (d.clinical_trial_abstracts or [])[:5]:
+            title = ab.get("title", "")
+            abstract = ab.get("abstract", "")[:500]
+            _pmid = ab.get("pmid", "")
+            _pmid_str = f" PMID {_pmid}" if _pmid else ""
+            if title or abstract:
+                parts.append(
+                    f"[SOURCE: PubMed{_pmid_str}][drug_clinical_trial]: {title} — {abstract}"
+                )
     if fetched_data.disease_data:
         dd = fetched_data.disease_data
         if dd.medlineplus_summary:
-            parts.append(f"[medlineplus]: {dd.medlineplus_summary[:500]}")
-        for ab in (dd.guideline_abstracts or [])[:4]:
-            title = ab.get("title", "")
-            abstract = ab.get("abstract", "")[:300]
+            parts.append(
+                f"[SOURCE: MedlinePlus][medlineplus]: {dd.medlineplus_summary[:1000]}"
+            )
+        for rec in (dd.nice_recommendations or [])[:4]:
+            text = str(rec.get("text", "") or "")[:350]
+            if text:
+                parts.append(f"[SOURCE: NICE][recommendation]: {text}")
+        for paper in (dd.semantic_papers or [])[:4]:
+            title = str(paper.get("title", "") or "")
+            abstract = str(paper.get("abstract", "") or "")[:350]
             if title or abstract:
-                parts.append(f"[guideline]: {title} — {abstract}")
-        for ab in (dd.systematic_review_abstracts or [])[:2]:
+                parts.append(
+                    f"[SOURCE: Semantic Scholar][paper]: {title} — {abstract}"
+                )
+        for ab in (dd.guideline_abstracts or [])[:8]:
             title = ab.get("title", "")
-            abstract = ab.get("abstract", "")[:300]
+            abstract = ab.get("abstract", "")[:500]
+            _pmid = ab.get("pmid", "")
+            _pmid_str = f" PMID {_pmid}" if _pmid else ""
             if title or abstract:
-                parts.append(f"[systematic_review]: {title} — {abstract}")
+                parts.append(
+                    f"[SOURCE: PubMed{_pmid_str}][guideline]: {title} — {abstract}"
+                )
+        for ab in (dd.systematic_review_abstracts or [])[:6]:
+            title = ab.get("title", "")
+            abstract = ab.get("abstract", "")[:500]
+            _pmid = ab.get("pmid", "")
+            _pmid_str = f" PMID {_pmid}" if _pmid else ""
+            if title or abstract:
+                parts.append(
+                    f"[SOURCE: PubMed{_pmid_str}][systematic_review]: {title} — {abstract}"
+                )
+    if fetched_data.procedure_data:
+        pd = fetched_data.procedure_data
+        for ab in (pd.guideline_abstracts or [])[:6]:
+            title = ab.get("title", "")
+            abstract = ab.get("abstract", "")[:450]
+            _pmid = ab.get("pmid", "")
+            _pmid_str = f" PMID {_pmid}" if _pmid else ""
+            if title or abstract:
+                parts.append(
+                    f"[SOURCE: PubMed{_pmid_str}][procedure_guideline]: {title} — {abstract}"
+                )
+    if fetched_data.comparative_drug_data:
+        for idx, d in enumerate(fetched_data.comparative_drug_data[:2], start=1):
+            source_name = d.data_source or f"comparison_drug_{idx}"
+            name = d.generic_name or d.brand_name or f"drug_{idx}"
+            parts.append(f"[SOURCE: {source_name}][comparison_drug]: {name}")
+            for label, val in [
+                ("indications", d.indications_raw or ""),
+                ("dosing", d.dosing_raw or ""),
+                ("contraindications", d.contraindications_raw or ""),
+                ("adverse_reactions", d.adverse_reactions_raw or ""),
+                ("interactions", d.drug_interactions_raw or ""),
+            ]:
+                if val:
+                    parts.append(
+                        f"[SOURCE: {source_name}][{name}:{label}]: {val[:750]}"
+                    )
+    if fetched_data.comparative_evidence:
+        ce = fetched_data.comparative_evidence
+        for ab in (ce.guideline_abstracts or [])[:4]:
+            title = ab.get("title", "")
+            abstract = ab.get("abstract", "")[:450]
+            _pmid = ab.get("pmid", "")
+            _pmid_str = f" PMID {_pmid}" if _pmid else ""
+            parts.append(
+                f"[SOURCE: PubMed{_pmid_str}][comparison_guideline]: {title} — {abstract}"
+            )
+        for ab in (ce.systematic_review_abstracts or [])[:4]:
+            title = ab.get("title", "")
+            abstract = ab.get("abstract", "")[:450]
+            _pmid = ab.get("pmid", "")
+            _pmid_str = f" PMID {_pmid}" if _pmid else ""
+            parts.append(
+                f"[SOURCE: PubMed{_pmid_str}][comparison_review]: {title} — {abstract}"
+            )
+        for ab in (ce.clinical_trial_abstracts or [])[:4]:
+            title = ab.get("title", "")
+            abstract = ab.get("abstract", "")[:450]
+            _pmid = ab.get("pmid", "")
+            _pmid_str = f" PMID {_pmid}" if _pmid else ""
+            parts.append(
+                f"[SOURCE: PubMed{_pmid_str}][comparison_trial]: {title} — {abstract}"
+            )
     if fetched_data.evidence_data:
         ed = fetched_data.evidence_data
-        for ab in (ed.systematic_review_abstracts or [])[:3]:
+        for ab in (ed.systematic_review_abstracts or [])[:4]:
             title = ab.get("title", "")
-            abstract = ab.get("abstract", "")[:300]
+            abstract = ab.get("abstract", "")[:450]
+            _pmid = ab.get("pmid", "")
+            _pmid_str = f" PMID {_pmid}" if _pmid else ""
             if title or abstract:
-                parts.append(f"[systematic_review]: {title} — {abstract}")
-        for ab in (ed.clinical_trial_abstracts or [])[:3]:
+                parts.append(
+                    f"[SOURCE: PubMed{_pmid_str}][systematic_review]: {title} — {abstract}"
+                )
+        for ab in (ed.clinical_trial_abstracts or [])[:5]:
             title = ab.get("title", "")
-            abstract = ab.get("abstract", "")[:300]
+            abstract = ab.get("abstract", "")[:450]
+            _pmid = ab.get("pmid", "")
+            _pmid_str = f" PMID {_pmid}" if _pmid else ""
             if title or abstract:
-                parts.append(f"[clinical_trial]: {title} — {abstract}")
-    return "\n".join(parts)[:6000] if parts else ""
+                parts.append(
+                    f"[SOURCE: PubMed{_pmid_str}][clinical_trial]: {title} — {abstract}"
+                )
+        for ab in (ed.guideline_abstracts or [])[:4]:
+            title = ab.get("title", "")
+            abstract = ab.get("abstract", "")[:450]
+            _pmid = ab.get("pmid", "")
+            _pmid_str = f" PMID {_pmid}" if _pmid else ""
+            if title or abstract:
+                parts.append(
+                    f"[SOURCE: PubMed{_pmid_str}][guideline]: {title} — {abstract}"
+                )
+    max_chars = 32000 if query_type in {"drug", "disease", "comparative"} else 26000
+    return "\n".join(parts)[:max_chars] if parts else ""
 
 
 def _summarize_vectors(vector_results: list) -> str:
@@ -122,7 +280,347 @@ def _describe_data(fetched_data: "FetchedData") -> str:
         sources.append(fetched_data.drug_data.data_source or "FDA label")
     if fetched_data.disease_data and fetched_data.disease_data.guideline_abstracts:
         sources.append("PubMed guidelines")
+    if fetched_data.condition_data and fetched_data.condition_data.guideline_abstracts:
+        sources.append("Condition guidelines")
+    if fetched_data.procedure_data and fetched_data.procedure_data.guideline_abstracts:
+        sources.append("Procedure guidelines")
+    if fetched_data.evidence_data and (
+        fetched_data.evidence_data.clinical_trial_abstracts
+        or fetched_data.evidence_data.systematic_review_abstracts
+    ):
+        sources.append("Evidence studies")
+    if fetched_data.comparative_evidence and (
+        fetched_data.comparative_evidence.clinical_trial_abstracts
+        or fetched_data.comparative_evidence.systematic_review_abstracts
+    ):
+        sources.append("Comparative evidence")
     return ", ".join(sources) if sources else "none"
+
+
+def _merge_abstracts(existing: list, incoming: list, *, max_total_chars: int) -> list:
+    merged: list[dict] = []
+    seen: set[str] = set()
+    for item in (existing or []) + (incoming or []):
+        if not isinstance(item, dict):
+            continue
+        key = str(item.get("pmid") or item.get("title") or "").strip().lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        merged.append(item)
+    merged.sort(key=lambda x: x.get("year") or 0, reverse=True)
+    kept: list[dict] = []
+    total = 0
+    for item in merged:
+        abstract = str(item.get("abstract") or "")
+        if kept and total + len(abstract) > max_total_chars:
+            break
+        kept.append(item)
+        total += len(abstract)
+    return kept
+
+
+def _merge_text(existing: str | None, incoming: str | None, *, max_chars: int) -> str | None:
+    if incoming and not existing:
+        return incoming[:max_chars]
+    if not incoming or not existing:
+        return existing[:max_chars] if existing else None
+    if incoming.strip() in existing:
+        return existing[:max_chars]
+    if existing.strip() in incoming:
+        return incoming[:max_chars]
+    return f"{existing}\n\n{incoming}"[:max_chars]
+
+
+def _enrich_disease_result(base: DiseaseFetchResult | None, extra: DiseaseFetchResult | None) -> DiseaseFetchResult | None:
+    if extra is None:
+        return base
+    if base is None:
+        return extra
+    base.guideline_abstracts = _merge_abstracts(
+        base.guideline_abstracts,
+        extra.guideline_abstracts,
+        max_total_chars=16000,
+    )
+    base.systematic_review_abstracts = _merge_abstracts(
+        base.systematic_review_abstracts,
+        extra.systematic_review_abstracts,
+        max_total_chars=12000,
+    )
+    base.nice_recommendations = list(base.nice_recommendations or []) + [
+        rec for rec in (extra.nice_recommendations or []) if rec not in (base.nice_recommendations or [])
+    ]
+    base.semantic_papers = list(base.semantic_papers or []) + [
+        paper for paper in (extra.semantic_papers or []) if paper not in (base.semantic_papers or [])
+    ]
+    base.medlineplus_summary = _merge_text(
+        base.medlineplus_summary,
+        extra.medlineplus_summary,
+        max_chars=1500,
+    )
+    base.fetch_success = bool(
+        base.guideline_abstracts or base.systematic_review_abstracts or base.medlineplus_summary
+    )
+    return base
+
+
+def _enrich_evidence_result(base: EvidenceFetchResult | None, extra: EvidenceFetchResult | None) -> EvidenceFetchResult | None:
+    if extra is None:
+        return base
+    if base is None:
+        return extra
+    base.clinical_trial_abstracts = _merge_abstracts(
+        base.clinical_trial_abstracts,
+        extra.clinical_trial_abstracts,
+        max_total_chars=9000,
+    )
+    base.systematic_review_abstracts = _merge_abstracts(
+        base.systematic_review_abstracts,
+        extra.systematic_review_abstracts,
+        max_total_chars=8000,
+    )
+    base.guideline_abstracts = _merge_abstracts(
+        base.guideline_abstracts,
+        extra.guideline_abstracts,
+        max_total_chars=8000,
+    )
+    base.fetch_success = bool(
+        base.clinical_trial_abstracts or base.systematic_review_abstracts or base.guideline_abstracts
+    )
+    return base
+
+
+def _enrich_procedure_result(base: ProcedureFetchResult | None, extra: ProcedureFetchResult | None) -> ProcedureFetchResult | None:
+    if extra is None:
+        return base
+    if base is None:
+        return extra
+    base.guideline_abstracts = _merge_abstracts(
+        base.guideline_abstracts,
+        extra.guideline_abstracts,
+        max_total_chars=12000,
+    )
+    base.practice_guideline_abstracts = _merge_abstracts(
+        base.practice_guideline_abstracts,
+        extra.practice_guideline_abstracts,
+        max_total_chars=6000,
+    )
+    base.fetch_success = bool(base.guideline_abstracts or base.practice_guideline_abstracts)
+    return base
+
+
+def _retrieval_assessment(
+    fetched_data: FetchedData | None, query_type: str
+) -> tuple[int, bool, list[str]]:
+    if not fetched_data:
+        return 0, False, ["no data fetched"]
+
+    reasons: list[str] = []
+    score = 0
+
+    if query_type == "drug" and fetched_data.drug_data:
+        d = fetched_data.drug_data
+        core_fields = sum(
+            1 for value in [
+                d.indications_raw,
+                d.dosing_raw,
+                d.contraindications_raw,
+                d.adverse_reactions_raw,
+                d.drug_interactions_raw,
+                d.mechanism_raw,
+                d.special_populations_raw,
+            ] if value
+        )
+        evidence_hits = len(d.guideline_abstracts or []) + len(d.systematic_review_abstracts or []) + len(d.clinical_trial_abstracts or [])
+        score = core_fields * 2 + min(evidence_hits, 6)
+        if core_fields < 3:
+            reasons.append("too few populated drug fields")
+        if evidence_hits < 2 and not fetched_data.condition_data:
+            reasons.append("limited drug evidence")
+        return score, score >= 8, reasons
+
+    if query_type == "disease" and fetched_data.disease_data:
+        d = fetched_data.disease_data
+        guideline_hits = len(d.guideline_abstracts or [])
+        review_hits = len(d.systematic_review_abstracts or [])
+        score = guideline_hits * 2 + review_hits * 2
+        if d.medlineplus_summary:
+            score += 1
+        if d.nice_recommendations:
+            score += 2
+        if guideline_hits + review_hits < 3:
+            reasons.append("too few disease abstracts")
+        return score, score >= 8, reasons
+
+    if query_type == "procedure" and fetched_data.procedure_data:
+        d = fetched_data.procedure_data
+        hits = len(d.guideline_abstracts or []) + len(d.practice_guideline_abstracts or [])
+        score = hits * 2
+        if hits < 2:
+            reasons.append("too few procedure guidelines")
+        return score, score >= 4, reasons
+
+    if query_type == "evidence" and fetched_data.evidence_data:
+        d = fetched_data.evidence_data
+        trials = len(d.clinical_trial_abstracts or [])
+        reviews = len(d.systematic_review_abstracts or [])
+        guidelines = len(d.guideline_abstracts or [])
+        score = trials * 2 + reviews * 2 + guidelines
+        if trials + reviews + guidelines < 3:
+            reasons.append("too few evidence studies")
+        return score, score >= 7, reasons
+
+    if query_type == "comparative":
+        drug_hits = 0
+        for d in fetched_data.comparative_drug_data or []:
+            if d.fetch_success:
+                drug_hits += sum(1 for value in [d.indications_raw, d.dosing_raw, d.contraindications_raw, d.adverse_reactions_raw] if value)
+        evidence = fetched_data.comparative_evidence
+        evidence_hits = 0
+        if evidence:
+            evidence_hits = len(evidence.clinical_trial_abstracts or []) + len(evidence.systematic_review_abstracts or []) + len(evidence.guideline_abstracts or [])
+        score = drug_hits + min(evidence_hits * 2, 8)
+        if len(fetched_data.comparative_drug_data or []) < 2:
+            reasons.append("comparison entities not fully resolved")
+        if evidence_hits < 2:
+            reasons.append("limited comparative evidence")
+        return score, score >= 8, reasons
+
+    return 0, False, ["unsupported query type or no fetched data"]
+
+
+async def _expand_retrieval_if_needed(
+    *,
+    query: str,
+    query_type: str,
+    fetched_data: FetchedData | None,
+    entities: list[str],
+    condition_context: str | None,
+    response_focus: str | None,
+) -> tuple[FetchedData | None, list[str]]:
+    if not settings.adaptive_second_pass_enabled or not fetched_data:
+        return fetched_data, []
+
+    score, sufficient, reasons = _retrieval_assessment(fetched_data, query_type)
+    if sufficient:
+        return fetched_data, []
+
+    notes = [f"initial retrieval score={score}", *reasons]
+    follow_up_terms: list[str] = []
+    for term in [response_focus, query]:
+        value = re.sub(r"\s+", " ", str(term or "")).strip()
+        if value and value.lower() not in {t.lower() for t in follow_up_terms}:
+            follow_up_terms.append(value)
+
+    try:
+        if query_type == "disease" and follow_up_terms:
+            extras = await asyncio.gather(
+                *(fetch_disease_data(term) for term in follow_up_terms[:2]),
+                return_exceptions=True,
+            )
+            for extra in extras:
+                if isinstance(extra, DiseaseFetchResult) and extra.fetch_success:
+                    fetched_data.disease_data = _enrich_disease_result(
+                        fetched_data.disease_data, extra
+                    )
+        elif query_type == "procedure" and follow_up_terms:
+            extras = await asyncio.gather(
+                *(fetch_procedure_data(term) for term in follow_up_terms[:2]),
+                return_exceptions=True,
+            )
+            for extra in extras:
+                if isinstance(extra, ProcedureFetchResult) and extra.fetch_success:
+                    fetched_data.procedure_data = _enrich_procedure_result(
+                        fetched_data.procedure_data, extra
+                    )
+        elif query_type == "evidence":
+            extras = await asyncio.gather(
+                fetch_evidence_data(query),
+                *(fetch_evidence_data(term) for term in follow_up_terms[:1]),
+                return_exceptions=True,
+            )
+            for extra in extras:
+                if isinstance(extra, EvidenceFetchResult) and extra.fetch_success:
+                    fetched_data.evidence_data = _enrich_evidence_result(
+                        fetched_data.evidence_data, extra
+                    )
+        elif query_type == "comparative":
+            extras = await asyncio.gather(
+                fetch_evidence_data(query),
+                return_exceptions=True,
+            )
+            for extra in extras:
+                if isinstance(extra, EvidenceFetchResult) and extra.fetch_success:
+                    fetched_data.comparative_evidence = _enrich_evidence_result(
+                        fetched_data.comparative_evidence, extra
+                    )
+        elif query_type == "drug":
+            tasks = [fetch_evidence_data(query)]
+            if condition_context:
+                tasks.append(fetch_disease_data(condition_context))
+            extras = await asyncio.gather(*tasks, return_exceptions=True)
+            evidence_extra = extras[0] if extras else None
+            if (
+                fetched_data.drug_data
+                and isinstance(evidence_extra, EvidenceFetchResult)
+                and evidence_extra.fetch_success
+            ):
+                fetched_data.drug_data.guideline_abstracts = _merge_abstracts(
+                    fetched_data.drug_data.guideline_abstracts,
+                    evidence_extra.guideline_abstracts,
+                    max_total_chars=7000,
+                )
+                fetched_data.drug_data.systematic_review_abstracts = _merge_abstracts(
+                    fetched_data.drug_data.systematic_review_abstracts,
+                    evidence_extra.systematic_review_abstracts,
+                    max_total_chars=7000,
+                )
+                fetched_data.drug_data.clinical_trial_abstracts = _merge_abstracts(
+                    fetched_data.drug_data.clinical_trial_abstracts,
+                    evidence_extra.clinical_trial_abstracts,
+                    max_total_chars=7000,
+                )
+            if condition_context and len(extras) > 1:
+                condition_extra = extras[1]
+                if isinstance(condition_extra, DiseaseFetchResult) and condition_extra.fetch_success:
+                    fetched_data.condition_data = _enrich_disease_result(
+                        fetched_data.condition_data, condition_extra
+                    )
+    except Exception:
+        logger.warning("Second-pass retrieval expansion failed", exc_info=True)
+
+    score2, sufficient2, reasons2 = _retrieval_assessment(fetched_data, query_type)
+    notes.append(f"post-expansion retrieval score={score2}")
+    notes.extend(reasons2)
+    if not sufficient2:
+        fetched_data.fallback_to_llm = True
+    return fetched_data, notes
+
+
+def _adaptive_sparse_reasons(response_dict: dict, query_type: str) -> list[str]:
+    reasons: list[str] = []
+    sections = response_dict.get("sections", [])
+    references = response_dict.get("references", [])
+    if len(sections) < 2:
+        reasons.append("too few sections")
+    placeholder_items = 0
+    total_items = 0
+    for section in sections:
+        items = section.get("content_items", []) or []
+        total_items += len(items)
+        if len(items) < 1:
+            reasons.append(f"section '{section.get('title', 'unknown')}' is empty")
+        for item in items:
+            text = str(item.get("text") or "")
+            if _INSUFFICIENT_DATA_RE.search(text):
+                placeholder_items += 1
+    if total_items and placeholder_items >= max(2, total_items // 2):
+        reasons.append("too many insufficient-data placeholders")
+    if query_type in {"disease", "comparative", "evidence"} and len(references) < 2:
+        reasons.append("too few references")
+    if query_type in {"drug", "procedure"} and len(references) < 1:
+        reasons.append("missing references")
+    return list(dict.fromkeys(reasons))
 
 
 DISCLAIMER = (
@@ -139,13 +637,6 @@ RESPONSE_MODELS = {
     "evidence": EvidenceResponse,
     "general": GeneralResponse,
 }
-
-# Regex to extract condition from drug queries like "digoxin in AF", "metformin for diabetes"
-_CONDITION_RE = re.compile(
-    r"\b(?:in|for)\s+([A-Za-z][A-Za-z0-9\s\-]{2,40}?)(?:\s*[,?.]|$)",
-    re.IGNORECASE,
-)
-
 
 def _is_critically_sparse(data: dict, query_type: str) -> tuple[bool, list[str]]:
     """Detect if an LLM response is critically sparse and needs a retry.
@@ -344,6 +835,16 @@ async def _call_llm(
         return None
     except HTTPException:
         raise
+    except openai.RateLimitError:
+        raise HTTPException(
+            status_code=429,
+            detail="OpenRouter rate limit exceeded. Free models have limited throughput — wait a few seconds and retry.",
+        )
+    except (openai.AuthenticationError, openai.PermissionDeniedError):
+        raise HTTPException(
+            status_code=401,
+            detail="LLM API key rejected — please verify your key is valid in Settings.",
+        )
     except Exception:
         logger.error(f"LLM call failed for {model_id}", exc_info=True)
         return None
@@ -408,6 +909,36 @@ def _coerce_evidenced_claims(obj: object) -> None:
             _coerce_evidenced_claims(item)
 
 
+def _validate_evidence_consistency(data: dict, query_type: str) -> list[str]:
+    """Item 9: catch logically impossible LOE/COR/confidence combinations."""
+    warnings: list[str] = []
+    field_map = {
+        "disease": ["etiology", "clinical_features", "diagnostic_criteria", "complications"],
+        "drug": ["indications", "dosing", "contraindications", "side_effects"],
+        "procedure": ["indications", "complications"],
+        "evidence": ["supporting_studies"],
+    }
+    for field in field_map.get(query_type, []):
+        items = data.get(field)
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            loe = item.get("loe", "")
+            cor = item.get("cor", "")
+            conf = item.get("confidence", "")
+            if loe == "I" and cor in ("III-no-benefit", "III-harm"):
+                warnings.append(f"Inconsistent LOE I + {cor} in '{field}'")
+            if loe == "III" and cor == "I":
+                warnings.append(f"Inconsistent LOE III + COR I in '{field}'")
+            if conf == "high" and loe == "III":
+                warnings.append(f"Inconsistent confidence=high + LOE III in '{field}'")
+            if conf == "low" and loe in ("I", "II-1"):
+                warnings.append(f"Inconsistent confidence=low + LOE {loe} in '{field}'")
+    return warnings
+
+
 def _validate_response(data: dict, query_type: str) -> tuple[dict | None, list[str]]:
     """Validate response structurally (Pydantic) and semantically."""
     warnings = []
@@ -469,6 +1000,10 @@ def _validate_response(data: dict, query_type: str) -> tuple[dict | None, list[s
         if not data.get("detailed_comparison"):
             warnings.append("No detailed comparison provided")
 
+    # Item 9: evidence consistency check (appended as warnings, not blocking)
+    consistency_warnings = _validate_evidence_consistency(data, query_type)
+    warnings.extend(consistency_warnings)
+
     return data, warnings
 
 
@@ -513,6 +1048,95 @@ async def _log_search_history(
         logger.debug(f"Search history logging failed: {e}")
 
 
+def _default_model_for_provider(provider: str | None) -> str:
+    if provider == "openrouter":
+        return settings.openrouter_default_model
+    if provider == "openai":
+        return settings.openai_default_model
+    return settings.model_sonnet
+
+
+def _normalize_model_for_provider(
+    model_id: str,
+    provider: str | None,
+    model_explicit: bool,
+) -> str:
+    if provider == "openrouter":
+        return model_id if "/" in model_id else settings.openrouter_default_model
+    if provider == "openai":
+        return model_id if "/" not in model_id else settings.openai_default_model
+    if provider == "anthropic":
+        return model_id if "/" not in model_id else settings.model_sonnet
+    if model_explicit:
+        return model_id
+    return model_id or settings.model_sonnet
+
+
+def _sanitize_entities(entities: list[str] | None) -> list[str]:
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for entity in entities or []:
+        value = re.sub(r"\s+", " ", str(entity or "")).strip(" ,.-")
+        if len(value) < 2:
+            continue
+        lowered = value.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        cleaned.append(value)
+    return cleaned[:4]
+
+
+async def _analyze_query_with_dspy(
+    query: str,
+    *,
+    model_id: str,
+    user_key: str | None,
+    user_provider: str | None,
+) -> dict | None:
+    if not settings.dspy_enabled or not user_key:
+        return None
+
+    try:
+        import dspy as _dspy
+
+        from app.services.dspy_lm import get_dspy_lm
+        from app.services.dspy_signatures import MedicalQueryAnalysis
+
+        lm = get_dspy_lm(
+            model_id,
+            user_key,
+            user_provider or "anthropic",
+            depth="quick",
+        )
+        with _dspy.context(lm=lm):
+            analyzer = _dspy.ChainOfThought(MedicalQueryAnalysis)
+            analysis = analyzer(query=query, available_data_types="none yet")
+
+        entities = _sanitize_entities(list(getattr(analysis, "entities", []) or []))
+        condition_context = getattr(analysis, "condition_context", None)
+        if isinstance(condition_context, str):
+            condition_context = condition_context.strip() or None
+        else:
+            condition_context = None
+
+        query_type = str(getattr(analysis, "query_type", "general") or "general")
+        if query_type not in RESPONSE_MODELS and query_type != "general":
+            query_type = "general"
+
+        return {
+            "query_type": query_type,
+            "entities": entities,
+            "condition_context": condition_context,
+            "response_focus": str(getattr(analysis, "response_focus", "") or ""),
+            "depth": str(getattr(analysis, "depth", "standard") or "standard"),
+            "related_topics": list(getattr(analysis, "related_topics", []) or []),
+        }
+    except Exception:
+        logger.warning("DSPy query analysis failed; falling back", exc_info=True)
+        return None
+
+
 async def process_query(
     request: QueryRequest,
     redis_client=None,
@@ -544,11 +1168,57 @@ async def process_query(
                 latency_ms=latency_ms,
             )
 
-    # Classify
-    query_type, confidence = classify_query(request.query, request.query_type)
+    provider_for_request = user_llm_provider or get_provider(request.model_id)
+    normalized_request_model = _normalize_model_for_provider(
+        request.model_id or _default_model_for_provider(provider_for_request),
+        provider_for_request,
+        request.model_explicit,
+    )
+
     query_intent = detect_intent(request.query)
-    # Only override to general for highlights when query is already unstructured.
-    # Keep drug/disease/comparative/procedure/evidence types so structured schemas are preserved.
+
+    # Speculative type via rule-based classifier (sync, ~1ms) — used for parallel cache check
+    speculative_type, _ = classify_query(request.query)
+
+    # Run DSPy analysis and Redis cache check in parallel
+    _dspy_result, _cache_prefetch = await asyncio.gather(
+        _analyze_query_with_dspy(
+            request.query,
+            model_id=normalized_request_model,
+            user_key=user_llm_key,
+            user_provider=user_llm_provider,
+        ),
+        cache_get(redis_client, request.query, speculative_type, normalized_request_model),
+        return_exceptions=True,
+    )
+    query_analysis = _dspy_result if not isinstance(_dspy_result, Exception) else None
+    _speculative_cache = _cache_prefetch if not isinstance(_cache_prefetch, Exception) else None
+
+    if request.query_type:
+        query_type, confidence = request.query_type, 0.99
+    elif query_analysis:
+        query_type, confidence = query_analysis["query_type"], 0.95
+    else:
+        query_type, confidence = await classify_query_llm(
+            request.query,
+            user_key=user_llm_key,
+            user_provider=user_llm_provider,
+            model_id=normalized_request_model,
+        )
+
+    # Item 18: confidence fallback — use rule-based classifier when LLM confidence is low
+    if confidence < settings.classifier_confidence_threshold:
+        fallback_type, fallback_conf = classify_query(request.query)
+        if fallback_conf >= confidence:
+            logger.info(
+                "Classifier confidence %.2f below threshold %.2f — using rule-based: %s→%s",
+                confidence,
+                settings.classifier_confidence_threshold,
+                query_type,
+                fallback_type,
+            )
+            query_type, confidence = fallback_type, fallback_conf
+
     if query_intent == "highlights" and query_type not in (
         "drug",
         "disease",
@@ -558,11 +1228,8 @@ async def process_query(
     ):
         query_type = "general"
 
-    # Extract condition context for drug queries (e.g. "digoxin in AF" → condition = "AF")
-    condition_context: str | None = None
-    if query_type == "drug":
-        m = _CONDITION_RE.search(request.query)
-        condition_context = m.group(1).strip() if m else None
+    analysis_entities = _sanitize_entities(query_analysis["entities"]) if query_analysis else []
+    condition_context = query_analysis.get("condition_context") if query_analysis else None
 
     # Track query frequency for self-improvement (fire-and-forget)
     if redis_client:
@@ -575,10 +1242,13 @@ async def process_query(
         except Exception:
             pass  # non-critical
 
-    # Cache check
-    cached_data = await cache_get(
-        redis_client, request.query, query_type, request.model_id
-    )
+    # Use pre-fetched cache result if speculative type matched; otherwise re-check
+    if speculative_type == query_type:
+        cached_data = _speculative_cache
+    else:
+        cached_data = await cache_get(
+            redis_client, request.query, query_type, normalized_request_model
+        )
     if cached_data:
         latency_ms = int((time.time() - start_time) * 1000)
         cached_data["cached"] = True
@@ -588,60 +1258,25 @@ async def process_query(
             {
                 "query": request.query,
                 "query_type": query_type,
-                "model_used": request.model_id,
+                "model_used": normalized_request_model,
                 "response_json": cached_data,
                 "latency_ms": latency_ms,
                 "cached": True,
                 "user_key_id": user_key_id,
             }
         )
+        if user and user.id:
+            asyncio.create_task(
+                _log_search_history(user.id, request.query, query_type, cached_data)
+            )
         return response
 
-    # Semantic cache check (pgvector cosine similarity — SWR)
-    sem_response, sem_cache_id = await semantic_cache_get(
-        request.query, query_type, request.model_id
-    )
-    if sem_response:
-        latency_ms = int((time.time() - start_time) * 1000)
-        sem_response["cached"] = True
-        sem_response["latency_ms"] = latency_ms
-        try:
-            response = QueryResponse(**sem_response)
-        except Exception:
-            response = None
-
-        if response:
-            # SWR: if stale, trigger background revalidation but still return hit
-            _sem_stale = is_stale(
-                sem_response.get("_last_verified_at"),
-                settings.semantic_cache_swr_ttl_seconds,
-            )
-            if _sem_stale and sem_cache_id:
-                logger.debug(
-                    "Semantic cache hit is stale — scheduling revalidation id=%d",
-                    sem_cache_id,
-                )
-                # Background revalidation will be fired after returning the response below
-                asyncio.create_task(
-                    _revalidate_semantic_cache(
-                        request,
-                        query_type,
-                        sem_cache_id,
-                        redis_client,
-                        user_key_id,
-                        user_llm_key,
-                        user_llm_provider,
-                        user=user,
-                    )
-                )
-            return response
-
     # Circuit breaker check
-    provider = user_llm_provider or get_provider(request.model_id)
+    provider = user_llm_provider or get_provider(normalized_request_model)
     if not is_provider_available(provider):
         # Try cached response (any version)
         any_cached = await cache_get_any_version(
-            redis_client, request.query, query_type, request.model_id
+            redis_client, request.query, query_type, normalized_request_model
         )
         if any_cached:
             latency_ms = int((time.time() - start_time) * 1000)
@@ -651,7 +1286,7 @@ async def process_query(
         latency_ms = int((time.time() - start_time) * 1000)
         return QueryResponse(
             query_type=query_type,
-            model_used=request.model_id,
+            model_used=normalized_request_model,
             response=DegradedResponse(),
             disclaimer=DISCLAIMER,
             latency_ms=latency_ms,
@@ -666,16 +1301,25 @@ async def process_query(
     fetched_data: FetchedData | None = None
     vector_results = []
     routing = None
+    retrieval_notes: list[str] = []
 
     tasks = {}
     if use_api_fetch:
-        routing = route_query(request.query, query_type)
+        routing = route_query(
+            request.query,
+            query_type,
+            entities=analysis_entities or None,
+            requested_model=normalized_request_model,
+            user_provider=user_llm_provider,
+            model_explicit=request.model_explicit,
+            condition_context=condition_context,
+        )
         if routing.fetch_enabled:
             tasks["api"] = asyncio.wait_for(
                 fetch_data_for_query(
                     query_type,
                     routing.entities,
-                    condition_context=condition_context,
+                    condition_context=routing.condition_context,
                 ),
                 timeout=settings.api_fetch_timeout_seconds + 1.0,
             )
@@ -683,24 +1327,91 @@ async def process_query(
     if use_vector:
         tasks["vector"] = vector_search(request.query)
 
-    if tasks:
-        results = await asyncio.gather(*tasks.values(), return_exceptions=True)
-        for key, result in zip(tasks.keys(), results):
-            if key == "api":
-                if isinstance(result, asyncio.TimeoutError):
-                    logger.warning("API fetch timed out — using generate mode")
-                    fetched_data = FetchedData(
-                        query_type=query_type, fallback_to_llm=True
+    # Semantic cache check runs in parallel with API fetch and vector search
+    tasks["sem"] = semantic_cache_get(request.query, query_type, normalized_request_model)
+
+    _fetch_t0 = time.perf_counter()
+    results = await asyncio.gather(*tasks.values(), return_exceptions=True)
+    _sem_result = None
+    for key, result in zip(tasks.keys(), results):
+        if key == "api":
+            if isinstance(result, asyncio.TimeoutError):
+                logger.warning("API fetch timed out — using generate mode")
+                fetched_data = FetchedData(
+                    query_type=query_type, fallback_to_llm=True
+                )
+            elif isinstance(result, Exception):
+                logger.warning("API fetch error: %s", result)
+            else:
+                fetched_data = result
+        elif key == "vector":
+            if isinstance(result, Exception):
+                logger.warning("Vector search error: %s", result)
+            else:
+                vector_results = result
+        elif key == "sem":
+            if not isinstance(result, Exception):
+                _sem_result = result
+    logger.info(
+        "pipeline.data_fetch",
+        extra={
+            "stage": "data_fetch",
+            "query_type": query_type,
+            "duration_ms": round((time.perf_counter() - _fetch_t0) * 1000),
+            "fetch_success": fetched_data.fetch_success if hasattr(fetched_data, "fetch_success") else False,
+            "vector_hits": len(vector_results),
+        },
+    )
+
+    # Handle semantic cache hit (checked in parallel above)
+    if _sem_result is not None:
+        sem_response, sem_cache_id = _sem_result if isinstance(_sem_result, tuple) else (None, None)
+        if sem_response:
+            latency_ms = int((time.time() - start_time) * 1000)
+            sem_response["cached"] = True
+            sem_response["latency_ms"] = latency_ms
+            try:
+                _sem_hit_resp = QueryResponse(**sem_response)
+            except Exception:
+                _sem_hit_resp = None
+            if _sem_hit_resp:
+                _sem_stale = is_stale(
+                    sem_response.get("_last_verified_at"),
+                    settings.semantic_cache_swr_ttl_seconds,
+                )
+                if _sem_stale and sem_cache_id:
+                    asyncio.create_task(
+                        _revalidate_semantic_cache(
+                            request,
+                            query_type,
+                            sem_cache_id,
+                            redis_client,
+                            user_key_id,
+                            user_llm_key,
+                            user_llm_provider,
+                            user=user,
+                        )
                     )
-                elif isinstance(result, Exception):
-                    logger.warning("API fetch error: %s", result)
-                else:
-                    fetched_data = result
-            elif key == "vector":
-                if isinstance(result, Exception):
-                    logger.warning("Vector search error: %s", result)
-                else:
-                    vector_results = result
+                if user and user.id:
+                    asyncio.create_task(
+                        _log_search_history(user.id, request.query, query_type, sem_response)
+                    )
+                return _sem_hit_resp
+
+    if use_api_fetch and fetched_data is not None:
+        fetched_data, retrieval_notes = await _expand_retrieval_if_needed(
+            query=request.query,
+            query_type=query_type,
+            fetched_data=fetched_data,
+            entities=routing.entities if routing else (analysis_entities or []),
+            condition_context=condition_context,
+            response_focus=(query_analysis or {}).get("response_focus") if query_analysis else None,
+        )
+
+    prompt_mode = (
+        "format" if (fetched_data and not fetched_data.fallback_to_llm) else "generate"
+    )
+    fetch_latency_ms = fetched_data.total_fetch_time_ms if fetched_data else 0
 
     # Scraping-only mode: skip LLM and return raw API data directly
     if source_mode == "scraping":
@@ -716,20 +1427,38 @@ async def process_query(
                     "Not AI-formatted or verified. Use clinical judgment."
                 ),
                 latency_ms=latency_ms,
+                validation_warnings=retrieval_notes,
             )
+
+    if settings.fail_closed_evidence_only and prompt_mode == "generate":
+        latency_ms = int((time.time() - start_time) * 1000)
+        return QueryResponse(
+            query_type=query_type,
+            model_used=normalized_request_model,
+            response=DegradedResponse(
+                message="The system could not retrieve enough evidence to produce a supported answer.",
+                suggestion="Try a more specific query, or rephrase with the exact drug, disease, procedure, or comparison you want.",
+            ),
+            disclaimer=DISCLAIMER,
+            latency_ms=latency_ms,
+            validation_warnings=retrieval_notes
+            + [
+                "Fail-closed mode blocked an evidence-insufficient response to reduce hallucination risk."
+            ],
+        )
 
     # Model and token budget selection
     # If user explicitly chose a model, respect it unconditionally.
     # Routing only applies when user is on the default (auto) model.
-    effective_model = request.model_id
+    effective_model = normalized_request_model
     max_tokens = settings.llm_max_tokens_generate
     if (
         settings.model_routing_enabled
-        and not request.model_explicit  # user did NOT explicitly pick — allow routing
-        and routing is not None  # only set when api fetch path was taken
+        and not request.model_explicit
+        and routing is not None
         and fetched_data is not None
         and not fetched_data.fallback_to_llm
-        and (user_llm_provider == "anthropic" or "/" not in request.model_id)
+        and user_llm_provider == "anthropic"
     ):
         effective_model = routing.preferred_model
         if query_type == "disease":
@@ -740,19 +1469,13 @@ async def process_query(
             max_tokens = settings.llm_max_tokens_format_procedure
         elif query_type == "drug" and condition_context:
             max_tokens = settings.llm_max_tokens_format_drug_context
-            # Drug-in-condition needs synthesis capability — upgrade to Sonnet
-            if not request.model_explicit and (
-                user_llm_provider == "anthropic" or "/" not in request.model_id
-            ):
+            if not request.model_explicit and user_llm_provider == "anthropic":
                 effective_model = settings.model_sonnet
         else:
             max_tokens = settings.llm_max_tokens_format
     elif query_type == "disease":
-        # Disease generate mode — force Sonnet when routing wasn't set (no entities extracted)
         max_tokens = settings.llm_max_tokens_format_disease
-        if not request.model_explicit and (
-            user_llm_provider == "anthropic" or "/" not in request.model_id
-        ):
+        if not request.model_explicit and user_llm_provider == "anthropic":
             effective_model = settings.model_sonnet
     elif query_type == "evidence":
         max_tokens = settings.llm_max_tokens_format_evidence
@@ -760,64 +1483,133 @@ async def process_query(
         max_tokens = settings.llm_max_tokens_format_procedure
     elif query_type == "drug" and condition_context:
         max_tokens = settings.llm_max_tokens_format_drug_context
-        # Drug-in-condition needs synthesis capability — upgrade to Sonnet
-        if not request.model_explicit and (
-            user_llm_provider == "anthropic" or "/" not in request.model_id
-        ):
+        if not request.model_explicit and user_llm_provider == "anthropic":
             effective_model = settings.model_sonnet
 
     # DSPy adaptive path
-    if settings.dspy_enabled:
+    dspy_error_message: str | None = None
+    if settings.dspy_enabled and user_llm_key:
         try:
             import dspy as _dspy
             from app.services.dspy_lm import get_dspy_lm
             from app.services.dspy_modules import AdaptiveMedicalPipeline
-            from app.schemas.query import AdaptiveSection, AdaptiveResponse
-
-            _lm = get_dspy_lm(
-                effective_model,
-                user_llm_key or settings.anthropic_api_key,
-                user_llm_provider or "anthropic",
+            from app.schemas.query import (
+                AdaptiveSection,
+                AdaptiveResponse,
+                AdaptiveBLUF,
             )
-            with _dspy.context(lm=_lm):
-                _pipeline = AdaptiveMedicalPipeline()
-                _analysis, _dspy_resp = _pipeline(
-                    query=request.query,
-                    fetched_data=_summarize_fetched(fetched_data)
-                    if fetched_data
-                    else "",
-                    vector_results=_summarize_vectors(vector_results),
-                    available_data_types=_describe_data(fetched_data)
-                    if fetched_data
-                    else "none",
+
+            for attempt in range(2):
+                _lm = get_dspy_lm(
+                    effective_model,
+                    user_llm_key,
+                    user_llm_provider or "anthropic",
+                    depth="comprehensive",
                 )
-            _resp_dict = json.loads(_dspy_resp.response_json)
-            _sections = [AdaptiveSection(**s) for s in _resp_dict.get("sections", [])]
-            _adaptive = AdaptiveResponse(
-                query_type=_analysis.query_type,
-                bluf=_dspy_resp.bluf,
-                sections=_sections,
-                references=_resp_dict.get("references", []),
-                response_focus=_analysis.response_focus,
-                depth=_analysis.depth,
-            )
-            latency_ms = int((time.time() - start_time) * 1000)
-            return QueryResponse(
-                query_type="adaptive",
-                model_used=effective_model,
-                response=_adaptive,
-                latency_ms=latency_ms,
-                disclaimer=DISCLAIMER,
-            )
+                with _dspy.context(lm=_lm):
+                    _pipeline = AdaptiveMedicalPipeline()
+                    _analysis, _dspy_resp = _pipeline(
+                        query=request.query,
+                        fetched_data=_summarize_fetched(
+                            fetched_data,
+                            query_type=query_type,
+                            condition_context=condition_context,
+                        )
+                        if fetched_data
+                        else "",
+                        vector_results=_summarize_vectors(vector_results),
+                        available_data_types=_describe_data(fetched_data)
+                        if fetched_data
+                        else "none",
+                        query_type_hint=query_type,
+                        condition_context_hint=condition_context or "",
+                        pre_analysis=query_analysis,
+                    )
+                _resp_dict = orjson.loads(_dspy_resp.response_json)
+                _adaptive_sparse = _adaptive_sparse_reasons(_resp_dict, query_type)
+                if _adaptive_sparse and attempt == 0:
+                    fetched_data, extra_notes = await _expand_retrieval_if_needed(
+                        query=request.query,
+                        query_type=query_type,
+                        fetched_data=fetched_data,
+                        entities=routing.entities if routing else (analysis_entities or []),
+                        condition_context=condition_context,
+                        response_focus=str(getattr(_analysis, "response_focus", "") or ""),
+                    )
+                    retrieval_notes.extend(
+                        [f"DSPy sparse retry: {reason}" for reason in _adaptive_sparse]
+                    )
+                    retrieval_notes.extend(extra_notes)
+                    continue
+                if _adaptive_sparse:
+                    raise ValueError(
+                        "Adaptive response remained too sparse: "
+                        + "; ".join(_adaptive_sparse)
+                    )
+
+                _sections = [AdaptiveSection(**s) for s in _resp_dict.get("sections", [])]
+                # Enrich references: build AdaptiveReference objects and fill URLs from PMIDs
+                _raw_refs = _resp_dict.get("references", [])
+                from app.schemas.query import AdaptiveReference as _AdaptiveReference
+
+                if _raw_refs and isinstance(_raw_refs[0], dict):
+                    enrich_references({"references": _raw_refs}, fetched_data)
+                    _references = [_AdaptiveReference(**r) for r in _raw_refs]
+                else:
+                    _references = [_AdaptiveReference(title=str(r)) for r in _raw_refs]
+                try:
+                    _bluf_data = orjson.loads(_dspy_resp.bluf_json)
+                    _bluf = AdaptiveBLUF(**_bluf_data)
+                except Exception:
+                    _bluf = AdaptiveBLUF(headline=str(_dspy_resp.bluf_json))
+                _adaptive = AdaptiveResponse(
+                    query_type=query_type,
+                    bluf=_bluf,
+                    sections=_sections,
+                    references=_references,
+                    response_focus=_analysis.response_focus,
+                    depth=_analysis.depth,
+                    related_topics=list(_analysis.related_topics or []),
+                )
+                latency_ms = int((time.time() - start_time) * 1000)
+                return QueryResponse(
+                    query_type="adaptive",
+                    model_used=effective_model,
+                    response=_adaptive,
+                    latency_ms=latency_ms,
+                    disclaimer=DISCLAIMER,
+                    validation_warnings=retrieval_notes,
+                )
         except Exception as _dspy_err:
+            dspy_error_message = str(_dspy_err)
             logger.warning(
-                "DSPy path failed, falling back to standard pipeline: %s", _dspy_err
+                "DSPy path failed: %s", _dspy_err
             )
 
-    prompt_mode = (
-        "format" if (fetched_data and not fetched_data.fallback_to_llm) else "generate"
-    )
-    fetch_latency_ms = fetched_data.total_fetch_time_ms if fetched_data else 0
+    if (
+        settings.fail_closed_evidence_only
+        and settings.dspy_enabled
+        and user_llm_key
+        and prompt_mode == "generate"
+    ):
+        latency_ms = int((time.time() - start_time) * 1000)
+        warnings = list(retrieval_notes)
+        if dspy_error_message:
+            warnings.append(f"DSPy generation failed: {dspy_error_message}")
+        warnings.append(
+            "Fail-closed mode blocked fallback generation because it could rely on model knowledge beyond retrieved evidence."
+        )
+        return QueryResponse(
+            query_type=query_type,
+            model_used=effective_model,
+            response=DegradedResponse(
+                message="The adaptive evidence-only answer could not be generated safely.",
+                suggestion="Try a narrower query with an exact entity name, or retry after reviewing the retrieved evidence sources.",
+            ),
+            disclaimer=DISCLAIMER,
+            latency_ms=latency_ms,
+            validation_warnings=warnings,
+        )
 
     # Build prompt (format-mode if API data available, generate-mode otherwise)
     prompt = build_prompt(
@@ -830,6 +1622,7 @@ async def process_query(
     )
 
     # LLM call with retry
+    _llm_t0 = time.perf_counter()
     try:
         raw_response = await _call_llm(
             effective_model,
@@ -839,6 +1632,22 @@ async def process_query(
             user_provider=user_llm_provider,
         )
     except HTTPException as e:
+        if e.status_code in (401, 429):
+            latency_ms = int((time.time() - start_time) * 1000)
+            return QueryResponse(
+                query_type=query_type,
+                model_used=effective_model,
+                response=DegradedResponse(
+                    message=e.detail,
+                    suggestion=(
+                        "Wait a few seconds and retry."
+                        if e.status_code == 429
+                        else "Go to Settings → LLM API Key and re-enter your key."
+                    ),
+                ),
+                disclaimer=DISCLAIMER,
+                latency_ms=latency_ms,
+            )
         if e.status_code == 402:
             # Graceful degradation: no API key — return raw scraped data with warning
             latency_ms = int((time.time() - start_time) * 1000)
@@ -864,7 +1673,7 @@ async def process_query(
                 model_used=effective_model,
                 response=DegradedResponse(
                     message="AI formatting is unavailable — no API key configured. Showing raw data from medical databases. Please add your API key in Settings.",
-                    suggestion="Add your Anthropic or OpenAI API key in Settings to enable AI-formatted responses.",
+                    suggestion="Add your Anthropic, OpenAI, or OpenRouter API key in Settings to enable AI-formatted responses.",
                 ),
                 disclaimer=(
                     "This is unformatted data from external medical databases. "
@@ -898,10 +1707,24 @@ async def process_query(
                 user_key=user_llm_key,
                 user_provider=user_llm_provider,
             )
-        except HTTPException:
+        except HTTPException as _retry_exc:
+            if _retry_exc.status_code in (401, 429):
+                raise
             raw_response2 = None
         if raw_response2:
             parsed = parse_llm_json(raw_response2)
+
+    logger.info(
+        "pipeline.llm_call",
+        extra={
+            "stage": "llm_call",
+            "query_type": query_type,
+            "model": effective_model,
+            "prompt_mode": prompt_mode,
+            "duration_ms": round((time.perf_counter() - _llm_t0) * 1000),
+            "parsed": parsed is not None,
+        },
+    )
 
     if parsed is None:
         latency_ms = int((time.time() - start_time) * 1000)
@@ -1026,10 +1849,16 @@ async def process_query(
     # Cache write (Redis exact + semantic pgvector — both fire-and-forget, B4)
     cache_data = response.model_dump()
     asyncio.create_task(
-        cache_set(redis_client, request.query, query_type, request.model_id, cache_data)
+        cache_set(
+            redis_client,
+            request.query,
+            query_type,
+            effective_model,
+            cache_data,
+        )
     )
     asyncio.create_task(
-        semantic_cache_set(request.query, query_type, request.model_id, cache_data)
+        semantic_cache_set(request.query, query_type, effective_model, cache_data)
     )
 
     # Async log
@@ -1037,7 +1866,7 @@ async def process_query(
         {
             "query": request.query,
             "query_type": query_type,
-            "model_used": request.model_id,
+            "model_used": effective_model,
             "effective_model": effective_model,
             "prompt_mode": prompt_mode,
             "fetch_latency_ms": fetch_latency_ms,

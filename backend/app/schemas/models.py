@@ -27,4 +27,16 @@ AVAILABLE_MODELS = [
         provider="anthropic",
         description="Most capable, slower responses",
     ),
+    ModelInfo(
+        id="google/gemini-flash-1.5",
+        name="Gemini 1.5 Flash",
+        provider="openrouter",
+        description="OpenRouter model for low-cost adaptive responses",
+    ),
+    ModelInfo(
+        id="google/gemini-flash-1.5-8b",
+        name="Gemini 1.5 Flash 8B",
+        provider="openrouter",
+        description="Smaller OpenRouter Gemini 1.5 model",
+    ),
 ]
