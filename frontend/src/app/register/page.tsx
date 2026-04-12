@@ -4,6 +4,8 @@ import { useState } from "react";
 import Link from "next/link";
 import { Activity, Mail, ChevronRight, ExternalLink, Check } from "lucide-react";
 import { PasswordInput } from "@/components/ui/PasswordInput";
+import { createUserWithEmailAndPassword } from "firebase/auth";
+import { auth } from "@/lib/firebase";
 
 type Step = 1 | 2 | 3;
 
@@ -97,36 +99,10 @@ export default function RegisterPage() {
     setError(null);
 
     try {
-      const res = await fetch("/api/auth/register", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email,
-          password,
-          username,
-          full_name: fullName || undefined,
-          country: country || undefined,
-          position: position || undefined,
-          institute: institute || undefined,
-          specialty: specialty || undefined,
-          institution_type: institutionType || undefined,
-          age: age ? Number(age) : undefined,
-          gender: gender || undefined,
-          newsletter_consent: newsletter,
-          anthropic_key: skip ? undefined : anthropicKey || undefined,
-          openai_key: skip ? undefined : openaiKey || undefined,
-        }),
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.detail || "Registration failed");
-        return;
-      }
-
+      await createUserWithEmailAndPassword(auth, email, password);
       window.location.href = "/login?registered=1";
-    } catch {
-      setError("Network error. Please try again.");
+    } catch (err: any) {
+      setError(err.message || "Network error. Please try again.");
     } finally {
       setLoading(false);
     }

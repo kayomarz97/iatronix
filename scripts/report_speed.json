@@ -1,0 +1,31 @@
+{
+  "api_latency": [
+    {
+      "path": "/api/v1/health",
+      "avg_ms": 9,
+      "min_ms": 4,
+      "max_ms": 12,
+      "success_rate": "3/3"
+    },
+    {
+      "path": "/api/v1/models",
+      "avg_ms": null,
+      "min_ms": null,
+      "max_ms": null,
+      "success_rate": "0/3"
+    }
+  ],
+  "bundle": {
+    "error": ".next directory not found \u2014 container may not have built"
+  },
+  "docker_stats": "med-ai-project-iatronix-backend-1\t0.94%\t748.9MiB / 7.56GiB\t9.67%\nmed-ai-project-iatronix-frontend-1\t0.00%\t92.72MiB / 7.56GiB\t1.20%\nopenclaw-sbx-agent-friends-bca822cc\t0.00%\t472KiB / 7.56GiB\t0.01%\nmed-ai-project-iatronix-redis-1\t5.30%\t6.691MiB / 7.56GiB\t0.09%\nmed-ai-project-iatronix-db-1\t0.09%\t50.55MiB / 7.56GiB\t0.65%\ncloudflare-tunnel\t0.36%\t18.02MiB / 7.56GiB\t0.23%\nportainer\t0.00%\t15.99MiB / 7.56GiB\t0.21%\ntrilium\t0.00%\t126.1MiB / 7.56GiB\t1.63%",
+  "db_slow_queries": "ERROR:  relation \"pg_stat_statements\" does not exist\nLINE 1: ...:int as avg_ms, max_exec_time::int as max_ms FROM pg_stat_st...\n                                                             ^\n",
+  "redis": {
+    "keyspace_hits": "32075",
+    "keyspace_misses": "150",
+    "used_memory_human": null,
+    "total_commands_processed": "272314",
+    "connected_clients": null
+  },
+  "analysis": "### Performance Improvements for Medical AI Backend\n\n#### **1. Impact: High**\n**What to Change:** `fastapi` and `sqlalchemy` configuration files.\n**Expected Improvement:** Reduce API latency by optimizing database queries and improving connection management.\n\n**Code Snippet (FastAPI Configuration):**\n```python\nfrom fastapi import FastAPI\nimport uvicorn\n\napp = FastAPI()\n\n# Adjust the number of workers based on your system's capacity\nuvicorn.run(app, host=\"0.0.0.0\", port=8000, workers=4)\n```\n\n**Code Snippet (SQLAlchemy Configuration):**\n```python\nfrom sqlalchemy.ext.asyncio import create_async_engine\n\nDATABASE_URL = \"postgresql+asyncpg://user:password@localhost/dbname\"\n\nengine = create_async_engine(\n    DATABASE_URL,\n    pool_size=14,\n    max_overflow=10,\n    pool_timeout=30,\n    pool_pre_ping=True,\n    pool_recycle=3600\n)\n\n# Ensure that the database connection is closed after each request\nasync def close_db_connection(app):\n    async with app.state.db_session() as session:\n        await session.close()\n\napp.dependency_overrides[close_db_connection] = close_db_connection\n\n@app.on_event(\"startup\")\nasync def startup():\n    app.state.db_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)\n\n@app.on_event(\"shutdown\")\nasync def shutdown():\n    pass  # No need to do anything here as the session is closed in close_db_connection\n```\n\n#### **2. Impact: Medium**\n**What to Change:** `FastAPI` middleware for caching.\n**Expected Improvement:** Reduce latency by caching frequently accessed data.\n\n**Code Snippet (FastAPI Middleware):**\n```python\nfrom fastapi import FastAPI, Request, Response\nfrom fastapi_cache import FastAPICache\n\napp = FastAPI()\n\n@app.middleware(\"http\")\nasync def cache_middleware(request: Request, call_next):\n    response = await call_next(request)\n    if request.url.path in [\"/api/v1/models\"]:\n        # Cache the result of this API for 5 minutes\n        FastAPICache.set(request.url.path, response.body, expire=300)\n    return response\n\n@app.get(\"/api/v1/models\")\nasync def get_models():\n    # Fetch data from database or cache here\n    pass\n```\n\n#### **3. Impact: Medium**\n**What to Change:** Optimize database queries.\n**Expected Improvement:** Reduce latency by optimizing the `pg_stat_statements` table.\n\n**Code Snippet (SQLAlchemy Configuration):**\n```python\n# Ensure that the database connection is closed after each request\nasync def close_db_connection(app):\n    async with app.state.db_session() as session:\n        await session.close()\n\napp.dependency_overrides[close_db_connection] = close_db_connection\n\n@app.on_event(\"startup\")\nasync def startup():\n    app.state.db_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)\n\n@app.on_event(\"shutdown\")\nasync def shutdown():\n    pass  # No need to do anything here as the session is closed in close_db_connection\n```\n\n#### **4. Impact: Low**\n**What to Change:** Optimize Docker image size.\n**Expected Improvement:** Reduce startup time by optimizing the Docker image.\n\n**Code Snippet (Dockerfile):**\n```dockerfile\n# Use a smaller base image for PostgreSQL and Redis\nFROM postgres:13-alpine\n\n# Copy only necessary files from your project into the container\nCOPY . /app\nWORKDIR /app\n\n# Install dependencies\nRUN pip install --no-cache-dir -r requirements.txt\n\n# Set environment variables\nENV DATABASE_URL postgres://user:password@localhost/dbname\nENV REDIS_URL redis://redis_host:6379/0\n\n# Start PostgreSQL and Redis services\nCMD [\"postgres\", \"-c\", \"config_file=/app/docker/postgresql.conf\"]\n```\n\n#### **5. Impact: Low**\n**What to Change:** Optimize Docker network configuration.\n**Expected Improvement:** Reduce latency by improving network communication between containers.\n\n**Code Snippet (docker-compose.yml):**\n```yaml\nversion: '3'\nservices:\n  db:\n    image: postgres:13-alpine\n    environment:\n      POSTGRES_USER: user\n      POSTGRES_PASSWORD: password\n      POSTGRES_DB: dbname\n    networks:\n      - app-network\n\n  redis:\n    image: redis:6.2-alpine\n    ports:\n      - \"6379:6379\"\n    networks:\n      - app-network\n\nnetworks:\n  app-network:\n```\n\n### Summary of Changes:\n\n1. **FastAPI and SQLAlchemy Configuration:** Optimized database connection management to ensure connections are closed after each request.\n2. **FastAPI Middleware for Caching:** Added middleware to cache frequently accessed data, reducing API latency.\n3. **Optimized Database Queries:** Ensured that"
+}

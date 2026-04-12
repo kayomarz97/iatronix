@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 def get_provider(model_id: str) -> str:
     """Determine provider from model ID."""
     if "/" in model_id:
-        return "openai"
+        return "openrouter"
     return "anthropic"
 
 
@@ -25,15 +25,13 @@ def create_llm(
 ):
     """Create LLM client.
 
-    Uses user's own key (BYOK) if provided, otherwise falls back to server key.
-    Raises HTTP 402 only if neither user key nor server key is available.
+    Uses only the user's own BYOK key.
     """
     effective_max_tokens = (
         max_tokens if max_tokens is not None else settings.llm_max_tokens
     )
 
-    # Only user's own BYOK key is used — no server .env fallback
-    provider = user_provider or ("anthropic" if "/" not in model_id else "openai")
+    provider = user_provider or get_provider(model_id)
     api_key = user_key
 
     if not api_key:
@@ -41,7 +39,7 @@ def create_llm(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
             detail={
                 "error": "no_api_key",
-                "message": "No API key configured. Please add your Anthropic or OpenAI API key in Settings → LLM API Key.",
+                "message": "No API key configured. Please add your Anthropic, OpenAI, or OpenRouter API key in Settings → LLM API Key.",
                 "settings_url": "/settings",
             },
         )
@@ -56,8 +54,16 @@ def create_llm(
         )
     elif provider == "openai":
         return ChatOpenAI(
-            model=model_id if "/" not in model_id else "gpt-4o",
+            model=model_id if "/" not in model_id else settings.openai_default_model,
             api_key=api_key,
+            max_tokens=effective_max_tokens,
+            timeout=settings.llm_timeout_seconds,
+        )
+    elif provider == "openrouter":
+        return ChatOpenAI(
+            model=model_id if "/" in model_id else settings.openrouter_default_model,
+            api_key=api_key,
+            base_url=settings.openrouter_api_base,
             max_tokens=effective_max_tokens,
             timeout=settings.llm_timeout_seconds,
         )
@@ -66,7 +72,7 @@ def create_llm(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={
                 "error": "unsupported_provider",
-                "message": f"Provider '{provider}' is not supported. Use 'anthropic' or 'openai'.",
+                "message": f"Provider '{provider}' is not supported. Use 'anthropic', 'openai', or 'openrouter'.",
             },
         )
 

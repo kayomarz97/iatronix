@@ -1,5 +1,6 @@
 import logging
 from datetime import datetime
+from urllib.parse import urlparse
 
 from app.services.url_builder import is_safe_url
 
@@ -67,6 +68,8 @@ COR_VALUES = {"I", "IIa", "IIb", "III-no-benefit", "III-harm"}
 def _is_approved_source(source: str) -> bool:
     """Check if source matches approved list (case-insensitive fuzzy)."""
     source_lower = source.lower().strip()
+    if source_lower in APPROVED_SOURCES:
+        return True
     for approved in APPROVED_SOURCES:
         if approved in source_lower or source_lower in approved:
             return True
@@ -140,8 +143,6 @@ def validate_citations(response_data: dict, query_type: str) -> list[str]:
                 f"Reference URL uses non-HTTPS scheme (insecure) — removed: '{url[:80]}'"
             )
         elif not is_safe_url(url):
-            from urllib.parse import urlparse
-
             try:
                 domain = urlparse(url).netloc
             except Exception:

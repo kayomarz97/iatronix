@@ -1,17 +1,14 @@
 """User authentication and BYOK key management endpoints."""
 
-import bcrypt
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import generate_api_key
 from app.db.session import get_session as get_async_session
 from app.models.user import User, UserRole
 from app.schemas.auth import (
-    RegisterRequest,
     UpdateProfileRequest,
     UpdatePreferencesRequest,
     UserProfileResponse,
@@ -22,17 +19,6 @@ from app.services.byok import encrypt_key, validate_user_key
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-class LoginRequest(BaseModel):
-    email: EmailStr
-    password: str
-
-
-class AuthResponse(BaseModel):
-    api_key: str
-    email: str
-    message: str = "Success"
-
-
 class LLMKeyResponse(BaseModel):
     provider: str
     is_set: bool
@@ -40,81 +26,11 @@ class LLMKeyResponse(BaseModel):
 
 
 def _get_authenticated_user(request: Request) -> User:
-    """Extract authenticated user from request state (set by ApiKeyAuthMiddleware)."""
+    """Extract authenticated user from request state (set by FirebaseAuthMiddleware)."""
     user = getattr(request.state, "user", None)
     if not user:
         raise HTTPException(401, "Authentication required")
     return user
-
-
-@router.post("/register", response_model=AuthResponse)
-async def register(
-    req: RegisterRequest,
-    session: AsyncSession = Depends(get_async_session),
-):
-    """Register a new user account with optional profile fields."""
-    existing = await session.execute(select(User).where(User.email == req.email))
-    if existing.scalar_one_or_none():
-        raise HTTPException(409, "Email already registered")
-
-    if req.username:
-        existing_username = await session.execute(
-            select(User).where(User.username == req.username)
-        )
-        if existing_username.scalar_one_or_none():
-            raise HTTPException(409, "Username already taken")
-
-    password_hash = bcrypt.hashpw(req.password.encode(), bcrypt.gensalt()).decode()
-    full_key, key_id, key_hash = generate_api_key()
-
-    user = User(
-        key_id=key_id,
-        key_hash=key_hash,
-        email=req.email,
-        password_hash=password_hash,
-        role=UserRole.user,
-        scopes={},
-        username=req.username,
-        full_name=req.full_name,
-        country=req.country,
-        position=req.position,
-        institute=req.institute,
-        specialty=req.specialty,
-        institution_type=req.institution_type,
-        age=req.age,
-        gender=req.gender,
-        newsletter_consent=req.newsletter_consent,
-        preferences={},
-        tier="free",
-    )
-    session.add(user)
-    await session.commit()
-
-    return AuthResponse(api_key=full_key, email=req.email, message="Account created")
-
-
-@router.post("/login", response_model=AuthResponse)
-async def login(
-    req: LoginRequest,
-    session: AsyncSession = Depends(get_async_session),
-):
-    """Login with email and password. Returns API key."""
-    result = await session.execute(select(User).where(User.email == req.email))
-    user = result.scalar_one_or_none()
-    if not user or not user.password_hash:
-        raise HTTPException(401, "Invalid email or password")
-
-    if not bcrypt.checkpw(req.password.encode(), user.password_hash.encode()):
-        raise HTTPException(401, "Invalid email or password")
-
-    # Regenerate API key on login
-    full_key, key_id, key_hash = generate_api_key()
-    user.key_id = key_id
-    user.key_hash = key_hash
-    user.last_login = datetime.now(timezone.utc)
-    await session.commit()
-
-    return AuthResponse(api_key=full_key, email=req.email)
 
 
 @router.get("/me", response_model=UserProfileResponse)
@@ -245,8 +161,10 @@ async def set_llm_key(
     """Store user's own LLM API key (encrypted)."""
     user = _get_authenticated_user(request)
 
-    if req.provider not in ("anthropic", "openai"):
-        raise HTTPException(400, "Provider must be 'anthropic' or 'openai'")
+    if req.provider not in ("anthropic", "openai", "openrouter"):
+        raise HTTPException(
+            400, "Provider must be 'anthropic', 'openai', or 'openrouter'"
+        )
 
     is_valid = await validate_user_key(req.key, req.provider)
     if not is_valid:

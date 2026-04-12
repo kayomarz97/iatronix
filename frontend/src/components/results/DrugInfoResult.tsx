@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/Badge";
 import { ClaimItem } from "./ClaimItem";
 import { EvidencedText } from "./EvidenceBadge";
 import { ReferenceList } from "./ReferenceList";
+import { ResultHero, ResultMetaCard, ResultSection } from "./ResultChrome";
 import { TruncatedList } from "./TruncatedList";
 
 interface DrugInfoResultProps {
@@ -13,152 +14,161 @@ interface DrugInfoResultProps {
 
 export function DrugInfoResult({ data }: DrugInfoResultProps) {
   return (
-    <div className="space-y-5">
-      <div className="border-b border-border pb-4">
-        <h2 className="text-2xl font-bold">{data.drug_name}</h2>
-        {data.drug_class && (
-          <p className="text-text-secondary mt-1">{data.drug_class}</p>
-        )}
-      </div>
+    <div className="space-y-6">
+      <ResultHero
+        eyebrow="Drug Reference"
+        title={data.drug_name}
+        subtitle={data.drug_class}
+        stats={[
+          ...(data.indications?.length
+            ? [{ label: "indications", value: data.indications.length }]
+            : []),
+          ...(data.dosing?.length
+            ? [{ label: "regimens", value: data.dosing.length }]
+            : []),
+          ...(data.monitoring?.length
+            ? [{ label: "monitoring items", value: data.monitoring.length }]
+            : []),
+        ]}
+        directAnswer={data.bluf ?? undefined}
+        context={data.additional_clinical_context ?? undefined}
+      />
 
-      {data.bluf && (
-        <div style={{ background: "var(--bg-elevated)", borderLeft: "3px solid var(--accent)", padding: "0.75rem 1rem", borderRadius: "0 4px 4px 0" }}>
-          <p className="text-sm font-medium leading-relaxed">{data.bluf}</p>
+      {(data.mechanism_of_action || data.pharmacokinetics) && (
+        <div className="grid gap-4 lg:grid-cols-2">
+          {data.mechanism_of_action && (
+            <ResultSection title="Mechanism of Action" eyebrow="How it works">
+              <p className="text-sm leading-7">
+                <EvidencedText claim={data.mechanism_of_action} />
+              </p>
+            </ResultSection>
+          )}
+          {data.pharmacokinetics && (
+            <ResultSection title="Pharmacokinetics" eyebrow="Disposition">
+              <p className="text-sm leading-7">
+                <EvidencedText claim={data.pharmacokinetics} />
+              </p>
+            </ResultSection>
+          )}
         </div>
       )}
 
-      {data.additional_clinical_context && (
-        <div style={{ background: "var(--bg-elevated)", padding: "0.75rem 1rem", borderRadius: "4px" }}>
-          <p className="text-xs text-text-secondary leading-relaxed">{data.additional_clinical_context}</p>
-        </div>
-      )}
+      <div className="grid gap-4 xl:grid-cols-[1.3fr_0.9fr]">
+        <div className="space-y-4">
+          {data.indications?.length > 0 && (
+            <ResultSection title="Indications" eyebrow="Clinical use">
+              <ul className="space-y-1">
+                <TruncatedList
+                  items={data.indications}
+                  renderItem={(claim, i) => <ClaimItem key={i} claim={claim} />}
+                />
+              </ul>
+            </ResultSection>
+          )}
 
-      {data.mechanism_of_action && (
-        <Section title="Mechanism of Action">
-          <p className="text-sm leading-relaxed">
-            <EvidencedText claim={data.mechanism_of_action} />
-          </p>
-        </Section>
-      )}
-
-      {data.indications?.length > 0 && (
-        <Section title="Indications">
-          <ul className="list-disc list-inside space-y-1">
-            <TruncatedList
-              items={data.indications}
-              renderItem={(claim, i) => <ClaimItem key={i} claim={claim} />}
-            />
-          </ul>
-        </Section>
-      )}
-
-      {data.dosing?.length > 0 && (
-        <Section title="Dosing">
-          <TruncatedList
-            items={data.dosing}
-            renderItem={(dose, i) => (
-              <div key={i} className="py-2 border-b border-border/50 last:border-0">
-                <p className="text-sm leading-relaxed">
-                  <EvidencedText claim={dose} />
-                </p>
-                {(dose.route || dose.frequency) && (
-                  <div className="flex gap-3 mt-1">
-                    {dose.route && (
-                      <span className="text-xs text-text-muted">
-                        Route: <span className="text-text-secondary">{dose.route}</span>
-                      </span>
+          {data.dosing?.length > 0 && (
+            <ResultSection title="Dosing and Practical Use" eyebrow="Regimens">
+              <TruncatedList
+                items={data.dosing}
+                renderItem={(dose, i) => (
+                  <ResultMetaCard key={i}>
+                    <p className="text-sm leading-7">
+                      <EvidencedText claim={dose} />
+                    </p>
+                    {(dose.route || dose.frequency) && (
+                      <div className="mt-2 flex flex-wrap gap-2 text-xs text-text-muted">
+                        {dose.route && (
+                          <MetaChip label="Route" value={dose.route} />
+                        )}
+                        {dose.frequency && (
+                          <MetaChip label="Frequency" value={dose.frequency} />
+                        )}
+                      </div>
                     )}
-                    {dose.frequency && (
-                      <span className="text-xs text-text-muted">
-                        Frequency: <span className="text-text-secondary">{dose.frequency}</span>
-                      </span>
-                    )}
-                  </div>
+                  </ResultMetaCard>
                 )}
-              </div>
-            )}
-          />
-        </Section>
-      )}
+              />
+            </ResultSection>
+          )}
 
-      {data.contraindications?.length > 0 && (
-        <Section title="Contraindications">
-          <ul className="list-disc list-inside space-y-1">
-            <TruncatedList
-              items={data.contraindications}
-              renderItem={(claim, i) => <ClaimItem key={i} claim={claim} />}
-            />
-          </ul>
-        </Section>
-      )}
+          {data.monitoring?.length > 0 && (
+            <ResultSection title="Monitoring" eyebrow="Follow-up">
+              <ul className="space-y-1">
+                <TruncatedList
+                  items={data.monitoring}
+                  renderItem={(claim, i) => <ClaimItem key={i} claim={claim} />}
+                />
+              </ul>
+            </ResultSection>
+          )}
+        </div>
 
-      {data.side_effects?.length > 0 && (
-        <Section title="Adverse Effects">
-          <ul className="list-disc list-inside space-y-1">
-            <TruncatedList
-              items={data.side_effects}
-              renderItem={(claim, i) => <ClaimItem key={i} claim={claim} />}
-            />
-          </ul>
-        </Section>
-      )}
+        <div className="space-y-4">
+          {data.contraindications?.length > 0 && (
+            <ResultSection title="Contraindications" eyebrow="Avoid use">
+              <ul className="space-y-1">
+                <TruncatedList
+                  items={data.contraindications}
+                  renderItem={(claim, i) => <ClaimItem key={i} claim={claim} />}
+                />
+              </ul>
+            </ResultSection>
+          )}
 
-      {data.interactions?.length > 0 && (
-        <Section title="Drug Interactions">
-          <TruncatedList
-            items={data.interactions}
-            renderItem={(ix, i) => (
-              <div key={i} className="py-2 border-b border-border/50 last:border-0">
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="font-medium text-sm">{ix.drug}</span>
-                  <Badge
-                    variant={
-                      ix.severity === "major"
-                        ? "danger"
-                        : ix.severity === "moderate"
-                          ? "warning"
-                          : "default"
-                    }
-                  >
-                    {ix.severity}
-                  </Badge>
-                </div>
-                <p className="text-sm text-text-secondary">{ix.description}</p>
-              </div>
-            )}
-          />
-        </Section>
-      )}
+          {data.side_effects?.length > 0 && (
+            <ResultSection title="Adverse Effects" eyebrow="Safety">
+              <ul className="space-y-1">
+                <TruncatedList
+                  items={data.side_effects}
+                  renderItem={(claim, i) => <ClaimItem key={i} claim={claim} />}
+                />
+              </ul>
+            </ResultSection>
+          )}
 
-      {data.pharmacokinetics && (
-        <Section title="Pharmacokinetics">
-          <p className="text-sm leading-relaxed">
-            <EvidencedText claim={data.pharmacokinetics} />
-          </p>
-        </Section>
-      )}
+          {data.interactions?.length > 0 && (
+            <ResultSection title="Drug Interactions" eyebrow="Watch for">
+              <TruncatedList
+                items={data.interactions}
+                renderItem={(ix, i) => (
+                  <ResultMetaCard key={i}>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-medium text-sm text-text">
+                        {ix.drug}
+                      </span>
+                      <Badge
+                        variant={
+                          ix.severity === "major"
+                            ? "danger"
+                            : ix.severity === "moderate"
+                              ? "warning"
+                              : "default"
+                        }
+                      >
+                        {ix.severity}
+                      </Badge>
+                    </div>
+                    <p className="mt-2 text-sm leading-7 text-text-secondary">
+                      {ix.description}
+                    </p>
+                  </ResultMetaCard>
+                )}
+              />
+            </ResultSection>
+          )}
 
-      {data.special_populations?.length > 0 && (
-        <Section title="Special Populations">
-          <ul className="list-disc list-inside space-y-1">
-            <TruncatedList
-              items={data.special_populations}
-              renderItem={(claim, i) => <ClaimItem key={i} claim={claim} />}
-            />
-          </ul>
-        </Section>
-      )}
-
-      {data.monitoring?.length > 0 && (
-        <Section title="Monitoring Parameters">
-          <ul className="list-disc list-inside space-y-1">
-            <TruncatedList
-              items={data.monitoring}
-              renderItem={(claim, i) => <ClaimItem key={i} claim={claim} />}
-            />
-          </ul>
-        </Section>
-      )}
+          {data.special_populations?.length > 0 && (
+            <ResultSection title="Special Populations" eyebrow="Adjustments">
+              <ul className="space-y-1">
+                <TruncatedList
+                  items={data.special_populations}
+                  renderItem={(claim, i) => <ClaimItem key={i} claim={claim} />}
+                />
+              </ul>
+            </ResultSection>
+          )}
+        </div>
+      </div>
 
       {data.references?.length > 0 && (
         <ReferenceList references={data.references} />
@@ -167,17 +177,10 @@ export function DrugInfoResult({ data }: DrugInfoResultProps) {
   );
 }
 
-function Section({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
+function MetaChip({ label, value }: { label: string; value: string }) {
   return (
-    <div>
-      <h3 className="text-base font-semibold mb-2 text-text">{title}</h3>
-      {children}
-    </div>
+    <span className="rounded-full bg-surface px-2.5 py-1">
+      {label}: <span className="text-text-secondary">{value}</span>
+    </span>
   );
 }

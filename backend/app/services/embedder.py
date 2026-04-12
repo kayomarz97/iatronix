@@ -1,10 +1,12 @@
-"""Local embedding service using sentence-transformers (all-MiniLM-L6-v2).
+"""Embedding service using SentenceTransformers.
 
-Zero API cost. ~90MB RAM. ~5-10ms per embedding on CPU.
-Singleton pattern ensures only one model copy in memory.
+Vector features are enabled using a local SentenceTransformer model.
 """
 
+from __future__ import annotations
+
 import logging
+from typing import Any
 
 from app.config import settings
 
@@ -13,7 +15,23 @@ logger = logging.getLogger(__name__)
 
 class Embedder:
     _instance = None
-    _model = None
+
+    def __init__(self) -> None:
+        try:
+            from sentence_transformers import SentenceTransformer
+        except ImportError:
+            raise RuntimeError(
+                "sentence-transformers is not installed. "
+                "Please add it to your requirements to use Embedder."
+            )
+
+        model_name = "google/embeddinggemma-300m"
+        if settings.embedding_model and settings.embedding_model != "disabled":
+            model_name = settings.embedding_model
+
+        logger.info(f"Loading SentenceTransformer model: {model_name}")
+        self.model = SentenceTransformer(model_name)
+        self.expected_dim = settings.embedding_dim
 
     @classmethod
     def get_instance(cls) -> "Embedder":
@@ -21,22 +39,39 @@ class Embedder:
             cls._instance = cls()
         return cls._instance
 
-    def _load_model(self):
-        if self._model is None:
-            from sentence_transformers import SentenceTransformer
-
-            logger.info("Loading embedding model: %s", settings.embedding_model)
-            self._model = SentenceTransformer(settings.embedding_model)
-            logger.info("Embedding model loaded (%d dims)", settings.embedding_dim)
+    def _truncate_or_pad(self, embedding: list[float]) -> list[float]:
+        """Ensure embedding matches the expected dimension (e.g., 768)."""
+        if len(embedding) > self.expected_dim:
+            return embedding[: self.expected_dim]
+        elif len(embedding) < self.expected_dim:
+            return embedding + [0.0] * (self.expected_dim - len(embedding))
+        return embedding
 
     def embed_text(self, text: str) -> list[float]:
-        """Embed a single text string. Returns normalized vector."""
-        self._load_model()
-        return self._model.encode(text, normalize_embeddings=True).tolist()
+        """Embed a single text string."""
+        import numpy as np
+        
+        # Output is either numpy array or tensor depending on SentenceTransformer version/config
+        result = self.model.encode(text)
+        if isinstance(result, np.ndarray):
+            embedding = result.tolist()
+        else:
+            embedding = list(result)
+            
+        return self._truncate_or_pad(embedding)
 
     def embed_texts(self, texts: list[str], batch_size: int = 32) -> list[list[float]]:
-        """Embed multiple texts in batch. Returns list of normalized vectors."""
-        self._load_model()
-        return self._model.encode(
-            texts, batch_size=batch_size, normalize_embeddings=True
-        ).tolist()
+        """Embed a batch of text strings."""
+        import numpy as np
+
+        results = self.model.encode(texts, batch_size=batch_size)
+        
+        embeddings = []
+        for result in results:
+            if isinstance(result, np.ndarray):
+                emb = result.tolist()
+            else:
+                emb = list(result)
+            embeddings.append(self._truncate_or_pad(emb))
+
+        return embeddings

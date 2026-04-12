@@ -14,16 +14,21 @@ class LoggingListener(pybreaker.CircuitBreakerListener):
         )
 
 
+_PROVIDER_RESET_TIMEOUTS = {
+    "anthropic": settings.cb_reset_timeout * 2,  # Sonnet/disease mode can take 55-90s
+    "openai": settings.cb_reset_timeout,
+}
+
 anthropic_breaker = pybreaker.CircuitBreaker(
     fail_max=settings.cb_fail_max,
-    reset_timeout=settings.cb_reset_timeout,
+    reset_timeout=_PROVIDER_RESET_TIMEOUTS["anthropic"],
     name="anthropic",
     listeners=[LoggingListener()],
 )
 
 openai_breaker = pybreaker.CircuitBreaker(
     fail_max=settings.cb_fail_max,
-    reset_timeout=settings.cb_reset_timeout,
+    reset_timeout=_PROVIDER_RESET_TIMEOUTS["openai"],
     name="openai",
     listeners=[LoggingListener()],
 )

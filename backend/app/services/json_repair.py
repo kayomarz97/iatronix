@@ -1,8 +1,8 @@
-import json
 import logging
 import re
 
 import json_repair as jr
+import orjson
 
 logger = logging.getLogger(__name__)
 
@@ -23,10 +23,10 @@ def parse_llm_json(raw: str) -> dict | None:
     """
     cleaned = strip_markdown_fences(raw)
 
-    # Try direct parse
+    # Try direct parse (orjson is ~3x faster than stdlib json)
     try:
-        return json.loads(cleaned)
-    except (json.JSONDecodeError, ValueError):
+        return orjson.loads(cleaned)
+    except orjson.JSONDecodeError:
         pass
 
     # Try json_repair library (1 attempt)

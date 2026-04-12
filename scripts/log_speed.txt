@@ -1,0 +1,18 @@
+[speed-agent] 13:29:50 Starting speed agent
+[speed-agent] 13:29:50 Measuring API endpoint latency
+[speed-agent] 13:29:50   /api/v1/health: avg=3ms
+[speed-agent] 13:29:50   /api/v1/models: avg=Nonems
+[speed-agent] 13:29:50 Checking frontend bundle sizes
+[speed-agent] 13:29:50   Total static: ? KB
+[speed-agent] 13:29:50 Checking Docker resource usage
+[speed-agent] 13:29:52   openclaw-sbx-agent-friends-bca822cc	0.00%	472KiB / 7.56GiB	0.01%
+med-ai-project-iatronix-frontend-1	89.67%	398.9MiB / 7.56GiB	5.15%
+med-ai-project-iatronix-backend-1	0.35%	1.073GiB / 7.56GiB	14.19%
+me
+[speed-agent] 13:29:52 Checking DB slow queries
+[speed-agent] 13:29:53 Checking Redis cache stats
+[speed-agent] 13:29:53   Redis: hits=23527, misses=95
+[speed-agent] 13:29:53 Asking Ollama for speed optimization analysis
+[speed-agent] 13:31:53   Speed analysis:
+[ollama error: timed out]
+[speed-agent] 13:31:53 Report written to /root/projects/med-ai-project/scripts/report_speed.json

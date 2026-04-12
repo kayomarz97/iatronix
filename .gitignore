@@ -42,3 +42,12 @@ logs/
 
 # Database
 *.sql.bak
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Firebase credentials
+firebase-adminsdk.json
+*firebase*.json

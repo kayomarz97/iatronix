@@ -17,7 +17,14 @@ const MEDICAL_PHRASES = [
   "Reviewing level of evidence...",
 ];
 
-export function ThinkingAnimation() {
+const STAGE_LABELS: Record<string, string> = {
+  classifying: "Classifying query...",
+  fetching: "Fetching sources from FDA, PubMed, RxNorm...",
+  generating: "Generating evidence-based answer...",
+  validating: "Validating response...",
+};
+
+export function ThinkingAnimation({ stage }: { stage?: string }) {
   const [index, setIndex] = useState(0);
   const [visible, setVisible] = useState(true);
 
@@ -81,7 +88,20 @@ export function ThinkingAnimation() {
         </div>
       </div>
 
-      {/* Rotating phrase */}
+      {/* Stage label (when provided) or rotating phrase */}
+      {stage && STAGE_LABELS[stage] ? (
+        <p
+          style={{
+            fontSize: "0.9rem",
+            color: "var(--accent)",
+            fontWeight: 600,
+            textAlign: "center",
+            letterSpacing: "0.01em",
+          }}
+        >
+          {STAGE_LABELS[stage]}
+        </p>
+      ) : null}
       <p
         style={{
           fontSize: "0.95rem",

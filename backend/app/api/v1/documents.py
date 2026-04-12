@@ -56,6 +56,12 @@ async def upload_pdf(
     file: UploadFile = File(...),
 ):
     """Upload a PDF document. Auto-verifies against known publishers."""
+    if not settings.vector_search_enabled:
+        raise HTTPException(
+            503,
+            "Document indexing is disabled because local embeddings were removed and no remote embedding pipeline is configured yet.",
+        )
+
     user = _get_user(request)
 
     if not file.filename or not file.filename.lower().endswith(".pdf"):

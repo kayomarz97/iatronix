@@ -5,6 +5,105 @@ from typing import TYPE_CHECKING
 
 from app.config import settings
 
+# ──────────────────────────────────────────────
+# Drug query focus-hint helper
+# ──────────────────────────────────────────────
+
+_CONVERSION_RE = re.compile(
+    r"\b(?:convert|conversion|equianalges|opioid\s+rotation|switching\s+(?:from|to)|opioid\s+switch|steroid\s+equivalent|morphine\s+equivalent)\b",
+    re.IGNORECASE,
+)
+_MAX_DOSE_RE = re.compile(
+    r"\b(?:max(?:imum)?\s+dose|highest\s+dose|dose\s+limit|ceiling\s+dose|max\s+daily)\b",
+    re.IGNORECASE,
+)
+_RENAL_RE = re.compile(
+    r"\b(?:renal|kidney|CKD|GFR|creatinine|dialysis|eGFR)\b",
+    re.IGNORECASE,
+)
+_INTERACTION_RE = re.compile(
+    r"\b(?:interaction|combination|together|with\s+\w+|serotonin\s+syndrome|QT)\b",
+    re.IGNORECASE,
+)
+
+
+def _drug_focus_hint(query: str) -> str:
+    """Return a focus instruction based on drug query intent keywords."""
+    if _CONVERSION_RE.search(query):
+        return (
+            "FOCUS: The user is asking about DOSE CONVERSION / EQUIANALGESIC equivalency. "
+            "Prioritise the dosing section with a clear conversion table or ratio. "
+            "Include equianalgesic dose, conversion factor, and any dose-reduction safety margins. "
+            "Other sections can be brief."
+        )
+    if _MAX_DOSE_RE.search(query):
+        return (
+            "FOCUS: The user is asking about MAXIMUM DOSE. "
+            "Prioritise the dosing section with explicit maximum daily dose, route-specific limits, "
+            "and toxicity thresholds. Include pediatric and adult limits if available."
+        )
+    if _RENAL_RE.search(query):
+        return (
+            "FOCUS: The user is asking about RENAL DOSING ADJUSTMENT. "
+            "Prioritise the dosing section with GFR-based dose adjustments and special_populations "
+            "with renal impairment guidance. Other sections can be brief."
+        )
+    if _INTERACTION_RE.search(query):
+        return (
+            "FOCUS: The user is asking about DRUG INTERACTIONS. "
+            "Prioritise the interactions section with specific interacting drugs, mechanisms, "
+            "and clinical management. Other sections can be brief."
+        )
+    return ""
+
+
+_DX_RE = re.compile(
+    r"\b(?:diagnosis|dx|workup|evaluation|initial|approach|criteria|investigation|test)\b",
+    re.IGNORECASE,
+)
+_TX_RE = re.compile(
+    r"\b(?:treatment|management|therapy|tx|manage|treat)\b",
+    re.IGNORECASE,
+)
+_PROGNOSIS_RE = re.compile(
+    r"\b(?:prognosis|outcome|survival|course|mortality|morbidity)\b",
+    re.IGNORECASE,
+)
+_COMPLICATION_RE = re.compile(
+    r"\b(?:complication|risk|adverse|sequelae|sequalae)\b",
+    re.IGNORECASE,
+)
+
+
+def _disease_focus_hint(query: str) -> str:
+    """Return a focus instruction based on disease query intent keywords."""
+    if _DX_RE.search(query):
+        return (
+            "FOCUS: The user is asking about DIAGNOSIS. "
+            "Prioritise diagnostic_criteria and clinical_features sections with specific thresholds, "
+            "test sensitivity/specificity, and red flags. Keep treatment and prognosis brief."
+        )
+    if _TX_RE.search(query):
+        return (
+            "FOCUS: The user is asking about TREATMENT/MANAGEMENT. "
+            "Prioritise treatment sections (first_line, second_line, adjunctive) with specific drugs, "
+            "doses, routes, and durations. Keep etiology and pathophysiology brief."
+        )
+    if _PROGNOSIS_RE.search(query):
+        return (
+            "FOCUS: The user is asking about PROGNOSIS. "
+            "Prioritise prognosis section with specific mortality rates, recurrence rates, "
+            "and prognostic scoring systems. Keep other sections concise."
+        )
+    if _COMPLICATION_RE.search(query):
+        return (
+            "FOCUS: The user is asking about COMPLICATIONS. "
+            "Prioritise complications section with incidence rates, risk factors, and management. "
+            "Keep etiology and pathophysiology brief."
+        )
+    return ""
+
+
 if TYPE_CHECKING:
     from app.services.data_fetcher import DiseaseFetchResult, FetchedData
     from app.services.vector_search import SearchResult
@@ -81,6 +180,10 @@ DRUG_PROMPT = """You are a clinical pharmacology reference assistant.
 {json_contract_rules}
 
 {condition_context_block}
+
+MANDATORY DRUG IDENTITY RULE: drug_class and mechanism_of_action MUST always be populated — never null.
+- drug_class: state the pharmacological group (e.g. "HMG-CoA reductase inhibitor (statin)", "ACE inhibitor", "Beta-1 selective blocker")
+- mechanism_of_action: include specific receptor/enzyme target + physiological effect (e.g. "Competitively inhibits HMG-CoA reductase, reducing hepatic cholesterol synthesis and upregulating LDL receptors")
 
 MINIMUM ENTRY COUNTS (mandatory — short, sparse responses are FAILED responses):
 - indications: 3+ entries
@@ -160,11 +263,17 @@ Sections to populate — MINIMUM entry counts are MANDATORY:
 - diagnostic_criteria: 6-10 entries with SPECIFIC threshold values AND test characteristics (sensitivity/specificity):
   RIGHT: "CT pulmonary angiography: sensitivity 83-100%, specificity 89-97%"  WRONG: "Imaging is useful"
   RIGHT: "D-dimer ELISA: sensitivity >95%; age-adjusted cutoff (age × 10 µg/L) for patients >50"  WRONG: "Blood tests may help"
-- treatment.first_line: 4-8 entries — SPECIFIC drug + dose + route + frequency + duration:
-  RIGHT: "Rivaroxaban 15 mg PO BD ×21 days then 20 mg OD"  WRONG: "Anticoagulation is recommended"
-  RIGHT: "Enoxaparin 1 mg/kg SC BD, bridge to warfarin INR 2.0-3.0"  WRONG: "LMWH may be used"
-- treatment.second_line: 3-5 specific drugs with doses and criteria for use
-- treatment.adjunctive: 2-4 entries
+- treatment.first_line: 4-8 entries — MANDATORY FORMAT for every drug entry: [Drug class (MOA)] Drug dose route frequency duration
+  MANDATORY: Every pharmacological treatment entry MUST include:
+    1. Drug group/class in square brackets with MOA in one clause
+    2. Specific dose + route + frequency + duration
+  RIGHT: "[Factor Xa inhibitor; directly blocks free and clot-bound factor Xa] Rivaroxaban 15 mg PO BD ×21 days then 20 mg OD"
+  RIGHT: "[LMWH; inhibits factor Xa and IIa via antithrombin] Enoxaparin 1 mg/kg SC BD, bridge to warfarin INR 2.0-3.0"
+  RIGHT: "[Biguanide; inhibits hepatic gluconeogenesis and increases insulin sensitivity] Metformin 500 mg PO BD with meals, titrate to 1000 mg BD"
+  WRONG: "Rivaroxaban 15mg BD" (missing class and MOA)
+  WRONG: "Anticoagulation is recommended" (no drug, no class, no dose)
+- treatment.second_line: 3-5 specific drugs with class [MOA] + doses and criteria for use
+- treatment.adjunctive: 2-4 entries with class [MOA] + doses where pharmacological
 - treatment.non_pharmacological: 3-5 entries (interventions, surgery, lifestyle, transplant criteria with specific indications)
 - complications: 5-8 entries with incidence rates where known
 - prognosis: mortality rates, recurrence rates, prognostic factors
@@ -408,9 +517,12 @@ MINIMUM ENTRY COUNTS (mandatory — short, sparse responses are FAILED responses
 - monitoring: 2+ entries
 
 ANSWER STRATEGY — Read the query carefully:
-1. BLUF: Write 1-3 sentences DIRECTLY answering the specific question from source data.
-2. EXPAND: Give most detail to the section the user asked about (dosing/interactions/side effects/etc.)
-3. COMPLETE: Fill remaining sections with standard coverage from source data.
+1. BLUF: Write 1-3 sentences DIRECTLY answering the specific clinical question from source data.
+2. If condition context is present, treat this as a drug-in-disease question first, not a generic label summary.
+   Lead with guideline positioning, role of the drug in that condition, practical dosing and monitoring in that condition, and key safety caveats in that condition.
+   Use generic FDA label facts as supporting detail after the condition-specific answer.
+3. EXPAND: Give most detail to the section the user asked about (dosing/interactions/side effects/guideline role/monitoring/etc.)
+4. COMPLETE: Fill remaining sections with standard coverage from source data.
 "additional_clinical_context": query-specific nuance from source data (monitoring pearls, off-label, special populations). null if nothing.
 
 {evidence_rules}
@@ -466,11 +578,12 @@ ANSWER STRATEGY — Read the query carefully:
    "medical management" → lead with drugs, doses, BP targets, lifestyle
    "surgical management" → lead with surgical indications, approaches, techniques
    "diagnosis" → lead with diagnostic criteria, investigations, classification
-2. EXPAND: Give most detail to the section the user asked about.
+2. The first half of the answer must focus on the user's actual clinical need, not generic background. Do not spend the opening on definition-only material.
+3. EXPAND: Give most detail to the section the user asked about.
    "medical management" → treatment arrays should have 6+ entries with specific drugs/doses
    "surgical management" → non_pharmacological should detail every surgical approach with indications
    If the query is just the disease name (e.g. "pulmonary embolism") → give EQUAL depth to ALL sections.
-3. COMPLETE: Fill ALL remaining sections thoroughly. Do NOT leave ANY section sparse.
+4. COMPLETE: Fill ALL remaining sections thoroughly. Do NOT leave ANY section sparse.
 "additional_clinical_context": Query-specific nuance from source data. null if nothing.
 
 DEPTH REQUIREMENTS — CRITICAL — every section MUST be fully populated with clinically actionable detail:
@@ -481,12 +594,14 @@ DEPTH REQUIREMENTS — CRITICAL — every section MUST be fully populated with c
   RIGHT: "CT pulmonary angiography (CTPA): sensitivity 83-100%, specificity 89-97%; first-line imaging for suspected PE"
   RIGHT: "D-dimer (ELISA): sensitivity >95%, NPV >99% when pre-test probability low; age-adjusted cutoff = age × 10 µg/L for patients >50"
   WRONG: "Imaging studies are helpful" or "Blood tests may be ordered"
-- treatment.first_line: 4-8 entries — SPECIFIC drug + dose + route + frequency + duration:
-  RIGHT: "Rivaroxaban 15 mg orally twice daily for 21 days, then 20 mg once daily"
-  RIGHT: "Unfractionated heparin: 80 units/kg IV bolus, then 18 units/kg/h infusion, titrate to aPTT 1.5-2.5× control"
-  WRONG: "Anticoagulation is recommended"
-- treatment.second_line: 3-5 specific drugs/interventions with doses and criteria for use
-- treatment.adjunctive: 2-4 entries (IVC filters, hemodynamic support, thrombus aspiration)
+- treatment.first_line: 4-8 entries — MANDATORY FORMAT: [Drug class; MOA] Drug dose route frequency duration
+  Every pharmacological treatment entry MUST include drug group + MOA + specific dose:
+  RIGHT: "[Factor Xa inhibitor; directly blocks free and clot-bound Xa] Rivaroxaban 15 mg PO BD ×21 days then 20 mg OD"
+  RIGHT: "[UFH; potentiates antithrombin III to inhibit thrombin and factor Xa] Unfractionated heparin 80 units/kg IV bolus then 18 units/kg/h, titrate aPTT 1.5-2.5×"
+  WRONG: "Rivaroxaban 15mg BD" (no class, no MOA)
+  WRONG: "Anticoagulation is recommended" (no drug, no class, no dose)
+- treatment.second_line: 3-5 specific entries with [class; MOA] + doses and criteria for use
+- treatment.adjunctive: 2-4 entries with [class; MOA] + dose where pharmacological
 - treatment.non_pharmacological: 3-5 entries (surgical embolectomy indications, catheter-directed therapy, compression stockings, early mobilization, long-term prevention)
 - complications: 5-8 entries with specific incidence rates where known
 - prognosis: Include mortality rates, recurrence rates, and factors affecting prognosis
@@ -555,6 +670,11 @@ MINIMUM COMPARISON DIMENSIONS (mandatory — you MUST include ALL of these):
 7. Cost / availability
 8. Guideline positioning (which is first-line per major guidelines?)
 Fewer than 8 dimensions is a FAILED response.
+
+ANSWER STRATEGY:
+1. Summary first: the summary and clinical_preference must directly answer which option is preferable for the user's exact question and in what scenario.
+2. Guideline positioning and real clinical tradeoffs must appear before generic catalog-style differences.
+3. If the query names a condition or population, compare both entities in that condition or population first, then give broader comparison detail.
 
 {evidence_rules}
 {json_contract_rules}
@@ -640,6 +760,11 @@ guideline_status rule: output EXACTLY one of these three templates (fill in the 
   "No formal guideline exists"
   "Mentioned in [Society] [year] guidelines"
   "Formal recommendation in [Society] [year] guidelines"
+
+ANSWER STRATEGY:
+1. The opening summary sentence must answer the user's actual question directly.
+2. State the practical clinical bottom line before unpacking supporting and opposing studies.
+3. Keep residual uncertainty, subgroup limitations, and applicability explicit instead of burying them at the end.
 
 === CLINICAL TRIALS / RCTs ===
 {clinical_trial_abstracts_formatted}
@@ -806,6 +931,9 @@ def _build_generate_prompt(
         )
         if vector_context:
             prompt = prompt.rstrip() + "\n\n" + vector_context
+        focus = _drug_focus_hint(query)
+        if focus:
+            prompt = focus + "\n\n" + prompt
         return prompt
 
     # Other templates — append vector context at the end
@@ -817,7 +945,12 @@ def _build_generate_prompt(
     )
     if vector_context:
         prompt = prompt.rstrip() + "\n\n" + vector_context
-    if focus_instruction:
+    # Disease-specific focus hint (item 4)
+    if query_type == "disease":
+        focus = _disease_focus_hint(query)
+        if focus:
+            prompt = focus + "\n\n" + prompt
+    elif focus_instruction:
         prompt = focus_instruction + "\n\n" + prompt
     return prompt
 
@@ -1080,6 +1213,9 @@ def _build_format_prompt(
                 d.systematic_review_abstracts
             ),
         )
+        focus = _drug_focus_hint(query)
+        if focus:
+            prompt = focus + "\n\n" + prompt
         if vector_results:
             prompt += "\n\n" + _format_vector_context(vector_results)
         return prompt
@@ -1101,6 +1237,9 @@ def _build_format_prompt(
             nice_recommendations_formatted=_format_nice_recs(d.nice_recommendations),
             medlineplus_summary=d.medlineplus_summary or "Not available",
         )
+        focus = _disease_focus_hint(query)
+        if focus:
+            prompt = focus + "\n\n" + prompt
         if vector_results:
             prompt += "\n\n" + _format_vector_context(vector_results)
         return prompt

@@ -15,12 +15,14 @@ print('Redis cache flushed successfully')
 " 2>/dev/null || echo "Redis flush skipped (not available)"
 fi
 
-echo "Starting backend server..."
+WORKERS="${GUNICORN_WORKERS:-4}"
+echo "Starting backend server (workers=${WORKERS})..."
 exec gunicorn app.main:app \
   --worker-class uvicorn.workers.UvicornWorker \
-  --workers 4 \
+  --workers "${WORKERS}" \
   --bind 0.0.0.0:8000 \
   --timeout 180 \
-  --keep-alive 5 \
+  --keep-alive 30 \
+  --worker-connections 200 \
   --access-logfile - \
   --error-logfile -

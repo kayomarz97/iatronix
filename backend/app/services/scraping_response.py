@@ -124,6 +124,22 @@ def _build_scraping_response(
                 }
             )
 
+    elif query_type in ("general", "evidence", "procedure"):
+        # No LLM-free structured output for these types — return an informative fallback
+        return GeneralResponse(
+            summary=(
+                f"Web Sources mode is active. Structured AI analysis for '{query_type}' queries "
+                "requires an LLM key."
+            ),
+            key_points=[
+                "Web Sources mode supports drug, disease, and comparative queries without an LLM key.",
+                "For general, evidence, or procedure queries, switch to AI Mode in Settings and add your API key.",
+            ],
+            related_drugs=[],
+            related_conditions=[],
+            confidence="low",
+            references=[],
+        )
     else:
         return None
 

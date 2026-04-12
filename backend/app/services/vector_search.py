@@ -70,14 +70,9 @@ async def search(
 
         # Visibility filter
         if user_id is not None:
-            stmt = stmt.where(
-                or_(
-                    Document.verified == True,  # noqa: E712
-                    Document.uploaded_by_user_id == user_id,
-                )
-            )
+            stmt = stmt.where(Document.uploaded_by_user_id == user_id)
         else:
-            stmt = stmt.where(Document.verified == True)  # noqa: E712
+            stmt = stmt.where(Document.uploaded_by_user_id == -1)  # Strict isolation: no user = no docs
 
         # Optional source type filter
         if source_type:

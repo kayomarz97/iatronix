@@ -1,0 +1,9 @@
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Firebase credentials
+firebase-adminsdk.json
+*firebase*.json
