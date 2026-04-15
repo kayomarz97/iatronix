@@ -42,6 +42,7 @@ RUN pip install --no-cache-dir \
     "orjson>=3.10.0" \
     "aiofiles>=23.0.0" \
     "dspy-ai>=2.5.0" \
+    "firebase-admin>=6.5.0" \
     "pytest>=8.0.0" \
     "pytest-asyncio>=0.24.0" \
     "pytest-httpx>=0.30.0" \
