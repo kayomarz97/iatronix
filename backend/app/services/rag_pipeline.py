@@ -4,6 +4,7 @@ import logging
 import re
 import time
 
+import anthropic
 import openai
 import orjson
 import pybreaker
@@ -84,12 +85,13 @@ def _summarize_fetched(
                 parts.append(f"[SOURCE: NICE][condition_recommendation]: {text}")
         for ab in (dd.guideline_abstracts or [])[:6]:
             title = ab.get("title", "")
-            abstract = ab.get("abstract", "")[:500]
+            content = ab.get("full_text") or ab.get("abstract", "")
+            content = content[:1500] if ab.get("full_text") else content[:500]
             _pmid = ab.get("pmid", "")
             _pmid_str = f" PMID {_pmid}" if _pmid else ""
-            if title or abstract:
+            if title or content:
                 parts.append(
-                    f"[SOURCE: PubMed{_pmid_str}][condition_guideline]: {title} — {abstract}"
+                    f"[SOURCE: PubMed{_pmid_str}][condition_guideline]: {title} — {content}"
                 )
         for ab in (dd.systematic_review_abstracts or [])[:4]:
             title = ab.get("title", "")
@@ -832,7 +834,10 @@ async def _call_llm(
         return await _invoke()
     except pybreaker.CircuitBreakerError:
         logger.warning(f"Circuit breaker open for {provider}")
-        return None
+        raise HTTPException(
+            status_code=503,
+            detail="LLM service temporarily unavailable — please try again in a few seconds.",
+        )
     except HTTPException:
         raise
     except openai.RateLimitError:
@@ -845,6 +850,19 @@ async def _call_llm(
             status_code=401,
             detail="LLM API key rejected — please verify your key is valid in Settings.",
         )
+    except (anthropic.AuthenticationError, anthropic.PermissionDeniedError):
+        raise HTTPException(
+            status_code=401,
+            detail="Anthropic API key rejected — please verify your key is valid in Settings.",
+        )
+    except anthropic.RateLimitError:
+        raise HTTPException(
+            status_code=429,
+            detail="Anthropic rate limit exceeded — please wait a moment and retry.",
+        )
+    except anthropic.APIConnectionError:
+        logger.error(f"Anthropic connection error for {model_id}", exc_info=True)
+        return None
     except Exception:
         logger.error(f"LLM call failed for {model_id}", exc_info=True)
         return None
@@ -1293,9 +1311,9 @@ async def process_query(
         )
 
     # Route and fetch external data + vector search in parallel
-    # source_mode: "ai" = full pipeline, "scraping" = API only (no vector), "pdfs" = vector only
+    # source_mode: "ai" = full pipeline, "scraping" = API only (no vector)
     source_mode = getattr(request, "source_mode", "ai")
-    use_api_fetch = settings.api_fetch_enabled and source_mode != "pdfs"
+    use_api_fetch = settings.api_fetch_enabled
     use_vector = settings.vector_search_enabled and source_mode != "scraping"
 
     fetched_data: FetchedData | None = None
@@ -1708,7 +1726,7 @@ async def process_query(
                 user_provider=user_llm_provider,
             )
         except HTTPException as _retry_exc:
-            if _retry_exc.status_code in (401, 429):
+            if _retry_exc.status_code in (401, 429, 503):
                 raise
             raw_response2 = None
         if raw_response2:
@@ -1731,8 +1749,8 @@ async def process_query(
         # Distinguish: LLM never responded vs responded but JSON unparseable
         llm_never_responded = raw_response is None and raw_response2 is None
         if llm_never_responded:
-            msg = "LLM call failed — please verify your API key is valid in Settings."
-            sug = "Go to Settings → LLM API Key and check that your key is saved correctly."
+            msg = "LLM service did not respond — this may be a network issue or the service is temporarily unavailable."
+            sug = "Verify your API key is correct in Settings → LLM API Key. If the key is correct, wait a moment and try again. Check backend logs for detailed error information."
         else:
             msg = (
                 "Failed to parse AI response. The model returned an unexpected format."

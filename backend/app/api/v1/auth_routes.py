@@ -14,6 +14,7 @@ from app.schemas.auth import (
     UserProfileResponse,
     LlmKeyRequest,
 )
+from app.middleware.firebase_auth import invalidate_user_cache
 from app.services.byok import encrypt_key, validate_user_key
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -166,9 +167,10 @@ async def set_llm_key(
             400, "Provider must be 'anthropic', 'openai', or 'openrouter'"
         )
 
-    is_valid = await validate_user_key(req.key, req.provider)
-    if not is_valid:
-        raise HTTPException(400, f"Invalid {req.provider} API key format")
+    validation_result = await validate_user_key(req.key, req.provider)
+    if not validation_result["valid"]:
+        error_detail = validation_result.get("detail", "Invalid API key")
+        raise HTTPException(422, error_detail)
 
     encrypted = encrypt_key(req.key)
 
@@ -177,6 +179,7 @@ async def set_llm_key(
     db_user.encrypted_llm_key = encrypted
     db_user.llm_provider = req.provider
     await session.commit()
+    invalidate_user_cache(user.firebase_uid)
 
     return LLMKeyResponse(provider=req.provider, is_set=True)
 
@@ -194,6 +197,7 @@ async def delete_llm_key(
     db_user.encrypted_llm_key = None
     db_user.llm_provider = None
     await session.commit()
+    invalidate_user_cache(user.firebase_uid)
 
     return LLMKeyResponse(provider="none", is_set=False, message="Key removed")
 
