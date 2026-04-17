@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
     const response = await fetch(
       `${INTERNAL_API_URL}/api/v1/history?limit=${limit}&offset=${offset}`,
       {
-        headers: { "X-API-Key": apiKey },
+        headers: { "Authorization": `Bearer ${apiKey}` },
         signal: AbortSignal.timeout(10000),
       }
     );
@@ -47,11 +47,12 @@ export async function DELETE(request: NextRequest) {
 
     const response = await fetch(`${INTERNAL_API_URL}/api/v1/history`, {
       method: "DELETE",
-      headers: { "X-API-Key": apiKey },
+      headers: { "Authorization": `Bearer ${apiKey}` },
       signal: AbortSignal.timeout(10000),
     });
 
-    const data = await response.json();
+    const text = await response.text();
+    const data = text ? JSON.parse(text) : {};
     return NextResponse.json(data, { status: response.status });
   } catch {
     return NextResponse.json(

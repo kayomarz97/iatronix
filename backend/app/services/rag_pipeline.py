@@ -9,12 +9,17 @@ import openai
 import orjson
 import pybreaker
 from fastapi import HTTPException
+from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import ValidationError
 
 from app.config import settings
 from app.db.session import async_session
 from app.models.query_log import QueryLog
 from app.schemas.query import (
+    AdaptiveBLUF,
+    AdaptiveReference,
+    AdaptiveResponse,
+    AdaptiveSection,
     ComparativeResponse,
     DegradedResponse,
     DiseaseResponse,
@@ -48,7 +53,7 @@ from app.services.semantic_cache import (
 from app.services.drug_linker import process_text_nodes
 from app.services.json_repair import parse_llm_json
 from app.services.llm_factory import create_llm, get_provider
-from app.services.prompt_engine import build_prompt
+from app.services.prompt_engine import build_adaptive_messages
 from app.services.query_classifier import classify_query, classify_query_llm, detect_intent
 from app.services.safety_checker import check_safety
 from app.services.url_builder import enrich_references
@@ -420,7 +425,9 @@ def _retrieval_assessment(
     reasons: list[str] = []
     score = 0
 
-    if query_type == "drug" and fetched_data.drug_data:
+    if query_type == "drug":
+        if not fetched_data.drug_data:
+            return 0, False, ["data fetch timed out — no drug data retrieved"]
         d = fetched_data.drug_data
         core_fields = sum(
             1 for value in [
@@ -441,7 +448,9 @@ def _retrieval_assessment(
             reasons.append("limited drug evidence")
         return score, score >= 8, reasons
 
-    if query_type == "disease" and fetched_data.disease_data:
+    if query_type == "disease":
+        if not fetched_data.disease_data:
+            return 0, False, ["data fetch timed out — no disease data retrieved"]
         d = fetched_data.disease_data
         guideline_hits = len(d.guideline_abstracts or [])
         review_hits = len(d.systematic_review_abstracts or [])
@@ -454,7 +463,9 @@ def _retrieval_assessment(
             reasons.append("too few disease abstracts")
         return score, score >= 8, reasons
 
-    if query_type == "procedure" and fetched_data.procedure_data:
+    if query_type == "procedure":
+        if not fetched_data.procedure_data:
+            return 0, False, ["data fetch timed out — no procedure data retrieved"]
         d = fetched_data.procedure_data
         hits = len(d.guideline_abstracts or []) + len(d.practice_guideline_abstracts or [])
         score = hits * 2
@@ -462,7 +473,9 @@ def _retrieval_assessment(
             reasons.append("too few procedure guidelines")
         return score, score >= 4, reasons
 
-    if query_type == "evidence" and fetched_data.evidence_data:
+    if query_type == "evidence":
+        if not fetched_data.evidence_data:
+            return 0, False, ["data fetch timed out — no evidence data retrieved"]
         d = fetched_data.evidence_data
         trials = len(d.clinical_trial_abstracts or [])
         reviews = len(d.systematic_review_abstracts or [])
@@ -488,7 +501,9 @@ def _retrieval_assessment(
             reasons.append("limited comparative evidence")
         return score, score >= 8, reasons
 
-    return 0, False, ["unsupported query type or no fetched data"]
+    if query_type in {"drug", "disease", "procedure", "evidence", "comparative"}:
+        return 0, False, ["data fetch timed out — no retrieval data available"]
+    return 0, False, ["unsupported query type"]
 
 
 async def _expand_retrieval_if_needed(
@@ -828,7 +843,27 @@ async def _call_llm(
 
         @breaker
         async def _invoke():
-            response = await llm.ainvoke(prompt)
+            if provider == "anthropic":
+                # Split at the last "Query: " line so the large system instructions
+                # (context + data) get cached and only the query is sent as a
+                # human turn. Falls back to full-prompt human message if no split found.
+                split_marker = "\nQuery: "
+                split_idx = prompt.rfind(split_marker)
+                if split_idx != -1:
+                    system_text = prompt[:split_idx]
+                    human_text = prompt[split_idx + 1:]  # strip leading \n
+                else:
+                    system_text = prompt
+                    human_text = "Generate the response now."
+                messages = [
+                    SystemMessage(content=[
+                        {"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}}
+                    ]),
+                    HumanMessage(content=human_text),
+                ]
+                response = await llm.ainvoke(messages)
+            else:
+                response = await llm.ainvoke(prompt)
             return response.content
 
         return await _invoke()
@@ -860,12 +895,55 @@ async def _call_llm(
             status_code=429,
             detail="Anthropic rate limit exceeded — please wait a moment and retry.",
         )
+    except anthropic.BadRequestError as e:
+        msg = str(e)
+        if "credit balance is too low" in msg or "billing" in msg.lower():
+            raise HTTPException(
+                status_code=402,
+                detail="Your Anthropic account has insufficient credits. Please top up at console.anthropic.com → Plans & Billing.",
+            )
+        raise HTTPException(status_code=400, detail=f"Anthropic rejected the request: {msg}")
     except anthropic.APIConnectionError:
         logger.error(f"Anthropic connection error for {model_id}", exc_info=True)
         return None
     except Exception:
         logger.error(f"LLM call failed for {model_id}", exc_info=True)
         return None
+
+
+async def _rewrite_query(
+    query: str,
+    model_id: str,
+    user_key: str | None = None,
+    user_provider: str | None = None,
+) -> str:
+    """Rewrite the raw user query for better API matching and vector recall.
+
+    Fixes typos, expands abbreviations, and sharpens clinical intent.
+    Returns the original query on any error (fire-and-forget fallback).
+    """
+    _rewrite_prompt = (
+        "You are a medical query pre-processor. Rewrite the following query to be clear, "
+        "correctly spelled, and unambiguous for a clinical reference system.\n"
+        "- Fix all spelling and typo errors\n"
+        "- Expand common medical abbreviations\n"
+        "- Keep the clinical intent exactly the same\n"
+        "- Return ONLY the rewritten query, nothing else\n\n"
+        f"Query: {query}"
+    )
+    try:
+        result = await _call_llm(
+            model_id,
+            _rewrite_prompt,
+            max_tokens=64,
+            user_key=user_key,
+            user_provider=user_provider,
+        )
+        if result and result.strip():
+            return result.strip()
+    except Exception:
+        pass
+    return query
 
 
 _CLAIM_FIELDS = {"loe", "cor", "source", "confidence", "value"}
@@ -1163,6 +1241,7 @@ async def process_query(
 ) -> QueryResponse:
     """Main RAG pipeline orchestrator."""
     start_time = time.time()
+    validation_warnings: list[str] = []
 
     # Resolve user's BYOK key (only user-supplied key is used — no server .env fallback)
     user_llm_key: str | None = None
@@ -1186,6 +1265,31 @@ async def process_query(
                 latency_ms=latency_ms,
             )
 
+    # Fetch voyage API key (for Anthropic users who want vector search),
+    # NCBI API key (for PubMed rate limit increase), and user email (for Unpaywall)
+    user_voyage_key: str | None = None
+    user_ncbi_key: str | None = None
+    user_email: str | None = getattr(user, "email", None)
+    if user and user.id:
+        try:
+            from app.models.service_key import ServiceKey
+            from app.services.byok import decrypt_key as _dk
+            async with async_session() as _sk_session:
+                from sqlalchemy import select as _sel
+                _sk_rows = (await _sk_session.execute(
+                    _sel(ServiceKey).where(
+                        ServiceKey.user_id == user.id,
+                        ServiceKey.service_name.in_(["voyageai", "ncbi"]),
+                    )
+                )).scalars().all()
+                for _sk_row in _sk_rows:
+                    if _sk_row.service_name == "voyageai" and user_llm_provider == "anthropic":
+                        user_voyage_key = _dk(_sk_row.encrypted_key)
+                    elif _sk_row.service_name == "ncbi":
+                        user_ncbi_key = _dk(_sk_row.encrypted_key)
+        except Exception:
+            pass  # non-critical
+
     provider_for_request = user_llm_provider or get_provider(request.model_id)
     normalized_request_model = _normalize_model_for_provider(
         request.model_id or _default_model_for_provider(provider_for_request),
@@ -1198,8 +1302,8 @@ async def process_query(
     # Speculative type via rule-based classifier (sync, ~1ms) — used for parallel cache check
     speculative_type, _ = classify_query(request.query)
 
-    # Run DSPy analysis and Redis cache check in parallel
-    _dspy_result, _cache_prefetch = await asyncio.gather(
+    # Run DSPy analysis, Redis cache check, and query rewriter in parallel
+    _dspy_result, _cache_prefetch, _rewritten = await asyncio.gather(
         _analyze_query_with_dspy(
             request.query,
             model_id=normalized_request_model,
@@ -1207,10 +1311,23 @@ async def process_query(
             user_provider=user_llm_provider,
         ),
         cache_get(redis_client, request.query, speculative_type, normalized_request_model),
+        _rewrite_query(
+            request.query,
+            model_id=normalized_request_model,
+            user_key=user_llm_key,
+            user_provider=user_llm_provider,
+        ),
         return_exceptions=True,
     )
     query_analysis = _dspy_result if not isinstance(_dspy_result, Exception) else None
     _speculative_cache = _cache_prefetch if not isinstance(_cache_prefetch, Exception) else None
+    rewritten_query = (
+        _rewritten
+        if isinstance(_rewritten, str) and _rewritten.strip()
+        else request.query
+    )
+    if rewritten_query != request.query:
+        logger.info("Query rewritten: %r → %r", request.query, rewritten_query)
 
     if request.query_type:
         query_type, confidence = request.query_type, 0.99
@@ -1324,7 +1441,7 @@ async def process_query(
     tasks = {}
     if use_api_fetch:
         routing = route_query(
-            request.query,
+            rewritten_query,
             query_type,
             entities=analysis_entities or None,
             requested_model=normalized_request_model,
@@ -1338,12 +1455,19 @@ async def process_query(
                     query_type,
                     routing.entities,
                     condition_context=routing.condition_context,
+                    user_email=user_email,
+                    ncbi_api_key=user_ncbi_key,
                 ),
                 timeout=settings.api_fetch_timeout_seconds + 1.0,
             )
 
     if use_vector:
-        tasks["vector"] = vector_search(request.query)
+        tasks["vector"] = vector_search(
+            rewritten_query,
+            user_key=user_llm_key,
+            user_provider=user_llm_provider,
+            voyage_api_key=user_voyage_key,
+        )
 
     # Semantic cache check runs in parallel with API fetch and vector search
     tasks["sem"] = semantic_cache_get(request.query, query_type, normalized_request_model)
@@ -1416,7 +1540,7 @@ async def process_query(
                     )
                 return _sem_hit_resp
 
-    if use_api_fetch and fetched_data is not None:
+    if use_api_fetch and fetched_data is not None and not fetched_data.fallback_to_llm:
         fetched_data, retrieval_notes = await _expand_retrieval_if_needed(
             query=request.query,
             query_type=query_type,
@@ -1448,7 +1572,18 @@ async def process_query(
                 validation_warnings=retrieval_notes,
             )
 
-    if settings.fail_closed_evidence_only and prompt_mode == "generate":
+    # Only fail-closed if fetch succeeded but data quality was insufficient.
+    # If fetch timed out, let LLM generate from training knowledge (that's what "generate" mode is for).
+    fetch_timed_out = (
+        fetched_data is not None
+        and fetched_data.fallback_to_llm
+        and fetched_data.drug_data is None
+        and fetched_data.disease_data is None
+        and fetched_data.procedure_data is None
+        and fetched_data.evidence_data is None
+    )
+
+    if settings.fail_closed_evidence_only and prompt_mode == "generate" and not fetch_timed_out:
         latency_ms = int((time.time() - start_time) * 1000)
         return QueryResponse(
             query_type=query_type,
@@ -1504,150 +1639,50 @@ async def process_query(
         if not request.model_explicit and user_llm_provider == "anthropic":
             effective_model = settings.model_sonnet
 
-    # DSPy adaptive path
-    dspy_error_message: str | None = None
-    if settings.dspy_enabled and user_llm_key:
-        try:
-            import dspy as _dspy
-            from app.services.dspy_lm import get_dspy_lm
-            from app.services.dspy_modules import AdaptiveMedicalPipeline
-            from app.schemas.query import (
-                AdaptiveSection,
-                AdaptiveResponse,
-                AdaptiveBLUF,
-            )
+    # ── Unified Adaptive Generation ───────────────────────────────────────────
+    # All query types use a single adaptive prompt. DSPy is kept only for
+    # classification (query_type, required_sections, related_topics).
+    required_sections: list[str] = (
+        list(query_analysis.get("required_sections", [])) if query_analysis else []
+    )
 
-            for attempt in range(2):
-                _lm = get_dspy_lm(
-                    effective_model,
-                    user_llm_key,
-                    user_llm_provider or "anthropic",
-                    depth="comprehensive",
-                )
-                with _dspy.context(lm=_lm):
-                    _pipeline = AdaptiveMedicalPipeline()
-                    _analysis, _dspy_resp = _pipeline(
-                        query=request.query,
-                        fetched_data=_summarize_fetched(
-                            fetched_data,
-                            query_type=query_type,
-                            condition_context=condition_context,
-                        )
-                        if fetched_data
-                        else "",
-                        vector_results=_summarize_vectors(vector_results),
-                        available_data_types=_describe_data(fetched_data)
-                        if fetched_data
-                        else "none",
-                        query_type_hint=query_type,
-                        condition_context_hint=condition_context or "",
-                        pre_analysis=query_analysis,
-                    )
-                _resp_dict = orjson.loads(_dspy_resp.response_json)
-                _adaptive_sparse = _adaptive_sparse_reasons(_resp_dict, query_type)
-                if _adaptive_sparse and attempt == 0:
-                    fetched_data, extra_notes = await _expand_retrieval_if_needed(
-                        query=request.query,
-                        query_type=query_type,
-                        fetched_data=fetched_data,
-                        entities=routing.entities if routing else (analysis_entities or []),
-                        condition_context=condition_context,
-                        response_focus=str(getattr(_analysis, "response_focus", "") or ""),
-                    )
-                    retrieval_notes.extend(
-                        [f"DSPy sparse retry: {reason}" for reason in _adaptive_sparse]
-                    )
-                    retrieval_notes.extend(extra_notes)
-                    continue
-                if _adaptive_sparse:
-                    raise ValueError(
-                        "Adaptive response remained too sparse: "
-                        + "; ".join(_adaptive_sparse)
-                    )
-
-                _sections = [AdaptiveSection(**s) for s in _resp_dict.get("sections", [])]
-                # Enrich references: build AdaptiveReference objects and fill URLs from PMIDs
-                _raw_refs = _resp_dict.get("references", [])
-                from app.schemas.query import AdaptiveReference as _AdaptiveReference
-
-                if _raw_refs and isinstance(_raw_refs[0], dict):
-                    enrich_references({"references": _raw_refs}, fetched_data)
-                    _references = [_AdaptiveReference(**r) for r in _raw_refs]
-                else:
-                    _references = [_AdaptiveReference(title=str(r)) for r in _raw_refs]
-                try:
-                    _bluf_data = orjson.loads(_dspy_resp.bluf_json)
-                    _bluf = AdaptiveBLUF(**_bluf_data)
-                except Exception:
-                    _bluf = AdaptiveBLUF(headline=str(_dspy_resp.bluf_json))
-                _adaptive = AdaptiveResponse(
-                    query_type=query_type,
-                    bluf=_bluf,
-                    sections=_sections,
-                    references=_references,
-                    response_focus=_analysis.response_focus,
-                    depth=_analysis.depth,
-                    related_topics=list(_analysis.related_topics or []),
-                )
-                latency_ms = int((time.time() - start_time) * 1000)
-                return QueryResponse(
-                    query_type="adaptive",
-                    model_used=effective_model,
-                    response=_adaptive,
-                    latency_ms=latency_ms,
-                    disclaimer=DISCLAIMER,
-                    validation_warnings=retrieval_notes,
-                )
-        except Exception as _dspy_err:
-            dspy_error_message = str(_dspy_err)
-            logger.warning(
-                "DSPy path failed: %s", _dspy_err
-            )
-
-    if (
-        settings.fail_closed_evidence_only
-        and settings.dspy_enabled
-        and user_llm_key
-        and prompt_mode == "generate"
-    ):
-        latency_ms = int((time.time() - start_time) * 1000)
-        warnings = list(retrieval_notes)
-        if dspy_error_message:
-            warnings.append(f"DSPy generation failed: {dspy_error_message}")
-        warnings.append(
-            "Fail-closed mode blocked fallback generation because it could rely on model knowledge beyond retrieved evidence."
-        )
-        return QueryResponse(
-            query_type=query_type,
-            model_used=effective_model,
-            response=DegradedResponse(
-                message="The adaptive evidence-only answer could not be generated safely.",
-                suggestion="Try a narrower query with an exact entity name, or retry after reviewing the retrieved evidence sources.",
-            ),
-            disclaimer=DISCLAIMER,
-            latency_ms=latency_ms,
-            validation_warnings=warnings,
-        )
-
-    # Build prompt (format-mode if API data available, generate-mode otherwise)
-    prompt = build_prompt(
-        request.query,
+    system_text, user_text = build_adaptive_messages(
+        rewritten_query,
         query_type,
-        fetched_data,
-        vector_results,
-        intent=query_intent,
+        fetched_data=fetched_data,
+        vector_results=vector_results,
+        required_sections=required_sections or None,
         condition_context=condition_context,
     )
 
-    # LLM call with retry
     _llm_t0 = time.perf_counter()
+    raw_response: str | None = None
     try:
-        raw_response = await _call_llm(
+        _gen_llm = create_llm(
             effective_model,
-            prompt,
             max_tokens=max_tokens,
             user_key=user_llm_key,
             user_provider=user_llm_provider,
+        )
+        _gen_provider = user_llm_provider or get_provider(effective_model)
+        _gen_breaker = get_breaker(_gen_provider)
+
+        @_gen_breaker
+        async def _invoke_adaptive():
+            if _gen_provider == "anthropic":
+                _msgs = [
+                    SystemMessage(content=[{"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}}]),
+                    HumanMessage(content=user_text),
+                ]
+            else:
+                _msgs = [SystemMessage(content=system_text), HumanMessage(content=user_text)]
+            return (await _gen_llm.ainvoke(_msgs)).content
+
+        raw_response = await _invoke_adaptive()
+    except pybreaker.CircuitBreakerError:
+        raise HTTPException(
+            status_code=503,
+            detail="LLM service temporarily unavailable — please try again in a few seconds.",
         )
     except HTTPException as e:
         if e.status_code in (401, 429):
@@ -1667,70 +1702,83 @@ async def process_query(
                 latency_ms=latency_ms,
             )
         if e.status_code == 402:
-            # Graceful degradation: no API key — return raw scraped data with warning
             latency_ms = int((time.time() - start_time) * 1000)
-            raw_sources = {}
-            if fetched_data:
-                if fetched_data.drug_data:
-                    d = fetched_data.drug_data
-                    raw_sources["drug"] = {
-                        "name": d.generic_name,
-                        "brand": d.brand_name,
-                        "source": d.data_source,
-                        "indications": d.indications_raw,
-                        "dosing": d.dosing_raw,
-                        "contraindications": d.contraindications_raw,
-                        "adverse_reactions": d.adverse_reactions_raw,
-                    }
-                if fetched_data.disease_data:
-                    raw_sources["guidelines_count"] = len(
-                        fetched_data.disease_data.guideline_abstracts or []
-                    )
-            resp = QueryResponse(
+            no_key = isinstance(e.detail, dict) and e.detail.get("error") == "no_api_key"
+            if no_key:
+                deg_msg = "AI formatting is unavailable — no API key configured. Please add your API key in Settings."
+                deg_sug = "Add your Anthropic, OpenAI, or OpenRouter API key in Settings to enable AI-formatted responses."
+            else:
+                deg_msg = e.detail if isinstance(e.detail, str) else "Billing error — the LLM provider rejected the request."
+                deg_sug = "Check your account billing at console.anthropic.com → Plans & Billing, then retry."
+            if user and user.id:
+                asyncio.create_task(_log_search_history(user.id, request.query, query_type, {}))
+            latency_ms = int((time.time() - start_time) * 1000)
+            return QueryResponse(
                 query_type=query_type,
                 model_used=effective_model,
-                response=DegradedResponse(
-                    message="AI formatting is unavailable — no API key configured. Showing raw data from medical databases. Please add your API key in Settings.",
-                    suggestion="Add your Anthropic, OpenAI, or OpenRouter API key in Settings to enable AI-formatted responses.",
-                ),
-                disclaimer=(
-                    "This is unformatted data from external medical databases. "
-                    "It has not been reviewed or formatted by AI. Use clinical judgment."
-                ),
+                response=DegradedResponse(message=deg_msg, suggestion=deg_sug),
+                disclaimer=DISCLAIMER,
                 latency_ms=latency_ms,
             )
-            # Log to search history even for degraded responses
-            if user and user.id:
-                asyncio.create_task(
-                    _log_search_history(user.id, request.query, query_type, {})
-                )
-            return resp
         raise
-
-    raw_response2: str | None = None
-    if raw_response:
-        parsed = parse_llm_json(raw_response)
-    else:
-        parsed = None
-
-    # Retry once if call failed or response unparseable
-    if parsed is None:
-        logger.info("First LLM call failed or unparseable, retrying...")
-        await asyncio.sleep(settings.llm_retry_backoff_seconds)
-        try:
-            raw_response2 = await _call_llm(
-                effective_model,
-                prompt,
-                max_tokens=max_tokens,
-                user_key=user_llm_key,
-                user_provider=user_llm_provider,
+    except openai.RateLimitError:
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit exceeded — wait a few seconds and retry.",
+        )
+    except (openai.AuthenticationError, openai.PermissionDeniedError):
+        raise HTTPException(
+            status_code=401,
+            detail="LLM API key rejected — please verify your key in Settings.",
+        )
+    except anthropic.RateLimitError:
+        raise HTTPException(
+            status_code=429,
+            detail="Anthropic rate limit exceeded — wait a moment and retry.",
+        )
+    except (anthropic.AuthenticationError, anthropic.PermissionDeniedError):
+        raise HTTPException(
+            status_code=401,
+            detail="Anthropic API key rejected — please verify your key in Settings.",
+        )
+    except anthropic.BadRequestError as _e:
+        _msg = str(_e)
+        if "credit balance is too low" in _msg or "billing" in _msg.lower():
+            raise HTTPException(
+                status_code=402,
+                detail="Your Anthropic account has insufficient credits.",
             )
-        except HTTPException as _retry_exc:
-            if _retry_exc.status_code in (401, 429, 503):
-                raise
-            raw_response2 = None
-        if raw_response2:
-            parsed = parse_llm_json(raw_response2)
+        raise HTTPException(status_code=400, detail=f"Anthropic rejected the request: {_msg}")
+
+    # Parse the adaptive JSON
+    parsed = parse_llm_json(raw_response) if raw_response else None
+
+    # Retry once with a stricter suffix if parse failed
+    if parsed is None:
+        logger.info("Adaptive LLM call failed or unparseable, retrying...")
+        await asyncio.sleep(settings.llm_retry_backoff_seconds)
+        retry_system = (
+            system_text
+            + "\n\nCRITICAL: Return ONLY the JSON object described above. "
+            "No markdown fences, no prose, no preamble."
+        )
+        try:
+            @_gen_breaker
+            async def _retry_adaptive():
+                if _gen_provider == "anthropic":
+                    _msgs = [
+                        SystemMessage(content=[{"type": "text", "text": retry_system, "cache_control": {"type": "ephemeral"}}]),
+                        HumanMessage(content=user_text),
+                    ]
+                else:
+                    _msgs = [SystemMessage(content=retry_system), HumanMessage(content=user_text)]
+                return (await _gen_llm.ainvoke(_msgs)).content
+
+            raw_retry = await _retry_adaptive()
+            if raw_retry:
+                parsed = parse_llm_json(raw_retry)
+        except Exception:
+            pass
 
     logger.info(
         "pipeline.llm_call",
@@ -1746,115 +1794,114 @@ async def process_query(
 
     if parsed is None:
         latency_ms = int((time.time() - start_time) * 1000)
-        # Distinguish: LLM never responded vs responded but JSON unparseable
-        llm_never_responded = raw_response is None and raw_response2 is None
-        if llm_never_responded:
-            msg = "LLM service did not respond — this may be a network issue or the service is temporarily unavailable."
-            sug = "Verify your API key is correct in Settings → LLM API Key. If the key is correct, wait a moment and try again. Check backend logs for detailed error information."
-        else:
-            msg = (
-                "Failed to parse AI response. The model returned an unexpected format."
-            )
-            sug = "Try rephrasing your query. If the problem persists, try a different query type."
+        msg = (
+            "LLM service did not respond — this may be a network issue."
+            if raw_response is None
+            else "Failed to parse AI response. The model returned an unexpected format."
+        )
         return QueryResponse(
             query_type=query_type,
             model_used=effective_model,
-            response=DegradedResponse(message=msg, suggestion=sug),
+            response=DegradedResponse(
+                message=msg,
+                suggestion="Try rephrasing your query or retry in a moment.",
+            ),
             disclaimer=DISCLAIMER,
             latency_ms=latency_ms,
         )
 
-    # Pydantic + semantic validation
-    validated_data, validation_warnings = _validate_response(parsed, query_type)
-    if validated_data is None:
+    # Build AdaptiveResponse from parsed dict
+    try:
+        _raw_refs = parsed.get("references", [])
+        enrich_references({"references": _raw_refs}, fetched_data)
+        _references = [
+            AdaptiveReference(**r) if isinstance(r, dict) else AdaptiveReference(title=str(r))
+            for r in _raw_refs
+        ]
+
+        _bluf_data = parsed.get("bluf", {})
+        _bluf = (
+            AdaptiveBLUF(**_bluf_data)
+            if isinstance(_bluf_data, dict)
+            else AdaptiveBLUF(headline=str(_bluf_data))
+        )
+
+        _sections = [
+            AdaptiveSection(**s) if isinstance(s, dict) else AdaptiveSection(title=str(s), content_items=[])
+            for s in parsed.get("sections", [])
+        ]
+
+        adaptive_response = AdaptiveResponse(
+            query_type=query_type,
+            bluf=_bluf,
+            sections=_sections,
+            references=_references,
+            response_focus=str((query_analysis or {}).get("response_focus", query_type)),
+            depth="comprehensive",
+            related_topics=list((query_analysis or {}).get("related_topics", [])),
+        )
+    except Exception as _ve:
+        logger.warning("AdaptiveResponse construction failed: %s", _ve)
         latency_ms = int((time.time() - start_time) * 1000)
         return QueryResponse(
             query_type=query_type,
             model_used=effective_model,
             response=DegradedResponse(
                 message="Response validation failed",
-                suggestion="Try rephrasing your query",
+                suggestion="Try rephrasing your query.",
             ),
-            validation_warnings=validation_warnings,
             disclaimer=DISCLAIMER,
             latency_ms=latency_ms,
         )
 
-    # Sparse response retry — if LLM returned critically sparse content, retry once with
-    # an expansion instruction. Only for disease/drug/comparative types.
-    if settings.retry_on_sparse_enabled and query_type in (
-        "disease",
-        "drug",
-        "comparative",
-        "evidence",
-        "procedure",
-    ):
-        is_sparse, sparse_reasons = _is_critically_sparse(validated_data, query_type)
-        if is_sparse:
-            logger.info(
-                "Response critically sparse (%s) — retrying with expansion instruction",
-                sparse_reasons,
-            )
-            expansion_suffix = (
-                "\n\nIMPORTANT: Your previous response was critically sparse. "
-                "You MUST expand these sections: " + ", ".join(sparse_reasons) + ". "
-                "Meet ALL minimum entry counts. Use the FULL token budget. Do NOT truncate."
-            )
-            try:
-                raw_expansion = await _call_llm(
-                    effective_model,
-                    prompt + expansion_suffix,
-                    max_tokens=max_tokens,
-                    user_key=user_llm_key,
-                    user_provider=user_llm_provider,
-                )
-                if raw_expansion:
-                    parsed_expansion = parse_llm_json(raw_expansion)
-                    if parsed_expansion:
-                        v2, _ = _validate_response(parsed_expansion, query_type)
-                        if v2 is not None:
-                            validated_data = v2
-            except Exception:
-                logger.debug(
-                    "Sparse retry failed — keeping original response", exc_info=True
-                )
-
-    # Enrich references with deterministic URLs (no LLM guessing)
-    # Must run BEFORE citation validation so URL warnings reflect final values
-    try:
-        enrich_references(validated_data, fetched_data)
-    except Exception:
-        logger.warning(
-            "URL enrichment failed — references will have no URLs", exc_info=True
-        )
+    validated_dict = adaptive_response.model_dump()
 
     # Citation validation
-    citation_warnings = validate_citations(validated_data, query_type)
+    citation_warnings = validate_citations(validated_dict, query_type, fetched_data)
     validation_warnings.extend(citation_warnings)
 
     # Safety check
-    safety_warnings = check_safety(request.query, validated_data, query_type)
+    safety_warnings = check_safety(request.query, validated_dict, query_type)
 
     # Drug linker
-    text_nodes = process_text_nodes(validated_data, query_type)
-
-    # Build typed response
-    model_cls = RESPONSE_MODELS[query_type]
-    typed_response = model_cls.model_validate(validated_data)
+    text_nodes = await process_text_nodes(validated_dict, query_type)
 
     latency_ms = int((time.time() - start_time) * 1000)
 
-    # Warn user when response is AI-generated rather than sourced from databases
+    # Collect data sources used
+    fetch_sources = list(fetched_data.data_sources) if fetched_data else []
+    if vector_results:
+        fetch_sources.append("Vector DB (your PDFs)")
+
     if prompt_mode == "generate":
         validation_warnings.append(
             "This response was generated by AI without data from medical databases. "
             "Verify claims against authoritative sources before clinical use."
         )
 
+    # Audit log
+    audit_id: int | None = None
+    try:
+        from app.models.query_audit import QueryAudit
+        async with async_session() as _audit_session:
+            _audit = QueryAudit(
+                user_id=user.id if user else None,
+                query=request.query,
+                retrieved_passages={"count": len(vector_results)} if vector_results else None,
+                llm_output=validated_dict,
+                verification_passed=len(citation_warnings) == 0,
+            )
+            _audit_session.add(_audit)
+            await _audit_session.commit()
+            await _audit_session.refresh(_audit)
+            audit_id = _audit.id
+    except Exception:
+        logger.warning("Audit log write failed", exc_info=True)
+
     response = QueryResponse(
-        query_type=query_type,
+        query_type="adaptive",
         model_used=effective_model,
-        response=typed_response,
+        response=adaptive_response,
         text_nodes=text_nodes,
         safety_warnings=safety_warnings,
         validation_warnings=validation_warnings,
@@ -1862,24 +1909,19 @@ async def process_query(
         cached=False,
         truncated=False,
         latency_ms=latency_ms,
+        audit_id=audit_id,
+        rewritten_query=rewritten_query if rewritten_query != request.query else None,
+        fetch_sources=fetch_sources,
     )
 
-    # Cache write (Redis exact + semantic pgvector — both fire-and-forget, B4)
     cache_data = response.model_dump()
     asyncio.create_task(
-        cache_set(
-            redis_client,
-            request.query,
-            query_type,
-            effective_model,
-            cache_data,
-        )
+        cache_set(redis_client, request.query, query_type, effective_model, cache_data)
     )
     asyncio.create_task(
         semantic_cache_set(request.query, query_type, effective_model, cache_data)
     )
 
-    # Async log
     await _enqueue_log(
         {
             "query": request.query,
@@ -1895,7 +1937,6 @@ async def process_query(
         }
     )
 
-    # Search history logging (fire-and-forget, non-blocking)
     if user and user.id:
         asyncio.create_task(
             _log_search_history(user.id, request.query, query_type, cache_data)
