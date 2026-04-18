@@ -135,8 +135,11 @@ COR (Class of Recommendation — AHA/ACC):
 
 MATCHING RULES:
 - LOE I claims → COR I or IIa (never IIb)
-- LOE III claims → COR IIb (never COR I — expert opinion cannot be "strongly recommended")
-- If you cannot name a specific RCT/guideline → LOE III, COR IIb, confidence "low"
+- LOE III claims → COR should be null (do not assign class of recommendation for expert opinion)
+- LOE II-1 or II-2 claims → COR IIa or IIb depending on strength of evidence
+- If you cannot name a specific RCT/guideline → LOE III, COR null, confidence "low"
+- When evidence is LOE III or observational without guideline assignment: set cor = null.
+- Only assign COR when a named guideline explicitly assigns it or LOE is I or II-1.
 
 source: Name the SPECIFIC guideline (e.g. "AHA/ACC 2022 Heart Failure Guideline", "NICE CG181")
 source_year: Year of the cited guideline/edition

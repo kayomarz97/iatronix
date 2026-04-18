@@ -1,7 +1,7 @@
 export interface EvidencedClaim {
   value: string;
   loe: string;
-  cor: string;
+  cor?: string | null;
   source: string;
   source_year?: number | null;
   confidence: "high" | "moderate" | "low";

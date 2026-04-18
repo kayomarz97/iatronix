@@ -974,18 +974,20 @@ def _coerce_evidenced_claims(obj: object) -> None:
             if isinstance(cor, str):
                 cor = cor.strip()
             if not cor or cor not in _VALID_COR:
-                # Unsourced claims must NOT get Class I (strongest recommendation)
-                obj["cor"] = "IIb" if not has_source else "IIa"
+                final_loe_check = obj.get("loe") or "III"
+                if final_loe_check == "III" or not has_source:
+                    obj["cor"] = None
+                else:
+                    obj["cor"] = "IIa"
 
             # LOE↔COR consistency enforcement (patient safety)
             final_loe = obj["loe"]
-            final_cor = obj.get("cor", "IIb")
-            if final_loe == "III" and final_cor == "I":
-                # LOE III (expert opinion) must never claim COR I (strongest)
-                obj["cor"] = "IIb"
-            elif final_loe == "I" and final_cor == "IIb":
-                # LOE I (RCT) shouldn't be downgraded to IIb
-                obj["cor"] = "IIa"
+            final_cor = obj.get("cor")
+            if final_cor is not None:
+                if final_loe == "III" and final_cor == "I":
+                    obj["cor"] = None
+                elif final_loe == "I" and final_cor == "IIb":
+                    obj["cor"] = "IIa"
 
             if not obj.get("source"):
                 obj["source"] = "Expert opinion"
