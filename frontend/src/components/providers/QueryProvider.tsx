@@ -10,6 +10,7 @@ import {
   type ReactNode,
 } from "react";
 import { submitQuery as apiSubmitQuery } from "@/lib/api";
+import { useAuth } from "@/components/providers/AuthProvider";
 import { API_KEY_STORAGE_KEY, DEFAULT_MODEL, LLM_PROVIDER_STORAGE_KEY } from "@/lib/constants";
 import type { QueryResponse } from "@/lib/types";
 
@@ -49,6 +50,7 @@ interface QueryContextType {
 const QueryContext = createContext<QueryContextType | null>(null);
 
 export function QueryProvider({ children }: { children: ReactNode }) {
+  const { getIdToken } = useAuth();
   const [result, setResult] = useState<QueryResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [loadingStage, setLoadingStage] = useState<string>("");
@@ -61,7 +63,8 @@ export function QueryProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const submitQuery = useCallback(async (query: string) => {
-    const apiKey = localStorage.getItem(API_KEY_STORAGE_KEY);
+    let apiKey = await getIdToken();
+    if (!apiKey) apiKey = localStorage.getItem(API_KEY_STORAGE_KEY);
     if (!apiKey) {
       setError("Please sign in to submit queries");
       return;
@@ -86,7 +89,23 @@ export function QueryProvider({ children }: { children: ReactNode }) {
       setResult(response);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "An error occurred";
-      if (msg.includes("429") || msg.toLowerCase().includes("rate limit")) {
+      if (msg.includes("401")) {
+        let retryApiKey = await getIdToken();
+        if (!retryApiKey) retryApiKey = localStorage.getItem(API_KEY_STORAGE_KEY);
+        if (retryApiKey && retryApiKey !== apiKey) {
+          try {
+            const response = await apiSubmitQuery(query, modelId, retryApiKey, undefined, sourceMode, false);
+            setLoadingStage("verifying");
+            await new Promise((r) => setTimeout(r, 400));
+            setResult(response);
+            return;
+          } catch {
+            setError("Session expired. Please sign in again.");
+            return;
+          }
+        }
+        setError("Session expired. Please sign in again.");
+      } else if (msg.includes("429") || msg.toLowerCase().includes("rate limit")) {
         setError("Rate limit exceeded. Please wait a minute before trying again.");
       } else {
         setError(msg);

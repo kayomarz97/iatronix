@@ -14,6 +14,8 @@ import {
   Menu,
   X,
 } from "lucide-react";
+import { signOut } from "firebase/auth";
+import { auth } from "@/lib/firebase";
 import { API_KEY_STORAGE_KEY } from "@/lib/constants";
 
 const NAV_LINKS = [
@@ -58,7 +60,8 @@ export function Header() {
     localStorage.setItem("theme", next);
   };
 
-  const logout = () => {
+  const logout = async () => {
+    await signOut(auth);
     localStorage.removeItem(API_KEY_STORAGE_KEY);
     localStorage.removeItem("iatronix_email");
     window.location.href = "/login";

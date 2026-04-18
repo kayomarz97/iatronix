@@ -5,7 +5,7 @@ import Link from "next/link";
 import { Activity, Mail } from "lucide-react";
 import { PasswordInput } from "@/components/ui/PasswordInput";
 import { API_KEY_STORAGE_KEY } from "@/lib/constants";
-import { signInWithEmailAndPassword } from "firebase/auth";
+import { signInWithEmailAndPassword, setPersistence, browserLocalPersistence, browserSessionPersistence } from "firebase/auth";
 import { auth } from "@/lib/firebase";
 
 export default function LoginPage() {
@@ -22,9 +22,10 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
+      await setPersistence(auth, rememberMe ? browserLocalPersistence : browserSessionPersistence);
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       const token = await userCredential.user.getIdToken();
-      
+
       localStorage.setItem(API_KEY_STORAGE_KEY, token);
       localStorage.setItem("iatronix_email", userCredential.user.email || email);
       window.location.href = "/";
