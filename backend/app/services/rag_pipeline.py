@@ -1127,6 +1127,22 @@ def _validate_response(data: dict, query_type: str) -> tuple[dict | None, list[s
     return data, warnings
 
 
+def _extract_history_summary(result: dict, query_type: str) -> str:
+    """Extract a readable summary from the full response for search history."""
+    try:
+        response = result.get("response", {})
+        if isinstance(response, dict):
+            bluf = response.get("bluf", {})
+            if isinstance(bluf, dict) and bluf.get("headline"):
+                return f"[{query_type}] {bluf['headline'][:400]}"
+            msg = response.get("message", "")
+            if msg:
+                return f"[{query_type}] {msg[:400]}"
+        return f"[{query_type}] Query processed"
+    except Exception:
+        return f"[{query_type}] Query processed"
+
+
 async def _log_search_history(
     user_id: int, query_text: str, query_type: str, result: dict
 ):
@@ -1154,7 +1170,7 @@ async def _log_search_history(
                 old = oldest.scalar_one_or_none()
                 if old:
                     await session.delete(old)
-            summary = str(result)[:300] if result else ""
+            summary = _extract_history_summary(result, query_type) if result else ""
             session.add(
                 SearchHistory(
                     user_id=user_id,

@@ -3,19 +3,23 @@
 import { Suspense } from "react";
 import { SearchBar } from "@/components/ui/SearchBar";
 import { LoadingScreen } from "@/components/LoadingScreen";
+import { SearchHistorySidebar } from "@/components/ui/SearchHistorySidebar";
 import { DisclaimerBanner } from "@/components/results/DisclaimerBanner";
 import { AdaptiveResultRenderer } from "@/components/results/AdaptiveResultRenderer";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { useQueryContext } from "@/components/providers/QueryProvider";
+import { useAuth } from "@/components/providers/AuthProvider";
 import { formatLatency } from "@/lib/formatters";
 import type { DegradedResponse, AdaptiveResponse, TokenUsage } from "@/lib/types";
 
 function QueryContent() {
   const { result, isLoading, loadingStage, error, activeModelName, submitQuery } = useQueryContext();
+  const { user } = useAuth();
 
   return (
     <div className="space-y-6">
+      <SearchHistorySidebar onRerun={submitQuery} isLoggedIn={!!user} />
       <div className="space-y-3">
         <SearchBar onSubmit={submitQuery} isLoading={isLoading} />
       </div>
