@@ -156,6 +156,12 @@ IMPORTANT: Do NOT include LOE, COR, source names, or evidence markers inline in
 
 When evidence is insufficient: set confidence "low", loe "III", cor "IIb".
 Do NOT fabricate trial names, statistics, or sources.
+
+RECENCY RULE: If you have a guideline published within the last 2 years from AHA, ADA, ESC,
+NICE, WHO, IDSA, NCCN, GOLD, or ACS — cite it preferentially over older guidelines even if
+the older one has more citations. Always state the publication year. If two organizations have
+conflicting guidelines, cite both and note the difference. Do NOT cite a guideline unless
+its abstract appears in the data block above.
 """
 
 JSON_CONTRACT_RULES = """

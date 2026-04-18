@@ -861,6 +861,35 @@ async def _fetch_pubmed_classification(client: httpx.AsyncClient, entity: str) -
     return articles, sources
 
 
+async def _pubmed_esearch_recent_guidelines(
+    client: httpx.AsyncClient, entity: str, retmax: int = 8
+) -> list[str]:
+    """Search PubMed for recent guidelines, sorted by publication date (most recent first).
+
+    Searches 2-year window for guidelines from authoritative organizations.
+    Returns PMIDs ordered by publication date descending.
+    """
+    from datetime import datetime
+
+    yr = datetime.now().year
+    term = (
+        f"{entity}[Title/Abstract] AND "
+        f"(Practice Guideline[pt] OR Guideline[pt] OR guideline[ti]) AND "
+        f"{yr - 2}:{yr}[dp]"
+    )
+    params = {
+        "db": "pubmed",
+        "term": term,
+        "retmax": retmax,
+        "retmode": "json",
+        "sort": "pub_date",
+    }
+    if settings.pubmed_api_key:
+        params["api_key"] = settings.pubmed_api_key
+    data = await _safe_get(client, "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi", params=params)
+    return (data or {}).get("esearchresult", {}).get("idlist", [])
+
+
 def _parse_pubmed_xml(xml_text: str) -> list:
     try:
         root = ET.fromstring(xml_text)
@@ -1545,6 +1574,7 @@ async def fetch_drug_data(drug_name: str) -> DrugFetchResult:
             rxnorm_class,
             guidelines_result,
             sysreviews_result,
+            recent_guidelines_ids,
             dailymed_result,
             medlineplus_drug,
             statpearls_text,
@@ -1555,6 +1585,7 @@ async def fetch_drug_data(drug_name: str) -> DrugFetchResult:
             _fetch_rxnorm_class_chain(client, search_name),
             _fetch_pubmed_abstracts(client, search_name, "guideline"),
             _fetch_pubmed_abstracts(client, search_name, "systematic_review"),
+            _pubmed_esearch_recent_guidelines(client, search_name, 8),
             _fetch_dailymed(client, search_name),
             _fetch_medlineplus(client, search_name),
             _fetch_pmc_statpearls(client, search_name),
@@ -1569,6 +1600,13 @@ async def fetch_drug_data(drug_name: str) -> DrugFetchResult:
             guidelines, guidelines_sources = guidelines_result
         elif isinstance(guidelines_result, list):
             guidelines = guidelines_result
+
+        # Fetch recent guidelines if any (recent_guidelines_ids is a list of PMIDs)
+        if isinstance(recent_guidelines_ids, list) and recent_guidelines_ids:
+            recent_articles, recent_sources = await _pubmed_efetch(client, recent_guidelines_ids)
+            guidelines.extend(recent_articles)
+            for src in recent_sources:
+                guidelines_sources.add(src)
 
         sysreviews = []
         sysreviews_sources = set()
@@ -1723,6 +1761,7 @@ async def fetch_disease_data(disease_name: str) -> DiseaseFetchResult:
             _pubmed_esearch_throttled(client, review_term, 12),
             _pubmed_esearch_throttled(client, broad_guideline_term, 8),
             _pubmed_esearch_throttled(client, broad_review_term, 8),
+            _pubmed_esearch_recent_guidelines(client, disease_name, 8),
             _fetch_nice(client, disease_name),
             _fetch_medlineplus(client, disease_name),
             _fetch_semantic_scholar(client, disease_name),
@@ -1750,20 +1789,15 @@ async def fetch_disease_data(disease_name: str) -> DiseaseFetchResult:
         review_ids = results[1] if isinstance(results[1], list) else []
         broad_guideline_ids = results[2] if isinstance(results[2], list) else []
         broad_review_ids = results[3] if isinstance(results[3], list) else []
-        nice_recs = results[4] if isinstance(results[4], list) else []
-        medlineplus = results[5] if isinstance(results[5], str) else None
-        semantic = results[6] if isinstance(results[6], list) else []
-        ncbi = results[7] if len(results) > 7 and isinstance(results[7], str) else None
+        recent_guideline_ids = results[4] if isinstance(results[4], list) else []
+        nice_recs = results[5] if isinstance(results[5], list) else []
+        medlineplus = results[6] if isinstance(results[6], str) else None
+        semantic = results[7] if isinstance(results[7], list) else []
+        ncbi = results[8] if len(results) > 8 and isinstance(results[8], str) else None
 
-        all_guideline_ids = guideline_ids + broad_guideline_ids
-        # Deduplicate while keeping order
-        seen: set[str] = set()
-        unique_guideline_ids = [
-            pid for pid in all_guideline_ids if pid not in seen and not seen.add(pid)
-        ]
-
-        all_review_ids = review_ids + broad_review_ids
-        all_ids = list(set(unique_guideline_ids + all_review_ids))
+        # Merge and deduplicate PMIDs (recent guidelines takes priority)
+        all_pmids = set(recent_guideline_ids) | set(guideline_ids) | set(review_ids) | set(broad_guideline_ids) | set(broad_review_ids)
+        all_ids = list(all_pmids)
         if all_ids:
             all_abstracts, enrichment_sources = await _pubmed_efetch(client, all_ids)
             for src in enrichment_sources:
