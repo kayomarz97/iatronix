@@ -1360,7 +1360,7 @@ RESPOND WITH A SINGLE JSON OBJECT — no markdown fences, no prose outside the J
       "title": "Section heading",
       "content_items": [
         {
-          "text": "Evidence-based claim — GitHub-flavored markdown supported (bold, tables, lists)",
+          "text": "Evidence-based claim in GFM markdown. Examples: **metformin 500mg BD** for bold key terms, | Dose | Notes | format for tables, - bullet sub-lists for multi-part claims, plain prose for simple facts.",
           "loe": "I | II | III | null",
           "cor": "I | IIa | IIb | III-no-benefit | III-harm | null",
           "source": "Source label e.g. 'AHA/ACC 2022', 'FDA label', 'PubMed PMID:38293847'"
