@@ -63,7 +63,24 @@ class PreAuthRateLimitMiddleware(BaseHTTPMiddleware):
     """IP-based rate limiting that runs BEFORE auth."""
 
     async def dispatch(self, request: Request, call_next) -> Response:
-        client_ip = request.client.host if request.client else "unknown"
+        # Robust IP extraction order:
+        # 1. CF-Connecting-IP (Directly from Cloudflare)
+        # 2. X-Forwarded-For (First entry is the original client)
+        # 3. X-Real-IP (Set by Nginx)
+        # 4. request.client.host (Fallback to direct connection)
+        cf_ip = request.headers.get("cf-connecting-ip")
+        forwarded = request.headers.get("x-forwarded-for")
+        real_ip = request.headers.get("x-real-ip")
+        
+        if cf_ip:
+            client_ip = cf_ip
+        elif forwarded:
+            client_ip = forwarded.split(",")[0].strip()
+        elif real_ip:
+            client_ip = real_ip
+        else:
+            client_ip = request.client.host if request.client else "unknown"
+
         key = f"rate:ip:{client_ip}"
         limit = settings.rate_limit_ip_per_minute
 

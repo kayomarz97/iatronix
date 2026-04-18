@@ -35,7 +35,8 @@ dependencies = [
     "gunicorn>=22.0.0",
     "dspy-ai>=2.5.0",
     "firebase-admin>=6.5.0",
-    "sentence-transformers>=3.0.0",
+    "langchain-google-genai>=0.1.0",
+    "langchain-voyageai>=0.1.0",
 ]
 
 [tool.pytest.ini_options]

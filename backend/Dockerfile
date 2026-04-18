@@ -16,6 +16,8 @@ RUN pip install --no-cache-dir \
     "langchain>=0.3.0" \
     "langchain-anthropic>=0.3.0" \
     "langchain-openai>=0.3.0" \
+    "langchain-google-genai>=0.1.0" \
+    "langchain-voyageai>=0.1.0" \
     "langchain-text-splitters>=0.3.0" \
     "sqlalchemy[asyncio]>=2.0.0" \
     "asyncpg>=0.30.0" \

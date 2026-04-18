@@ -20,6 +20,24 @@ const MODES = [
   },
 ];
 
+const HOW_IT_WORKS = [
+  { step: "1", title: "Query rewriting", desc: "Fixes typos, expands abbreviations, standardizes terminology (e.g., HTN → hypertension) to maximize API search accuracy." },
+  { step: "2", title: "Classification", desc: "Regex pattern scoring instantly classifies the query (drug, disease, procedure, evidence, comparative). For ambiguous phrasing, a lightweight LLM call resolves the type." },
+  { step: "3", title: "Parallel data fetch", desc: "Relevant data is pulled in parallel from FDA, PubMed (guidelines + RCTs), PMC full text, Unpaywall free PDFs, RxNorm, MedlinePlus, NICE, and your uploaded PDFs — zero AI tokens at this stage." },
+  { step: "4", title: "Adaptive AI formatting", desc: "The adaptive pipeline analyses what you need, then formats fetched data into evidence-graded sections (LOE I–III, COR I–IIb) with approved citations. BLUF banner scales to data richness." },
+  { step: "5", title: "Evidence grading & safety", desc: "Each claim is assigned LOE and COR based on its source. RCT-backed guidelines earn LOE I; unsourced claims are capped at LOE III. Citations are verified. Results are cached." },
+];
+
+const DATA_SOURCES = [
+  { name: "FDA OpenFDA", url: "https://open.fda.gov/", desc: "Drug labels, adverse events, recalls" },
+  { name: "PubMed", url: "https://pubmed.ncbi.nlm.nih.gov/", desc: "Guidelines, RCTs, systematic reviews" },
+  { name: "PMC Open Access", url: "https://www.ncbi.nlm.nih.gov/pmc/", desc: "Full-text articles & StatPearls monographs" },
+  { name: "Unpaywall", url: "https://unpaywall.org/", desc: "Free legal PDFs for open-access articles" },
+  { name: "RxNorm", url: "https://www.nlm.nih.gov/research/umls/rxnorm/", desc: "Drug names & interactions" },
+  { name: "MedlinePlus", url: "https://medlineplus.gov/", desc: "Drug & disease patient summaries" },
+  { name: "NICE", url: "https://www.nice.org.uk/", desc: "UK clinical practice guidelines" },
+];
+
 const API_SOURCES = [
   {
     name: "Anthropic (Claude)",
@@ -36,27 +54,12 @@ const API_SOURCES = [
     note: "Optional alternative to Claude",
   },
   {
-    name: "NCBI PubMed",
-    desc: "Free API for clinical guidelines and systematic reviews. Key raises rate limit to 10 req/s.",
-    url: "https://www.ncbi.nlm.nih.gov/account/",
+    name: "Voyage AI (embeddings)",
+    desc: "Free embeddings API for Anthropic users (Anthropic has no embeddings). 200M tokens/month free tier.",
+    url: "https://www.voyageai.com",
     label: "Create free account",
-    note: "Optional — improves search speed",
+    note: "Optional, for Anthropic users only",
   },
-  {
-    name: "OpenFDA",
-    desc: "US FDA drug label data, adverse events, recalls. Key raises limit to 1000 req/min.",
-    url: "https://open.fda.gov/apis/authentication/",
-    label: "Get free API key",
-    note: "Optional — improves rate limits",
-  },
-];
-
-const HOW_IT_WORKS = [
-  { step: "1", title: "You type a query", desc: "Ask about a drug, disease, procedure, or evidence review in plain clinical language." },
-  { step: "2", title: "Query is classified", desc: "Regex pattern scoring instantly classifies the query. For ambiguous phrasing (confidence < 85%), a lightweight Haiku call resolves the type — so any medical question routes correctly, not just pre-enumerated patterns." },
-  { step: "3", title: "Data is fetched", desc: "Relevant data is pulled in parallel from OpenFDA, PubMed, PMC/StatPearls, RxNorm, DailyMed, MedlinePlus, and your uploaded PDFs — zero AI tokens at this stage." },
-  { step: "4", title: "LLM structures the response", desc: "The adaptive pipeline analyses what you actually need, then formats the fetched data into evidence-graded sections (LOE I–III, Class I–IIb) with approved citations. A Bottom Line Up Front (BLUF) banner is generated at the top — scaled to data richness: headline only for simple lookups; headline + summary + action bullets + safety caveats for complex queries." },
-  { step: "5", title: "Validation & safety checks", desc: "Citations are verified against approved sources (NICE, AHA/ACC, ESC, FDA, WHO). Safety warnings are applied. Results are cached for 30 days." },
 ];
 
 export default function AboutPage() {
@@ -69,8 +72,9 @@ export default function AboutPage() {
           About Iatronix
         </h1>
         <p style={{ color: "var(--text-secondary)", fontSize: "1rem", margin: 0, lineHeight: 1.6 }}>
-          An evidence-based medical reference platform that combines real-time data from
-          authoritative APIs with AI formatting to deliver structured, citable clinical answers.
+          Iatronix is an evidence-based clinical reference built for medical professionals.
+          Query real-time data from FDA, PubMed, NICE, and your own documents — formatted with AI, graded by evidence.
+          Your API key. Your data. Your control.
         </p>
       </div>
 
@@ -92,7 +96,28 @@ export default function AboutPage() {
         </div>
       </section>
 
-      {/* BLUF / Response format */}
+      {/* BYOK section */}
+      <section>
+        <h2 style={sectionHeading}>BYOK — Your Key, Your Data</h2>
+        <p style={{ margin: "0 0 1rem", fontSize: "0.875rem", color: "var(--text-secondary)" }}>
+          All LLM calls use <strong style={{ color: "var(--text-primary)" }}>your own API key</strong>. Nothing is sent to Iatronix servers for generation.
+          Supported providers: Anthropic (Claude), OpenAI (GPT), Google Gemini, OpenRouter.
+        </p>
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+          {[
+            { label: "Encrypted storage", desc: "API keys are encrypted at rest and in transit. Only you can use your key." },
+            { label: "No vendor lock-in", desc: "Switch providers anytime from Settings — your data is not locked in." },
+            { label: "Privacy by design", desc: "FDA data, PubMed articles, and your PDFs flow through your own LLM. No third-party processing." },
+          ].map((row) => (
+            <div key={row.label} style={{ display: "flex", gap: "0.75rem", padding: "0.75rem 1rem", background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)" }}>
+              <span style={{ fontWeight: 600, fontSize: "0.825rem", color: "var(--accent)", minWidth: 130, flexShrink: 0 }}>{row.label}</span>
+              <span style={{ fontSize: "0.825rem", color: "var(--text-secondary)", lineHeight: 1.5 }}>{row.desc}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Response Format */}
       <section>
         <h2 style={sectionHeading}>Response Format</h2>
         <p style={{ margin: "0 0 1rem", fontSize: "0.875rem", color: "var(--text-secondary)" }}>
@@ -112,12 +137,80 @@ export default function AboutPage() {
             </div>
           ))}
         </div>
-        <p style={{ margin: "0.875rem 0 0", fontSize: "0.8rem", color: "var(--text-muted)" }}>
-          Below the BLUF, the response is broken into evidence-graded section cards — each claim carries a Level of Evidence (I–III) and Class of Recommendation (I–IIb) badge.
-        </p>
       </section>
 
-      {/* Search Modes (explanation only — toggle is in Settings) */}
+      {/* Data Sources */}
+      <section>
+        <h2 style={sectionHeading}>Data Sources</h2>
+        <p style={{ margin: "0 0 1rem", fontSize: "0.875rem", color: "var(--text-secondary)" }}>
+          All data is fetched in real time from these authoritative sources before any AI processing:
+        </p>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: "0.5rem" }}>
+          {DATA_SOURCES.map((src) => (
+            <a
+              key={src.name}
+              href={src.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ display: "flex", flexDirection: "column", gap: "0.2rem", padding: "0.75rem", background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", textDecoration: "none", transition: "border-color var(--transition)" }}
+              onMouseOver={(e) => (e.currentTarget.style.borderColor = "var(--accent)")}
+              onMouseOut={(e) => (e.currentTarget.style.borderColor = "var(--border)")}
+            >
+              <span style={{ fontWeight: 600, fontSize: "0.875rem", color: "var(--accent)", display: "flex", alignItems: "center", gap: "0.3rem" }}>
+                {src.name} <ExternalLink size={11} />
+              </span>
+              <span style={{ fontSize: "0.775rem", color: "var(--text-muted)" }}>{src.desc}</span>
+            </a>
+          ))}
+        </div>
+      </section>
+
+      {/* PDF Vector Search */}
+      <section>
+        <h2 style={sectionHeading}>PDF Vector Search</h2>
+        <p style={{ margin: "0 0 1rem", fontSize: "0.875rem", color: "var(--text-secondary)" }}>
+          Upload your own medical PDFs and search them semantically. Each query is embedded using your chosen provider's embeddings API.
+        </p>
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+          {[
+            { label: "Your embeddings key", desc: "OpenAI, Google, or Voyage AI. Select your provider in Settings." },
+            { label: "Anthropic users", desc: "Anthropic has no embeddings API. Get a free Voyage AI key (200M tokens/month) to enable PDF search." },
+            { label: "Encrypted storage", desc: "Uploaded PDFs are stored securely in Supabase pgvector. Only you can search them." },
+          ].map((row) => (
+            <div key={row.label} style={{ display: "flex", gap: "0.75rem", padding: "0.75rem 1rem", background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)" }}>
+              <span style={{ fontWeight: 600, fontSize: "0.825rem", color: "var(--accent)", minWidth: 130, flexShrink: 0 }}>{row.label}</span>
+              <span style={{ fontSize: "0.825rem", color: "var(--text-secondary)", lineHeight: 1.5 }}>{row.desc}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Evidence Grading */}
+      <section>
+        <h2 style={sectionHeading}>Evidence Grading</h2>
+        <p style={{ margin: "0 0 1rem", fontSize: "0.875rem", color: "var(--text-secondary)" }}>
+          Every claim is assigned a Level of Evidence and Class of Recommendation:
+        </p>
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+          {[
+            {
+              label: "Level of Evidence (LOE)",
+              desc: "I = Randomized controlled trial (RCT). II = Prospective cohort / guideline consensus. III = Case reports / expert opinion.",
+            },
+            {
+              label: "Class of Recommendation (COR)",
+              desc: "I = Strong benefit (should be done). IIa = Moderate benefit (reasonable). IIb = Weak benefit (may consider). III = No benefit or harmful.",
+            },
+          ].map((row) => (
+            <div key={row.label} style={{ display: "flex", gap: "0.75rem", padding: "0.75rem 1rem", background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)" }}>
+              <span style={{ fontWeight: 600, fontSize: "0.825rem", color: "var(--accent)", minWidth: 180, flexShrink: 0 }}>{row.label}</span>
+              <span style={{ fontSize: "0.825rem", color: "var(--text-secondary)", lineHeight: 1.5 }}>{row.desc}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Search Modes */}
       <section>
         <h2 style={sectionHeading}>Search Modes</h2>
         <p style={{ margin: "0 0 1rem", fontSize: "0.875rem", color: "var(--text-secondary)" }}>
@@ -139,10 +232,10 @@ export default function AboutPage() {
 
       {/* API Keys */}
       <section>
-        <h2 style={sectionHeading}>API Keys</h2>
+        <h2 style={sectionHeading}>LLM & Embedding API Keys</h2>
         <p style={{ margin: "0 0 1rem", fontSize: "0.875rem", color: "var(--text-secondary)" }}>
           Iatronix uses your own API keys (BYOK — Bring Your Own Key). Keys are encrypted and never shared.
-          Add them in <a href="/settings" style={{ color: "var(--accent)" }}>Settings → LLM API Key</a>.
+          Add them in <a href="/settings" style={{ color: "var(--accent)" }}>Settings</a>.
         </p>
         <div style={{ display: "flex", flexDirection: "column", gap: "0.625rem" }}>
           {API_SOURCES.map((src) => (
@@ -168,39 +261,6 @@ export default function AboutPage() {
                 </a>
               </div>
             </div>
-          ))}
-        </div>
-      </section>
-
-      {/* Data sources */}
-      <section>
-        <h2 style={sectionHeading}>Data Sources</h2>
-        <p style={{ margin: "0 0 1rem", fontSize: "0.875rem", color: "var(--text-secondary)" }}>
-          All data is fetched in real time from these authoritative sources before any AI processing:
-        </p>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: "0.5rem" }}>
-          {[
-            { name: "OpenFDA", url: "https://open.fda.gov/", desc: "Drug labels & adverse events" },
-            { name: "PubMed / PMC", url: "https://pubmed.ncbi.nlm.nih.gov/", desc: "Guidelines, RCTs & StatPearls monographs" },
-            { name: "RxNorm", url: "https://www.nlm.nih.gov/research/umls/rxnorm/", desc: "Drug names & interactions" },
-            { name: "DailyMed", url: "https://dailymed.nlm.nih.gov/", desc: "Full prescribing information" },
-            { name: "MedlinePlus", url: "https://medlineplus.gov/", desc: "Drug & disease summaries" },
-            { name: "Semantic Scholar", url: "https://www.semanticscholar.org/", desc: "Medical literature search" },
-          ].map((src) => (
-            <a
-              key={src.name}
-              href={src.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{ display: "flex", flexDirection: "column", gap: "0.2rem", padding: "0.75rem", background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", textDecoration: "none", transition: "border-color var(--transition)" }}
-              onMouseOver={(e) => (e.currentTarget.style.borderColor = "var(--accent)")}
-              onMouseOut={(e) => (e.currentTarget.style.borderColor = "var(--border)")}
-            >
-              <span style={{ fontWeight: 600, fontSize: "0.875rem", color: "var(--accent)", display: "flex", alignItems: "center", gap: "0.3rem" }}>
-                {src.name} <ExternalLink size={11} />
-              </span>
-              <span style={{ fontSize: "0.775rem", color: "var(--text-muted)" }}>{src.desc}</span>
-            </a>
           ))}
         </div>
       </section>

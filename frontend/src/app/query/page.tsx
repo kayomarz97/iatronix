@@ -2,30 +2,14 @@
 
 import { Suspense } from "react";
 import { SearchBar } from "@/components/ui/SearchBar";
-import { ThinkingAnimation } from "@/components/ui/ThinkingAnimation";
+import { LoadingScreen } from "@/components/LoadingScreen";
 import { DisclaimerBanner } from "@/components/results/DisclaimerBanner";
-import { TextNodeRenderer } from "@/components/results/TextNodeRenderer";
-import { DrugInfoResult } from "@/components/results/DrugInfoResult";
-import { DiseaseInfoResult } from "@/components/results/DiseaseInfoResult";
-import { ComparativeResult } from "@/components/results/ComparativeResult";
-import { GeneralResult } from "@/components/results/GeneralResult";
-import { ProcedureResult } from "@/components/results/ProcedureResult";
-import { EvidenceResult } from "@/components/results/EvidenceResult";
 import { AdaptiveResultRenderer } from "@/components/results/AdaptiveResultRenderer";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { useQueryContext } from "@/components/providers/QueryProvider";
 import { formatLatency } from "@/lib/formatters";
-import type {
-  DrugResponse,
-  DiseaseResponse,
-  ComparativeResponse,
-  GeneralResponse,
-  ProcedureResponse,
-  EvidenceResponse,
-  DegradedResponse,
-  AdaptiveResponse,
-} from "@/lib/types";
+import type { DegradedResponse, AdaptiveResponse } from "@/lib/types";
 
 function QueryContent() {
   const { result, isLoading, loadingStage, error, activeModelName, submitQuery } = useQueryContext();
@@ -47,7 +31,14 @@ function QueryContent() {
         </Card>
       )}
 
-      {isLoading && <ThinkingAnimation stage={loadingStage} />}
+      {isLoading && (
+        <LoadingScreen
+          currentStep={
+            (loadingStage as "classifying" | "fetching" | "generating" | "verifying") ||
+            "classifying"
+          }
+        />
+      )}
 
       {result && !isLoading && (
         <div className="space-y-6">
@@ -62,6 +53,11 @@ function QueryContent() {
               </span>
               {result.cached && <Badge variant="success">cached</Badge>}
               {result.truncated && <Badge variant="warning">truncated</Badge>}
+              {result.rewritten_query && (
+                <span className="rounded-full bg-surface-alt px-2.5 py-1 text-text-muted italic">
+                  Searched as: {result.rewritten_query}
+                </span>
+              )}
             </div>
           </div>
 
@@ -77,57 +73,10 @@ function QueryContent() {
             </Card>
           )}
 
-          {/* Typed results */}
-          {result.query_type === "drug" &&
-            "drug_name" in result.response && (
-              <DrugInfoResult data={result.response as DrugResponse} />
-            )}
-
-          {result.query_type === "disease" &&
-            "disease_name" in result.response && (
-              <DiseaseInfoResult data={result.response as DiseaseResponse} />
-            )}
-
-          {result.query_type === "comparative" &&
-            "entities_compared" in result.response && (
-              <ComparativeResult
-                data={result.response as ComparativeResponse}
-              />
-            )}
-
-          {result.query_type === "general" &&
-            "summary" in result.response &&
-            "key_points" in result.response && (
-              <GeneralResult data={result.response as GeneralResponse} />
-            )}
-
-          {result.query_type === "procedure" &&
-            "procedure_name" in result.response && (
-              <ProcedureResult data={result.response as ProcedureResponse} />
-            )}
-
-          {result.query_type === "evidence" &&
-            "query_topic" in result.response && (
-              <EvidenceResult data={result.response as EvidenceResponse} />
-            )}
-
-          {result.query_type === "adaptive" &&
-            "sections" in result.response && (
-              <AdaptiveResultRenderer data={result.response as AdaptiveResponse} />
-            )}
-
-          {/* Text nodes — only show when no typed result rendered (fallback) */}
-          {result.text_nodes.length > 0 &&
-            !("drug_name" in result.response) &&
-            !("disease_name" in result.response) &&
-            !("entities_compared" in result.response) &&
-            !("procedure_name" in result.response) &&
-            !("query_topic" in result.response) &&
-            !("key_points" in result.response) && (
-              <Card>
-                <TextNodeRenderer nodes={result.text_nodes} />
-              </Card>
-            )}
+          {/* Adaptive result — always rendered for non-degraded responses */}
+          {"sections" in result.response && (
+            <AdaptiveResultRenderer data={result.response as AdaptiveResponse} fetchSources={result.fetch_sources} />
+          )}
 
           <DisclaimerBanner
             disclaimer={result.disclaimer}
@@ -142,7 +91,7 @@ function QueryContent() {
 
 export default function QueryPage() {
   return (
-    <Suspense fallback={<ThinkingAnimation />}>
+    <Suspense fallback={<LoadingScreen currentStep="classifying" />}>
       <QueryContent />
     </Suspense>
   );

@@ -76,7 +76,7 @@ def _is_approved_source(source: str) -> bool:
     return False
 
 
-def validate_citations(response_data: dict, query_type: str) -> list[str]:
+def validate_citations(response_data: dict, query_type: str, fetched_data=None) -> list[str]:
     """
     Validate citations in a response. Returns list of validation warnings.
     Non-blocking — warnings are informational, response is still returned.
@@ -132,8 +132,18 @@ def validate_citations(response_data: dict, query_type: str) -> list[str]:
                 "Please verify with primary sources.",
             )
 
-    # Reference URL validation — null unsafe URLs and warn (defense-in-depth after url_builder)
+    # Reference URL and PMID validation
+    from app.services.url_builder import build_pmid_index
+    valid_pmids = set(build_pmid_index(fetched_data).values()) if fetched_data else set()
+    
+    valid_refs = []
     for ref in response_data.get("references", []):
+        if fetched_data:
+            pmid = ref.get("pmid")
+            if pmid and str(pmid) not in valid_pmids:
+                warnings.append(f"Removed hallucinated reference with unverified PMID: {pmid}")
+                continue
+                
         url = ref.get("url")
         if url is None:
             continue
@@ -151,6 +161,9 @@ def validate_citations(response_data: dict, query_type: str) -> list[str]:
             warnings.append(
                 f"Reference URL domain not in approved list — removed: '{domain}'"
             )
+        valid_refs.append(ref)
+        
+    response_data["references"] = valid_refs
 
     return warnings
 

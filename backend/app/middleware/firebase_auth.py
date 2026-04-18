@@ -19,7 +19,12 @@ logger = logging.getLogger(__name__)
 try:
     firebase_admin.get_app()
 except ValueError:
-    firebase_admin.initialize_app()
+    import os
+    cred_path = os.getenv("FIREBASE_CREDENTIALS")
+    if cred_path and os.path.exists(cred_path):
+        firebase_admin.initialize_app(credentials.Certificate(cred_path))
+    else:
+        firebase_admin.initialize_app()  # ADC fallback for local dev
 
 EXEMPT_PATHS = {
     "/api/v1/health",
@@ -79,16 +84,9 @@ class FirebaseAuthMiddleware(BaseHTTPMiddleware):
         user = _cache_get(uid)
         if user is None:
             async with async_session() as session:
-                result = await session.execute(select(User).where(User.firebase_uid == uid))
-                user = result.scalar_one_or_none()
-                
-                if not user:
-                    email = decoded_token.get("email")
-                    user = User(firebase_uid=uid, email=email)
-                    session.add(user)
-                    await session.commit()
-                    await session.refresh(user)
-
+                from app.services.user_service import get_or_create_user
+                email = decoded_token.get("email")
+                user = await get_or_create_user(session, uid, email)
                 _cache_set(uid, user)
 
         if user.expires_at and user.expires_at < datetime.now(timezone.utc):

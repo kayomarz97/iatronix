@@ -1,20 +1,20 @@
 """Vector similarity search via pgvector.
 
 Searches document_chunks using cosine similarity on HNSW index.
+Uses the user's BYOK LLM key for embeddings — no server-side embedding key required.
 Visibility: verified documents visible to all, unverified only to uploader.
 """
 
-import asyncio
 import logging
 from dataclasses import dataclass
 from typing import Optional
 
-from sqlalchemy import or_, select
+from sqlalchemy import select
 
 from app.config import settings
 from app.db.session import async_session as async_session_factory
 from app.models.document import Document, DocumentChunk
-from app.services.embedder import Embedder
+from app.services.embedder import embed_query
 
 logger = logging.getLogger(__name__)
 
@@ -39,9 +39,13 @@ async def search(
     user_id: Optional[int] = None,
     top_k: Optional[int] = None,
     source_type: Optional[str] = None,
+    user_key: Optional[str] = None,
+    user_provider: Optional[str] = None,
+    voyage_api_key: Optional[str] = None,
 ) -> list[SearchResult]:
     """Embed query and search pgvector for similar document chunks.
 
+    Requires the user's BYOK key — skips gracefully for Anthropic/unsupported providers.
     Visibility rules:
     - Verified documents: visible to all users
     - Unverified PDFs: visible only to the user who uploaded them
@@ -49,13 +53,23 @@ async def search(
     if not settings.vector_search_enabled:
         return []
 
-    top_k = top_k or settings.vector_top_k
-    embedder = Embedder.get_instance()
+    if not user_key or not user_provider:
+        return []
 
-    query_embedding = await asyncio.to_thread(embedder.embed_text, query)
+    top_k = top_k or settings.vector_top_k
+
+    # Fast path: skip DB round-trip entirely when no document chunks exist.
+    async with async_session_factory() as session:
+        from sqlalchemy import func
+        count_result = await session.execute(select(func.count()).select_from(DocumentChunk))
+        if count_result.scalar() == 0:
+            return []
+
+    query_embedding = await embed_query(query, user_provider, user_key, voyage_api_key=voyage_api_key)
+    if query_embedding is None:
+        return []
 
     async with async_session_factory() as session:
-        # Cosine distance: lower = more similar. Similarity = 1 - distance.
         distance = DocumentChunk.embedding.cosine_distance(query_embedding)
 
         stmt = (
@@ -68,13 +82,11 @@ async def search(
             .where(1 - distance >= settings.vector_min_similarity)
         )
 
-        # Visibility filter
         if user_id is not None:
             stmt = stmt.where(Document.uploaded_by_user_id == user_id)
         else:
-            stmt = stmt.where(Document.uploaded_by_user_id == -1)  # Strict isolation: no user = no docs
+            stmt = stmt.where(Document.uploaded_by_user_id == -1)
 
-        # Optional source type filter
         if source_type:
             stmt = stmt.where(Document.source_type == source_type)
 

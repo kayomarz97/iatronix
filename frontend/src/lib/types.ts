@@ -40,6 +40,9 @@ export interface DrugResponse {
   pharmacokinetics?: EvidencedClaim | null;
   special_populations: EvidencedClaim[];
   monitoring: EvidencedClaim[];
+  tables?: { title: string; headers: string[]; rows: string[][] }[];
+  flowcharts?: { title: string; steps: string[] }[];
+  extended_data?: Record<string, unknown> | null;
   references: Reference[];
 }
 
@@ -67,6 +70,9 @@ export interface DiseaseResponse {
   treatment: TreatmentSection;
   complications: EvidencedClaim[];
   prognosis?: EvidencedClaim | null;
+  tables?: { title: string; headers: string[]; rows: string[][] }[];
+  flowcharts?: { title: string; steps: string[] }[];
+  extended_data?: Record<string, unknown> | null;
   references: Reference[];
 }
 
@@ -81,6 +87,7 @@ export interface ComparativeResponse {
   summary?: EvidencedClaim | null;
   detailed_comparison: ComparisonDimension[];
   clinical_preference?: EvidencedClaim | null;
+  extended_data?: Record<string, unknown> | null;
   references: Reference[];
 }
 
@@ -90,6 +97,7 @@ export interface GeneralResponse {
   related_drugs: string[];
   related_conditions: string[];
   confidence: "high" | "moderate" | "low";
+  extended_data?: Record<string, unknown> | null;
   references: Reference[];
 }
 
@@ -118,6 +126,7 @@ export interface ProcedureResponse {
   technique_steps: ProcedureStep[];
   complications: EvidencedClaim[];
   guidelines: ProcedureGuideline[];
+  extended_data?: Record<string, unknown> | null;
   references: Reference[];
 }
 
@@ -139,6 +148,7 @@ export interface EvidenceResponse {
   opposing_studies: StudyEvidence[];
   clinical_recommendation?: EvidencedClaim | null;
   guideline_status: string;
+  extended_data?: Record<string, unknown> | null;
   references: Reference[];
 }
 
@@ -205,15 +215,7 @@ export interface QueryResponse {
     | "evidence"
     | "adaptive";
   model_used: string;
-  response:
-    | DrugResponse
-    | DiseaseResponse
-    | ComparativeResponse
-    | GeneralResponse
-    | ProcedureResponse
-    | EvidenceResponse
-    | AdaptiveResponse
-    | DegradedResponse;
+  response: AdaptiveResponse | DegradedResponse;
   text_nodes: TextNode[];
   safety_warnings: string[];
   validation_warnings: string[];
@@ -221,6 +223,12 @@ export interface QueryResponse {
   cached: boolean;
   truncated: boolean;
   latency_ms: number;
+  recommendation_level?: string | null;
+  audit_id?: number | null;
+  version?: string;
+  needs_review?: boolean;
+  rewritten_query?: string | null;
+  fetch_sources?: string[];
 }
 
 export interface ModelInfo {

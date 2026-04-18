@@ -6,6 +6,8 @@ import { EvidencedText } from "./EvidenceBadge";
 import { ReferenceList } from "./ReferenceList";
 import { ResultHero, ResultMetaCard, ResultSection } from "./ResultChrome";
 import { TruncatedList } from "./TruncatedList";
+import { TableRenderer } from "./TableRenderer";
+import { FlowchartRenderer } from "./FlowchartRenderer";
 
 interface DiseaseInfoResultProps {
   data: DiseaseResponse;
@@ -161,6 +163,14 @@ export function DiseaseInfoResult({ data }: DiseaseInfoResultProps) {
           </ResultSection>
         )}
       </div>
+
+      {data.tables && data.tables.length > 0 && (
+        <TableRenderer tables={data.tables} />
+      )}
+
+      {data.flowcharts && data.flowcharts.length > 0 && (
+        <FlowchartRenderer flowcharts={data.flowcharts} />
+      )}
 
       {data.references?.length > 0 && (
         <ReferenceList references={data.references} />

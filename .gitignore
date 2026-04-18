@@ -51,3 +51,4 @@ logs/
 # Firebase credentials
 firebase-adminsdk.json
 *firebase*.json
+.gstack/

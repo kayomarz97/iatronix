@@ -11,9 +11,9 @@ class Settings(BaseSettings):
     # Redis
     redis_url: str = "redis://iatronix-redis:6379/0"
 
-    # Embedding & Vector search
+    # Embedding & Vector search (BYOK — uses user's LLM key, no server-side key needed)
     embedding_dim: int = 768
-    embedding_model: str = "google/embeddinggemma-300m"
+    embedding_model: str = "text-embedding-3-small"  # OpenAI default; gemini uses text-embedding-004
     vector_search_enabled: bool = True
     vector_top_k: int = 5
     vector_min_similarity: float = 0.3
@@ -60,7 +60,7 @@ class Settings(BaseSettings):
     max_query_length: int = 2000
 
     # Rate limiting
-    rate_limit_ip_per_minute: int = 30
+    rate_limit_ip_per_minute: int = 100
     rate_limit_key_per_minute: int = 10
     rate_limit_free_key_per_minute: int = 20
     rate_limit_premium_key_per_minute: int = 60
@@ -123,27 +123,28 @@ class Settings(BaseSettings):
 
     # External API fetching
     api_fetch_enabled: bool = True
-    api_fetch_timeout_seconds: float = 12.0
+    api_fetch_timeout_seconds: float = 20.0
     pubmed_api_key: Optional[str] = None
     openfda_api_key: Optional[str] = None
     nice_api_key: Optional[str] = None
+    # Unpaywall requires user email — passed from authenticated user context at query time
 
     # Token budgets
     llm_max_tokens_format: int = 2048  # format mode — drug/procedure (Haiku)
     llm_max_tokens_format_drug_context: int = (
-        4096  # drug-in-condition: synthesize drug + condition management guidelines
+        6144  # drug-in-condition: synthesize drug + condition management guidelines
     )
     llm_max_tokens_format_evidence: int = (
-        3072  # evidence queries need more for study tables
+        5120  # evidence queries need more for study tables
     )
     llm_max_tokens_format_procedure: int = (
         3072  # procedure format mode: needs room for 5+ steps + all sections
     )
     llm_max_tokens_format_disease: int = (
-        6144  # format mode — disease (Sonnet, needs depth for path/dx/tx/complications)
+        8192  # format mode — disease (Sonnet, needs depth for path/dx/tx/complications)
     )
     llm_max_tokens_generate: int = (
-        4096  # generate/fallback mode — disease/drug schemas need full depth
+        6144  # generate/fallback mode — disease/drug schemas need full depth
     )
     retry_on_sparse_enabled: bool = (
         True  # retry LLM call when response is critically sparse
@@ -167,6 +168,7 @@ class Settings(BaseSettings):
     cost_sonnet_output_per_m: float = 15.0
 
     model_config = {"env_file": ".env", "extra": "ignore"}
+    backend_version: str = "2.1"
 
 
 settings = Settings()

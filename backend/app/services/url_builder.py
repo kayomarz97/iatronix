@@ -212,11 +212,17 @@ def enrich_references(data: dict, fetched_data=None) -> None:
       6. null (no invented URLs).
     """
     pmid_index = build_pmid_index(fetched_data)
+    pmid_to_title = {v: k.title() for k, v in pmid_index.items()}
     refs = data.get("references")
     if not refs:
         return
 
     for ref in refs:
+        # Step 0: backfill title if missing but PMID is present
+        pmid = ref.get("pmid")
+        if not ref.get("title") and pmid and str(pmid) in pmid_to_title:
+            ref["title"] = pmid_to_title[str(pmid)]
+
         existing = ref.get("url")
 
         # Step 1: validate existing URL

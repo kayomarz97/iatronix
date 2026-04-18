@@ -10,6 +10,8 @@ from fastapi.responses import ORJSONResponse
 
 from app.api.v1 import health, models, query
 from app.api.v1 import auth_routes, documents, history as history_module
+from app.api.v1 import version as version_module
+from app.api.v1 import service_keys as service_keys_module
 from app.config import settings
 from app.middleware.firebase_auth import FirebaseAuthMiddleware
 from app.middleware.payload_limit import PayloadLimitMiddleware
@@ -98,6 +100,28 @@ async def lifespan(app: FastAPI):
 
     asyncio.create_task(_cleanup_expired_documents())
 
+    async def _purge_old_audit_logs():
+        """Background task: delete query_audit rows older than 30 days."""
+        from datetime import datetime, timezone, timedelta
+        from sqlalchemy import delete as sa_delete
+        from app.db.session import async_session as session_factory
+        from app.models.query_audit import QueryAudit
+
+        while True:
+            await asyncio.sleep(86400)  # run once per day
+            try:
+                cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+                async with session_factory() as session:
+                    await session.execute(
+                        sa_delete(QueryAudit).where(QueryAudit.timestamp < cutoff)
+                    )
+                    await session.commit()
+                    logger.info("Audit purge: removed rows older than 30 days")
+            except Exception as exc:
+                logger.error(f"Audit purge error: {exc}")
+
+    asyncio.create_task(_purge_old_audit_logs())
+
     yield
 
     # Shutdown
@@ -138,3 +162,5 @@ app.include_router(models.router, prefix="/api/v1")
 app.include_router(query.router, prefix="/api/v1")
 app.include_router(documents.router, prefix="/api/v1")
 app.include_router(history_module.router, prefix="/api/v1")
+app.include_router(version_module.router, prefix="/api/v1")
+app.include_router(service_keys_module.router, prefix="/api/v1")

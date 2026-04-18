@@ -59,6 +59,9 @@ class MedicalResponseGeneration(dspy.Signature):
     fetched_data: str = dspy.InputField(
         desc="Raw data from FDA, PubMed, NICE APIs — each block prefixed with [SOURCE: ...]. Use ONLY this data."
     )
+    ncbi_structured: str = dspy.InputField(
+        desc="Structured disease data from StatPearls/ClinVar when available, otherwise empty string."
+    )
     vector_context: str = dspy.InputField(
         desc="Relevant excerpts from indexed documents"
     )
@@ -67,6 +70,9 @@ class MedicalResponseGeneration(dspy.Signature):
     )
     depth: str = dspy.InputField(
         desc="quick=50-100 words/section; standard=100-200 words/section; comprehensive=200-400 words/section with full clinical detail"
+    )
+    output_format_hint: str = dspy.InputField(
+        desc="Hints on expected formats like tables or flowcharts, if applicable"
     )
 
     response_json: str = dspy.OutputField(

@@ -15,6 +15,7 @@ import { ResultHero, ResultMetaCard, ResultSection } from "./ResultChrome";
 
 interface Props {
   data: AdaptiveResponse;
+  fetchSources?: string[];
 }
 
 // ── LOE / COR colour maps ────────────────────────────────────────────────────
@@ -158,6 +159,26 @@ function ReferenceRow({ ref: r, index }: { ref: AdaptiveReference; index: number
 }
 
 // ── LOE/COR glossary ──────────────────────────────────────────────────────────
+// ── Data source badges ──────────────────────────────────────────────────────
+function DataSourceBadges({ sources }: { sources?: string[] }) {
+  if (!sources || sources.length === 0) return null;
+
+  return (
+    <ResultSection title="Data Sources" eyebrow="Fetched from">
+      <div className="flex flex-wrap gap-2">
+        {sources.map((source, i) => (
+          <span
+            key={i}
+            className="rounded-full border border-border bg-surface-alt px-3 py-1 text-xs text-text-muted"
+          >
+            {source}
+          </span>
+        ))}
+      </div>
+    </ResultSection>
+  );
+}
+
 function EvidenceGlossary() {
   const [open, setOpen] = useState(false);
   return (
@@ -224,7 +245,7 @@ function EvidenceGlossary() {
 }
 
 // ── Main renderer ────────────────────────────────────────────────────────────
-export function AdaptiveResultRenderer({ data }: Props) {
+export function AdaptiveResultRenderer({ data, fetchSources }: Props) {
   const router = useRouter();
 
   return (
@@ -267,6 +288,8 @@ export function AdaptiveResultRenderer({ data }: Props) {
       {data.sections.map((section, i) => (
         <SectionCard key={i} section={section} />
       ))}
+
+      <DataSourceBadges sources={fetchSources} />
 
       {data.references.length > 0 && (
         <ResultSection title="References" eyebrow="Sources">

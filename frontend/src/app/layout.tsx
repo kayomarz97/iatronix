@@ -4,6 +4,7 @@ import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
 import { QueryProvider } from "@/components/providers/QueryProvider";
 import { AuthProvider } from "@/components/providers/AuthProvider";
+import { VersionBadge } from "@/components/VersionBadge";
 
 export const metadata: Metadata = {
   title: "Iatronix — Medical Reference",
@@ -18,6 +19,7 @@ export default function RootLayout({
   return (
     <html lang="en" data-theme="dark" suppressHydrationWarning>
       <head>
+        <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
         {/* Inject theme before first paint to avoid flash */}
         <script
           dangerouslySetInnerHTML={{
@@ -33,6 +35,7 @@ export default function RootLayout({
               {children}
             </main>
             <Footer />
+            <VersionBadge />
           </AuthProvider>
         </QueryProvider>
       </body>

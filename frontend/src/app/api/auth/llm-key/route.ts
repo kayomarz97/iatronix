@@ -7,8 +7,8 @@ function proxyHeaders(request: NextRequest): Record<string, string> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };
-  const apiKey = request.headers.get("x-api-key");
-  if (apiKey) headers["X-API-Key"] = apiKey;
+  const authHeader = request.headers.get("authorization");
+  if (authHeader) headers["Authorization"] = authHeader;
   return headers;
 }
 

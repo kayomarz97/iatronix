@@ -15,10 +15,10 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.config import settings
-from app.models.base import Base
+from app.models.base import CacheBase
 
 
-class QueryCache(Base):
+class QueryCache(CacheBase):
     __tablename__ = "query_cache"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)

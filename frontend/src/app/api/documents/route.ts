@@ -5,9 +5,12 @@ const INTERNAL_API_URL =
 
 export async function GET(request: NextRequest) {
   try {
-    const apiKey = request.headers.get("x-api-key") || "";
+    const authHeader = request.headers.get("authorization");
+    const headers: Record<string, string> = {};
+    if (authHeader) headers["Authorization"] = authHeader;
+
     const response = await fetch(`${INTERNAL_API_URL}/api/v1/documents`, {
-      headers: { "X-API-Key": apiKey },
+      headers,
     });
     const data = await response.json();
     return NextResponse.json(data, { status: response.status });

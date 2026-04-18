@@ -5,7 +5,7 @@ const INTERNAL_API_URL =
 
 export async function POST(request: NextRequest) {
   try {
-    const apiKey = request.headers.get("x-api-key") || "";
+    const authHeader = request.headers.get("authorization");
     const contentType = request.headers.get("content-type") || "";
 
     // Stream the raw body through to the backend — avoids Node.js
@@ -17,7 +17,7 @@ export async function POST(request: NextRequest) {
       {
         method: "POST",
         headers: {
-          "X-API-Key": apiKey,
+          ...(authHeader ? { "Authorization": authHeader } : {}),
           "Content-Type": contentType,
         },
         body: body,

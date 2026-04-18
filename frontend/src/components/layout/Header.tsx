@@ -18,7 +18,6 @@ import { API_KEY_STORAGE_KEY } from "@/lib/constants";
 
 const NAV_LINKS = [
   { href: "/", label: "Search" },
-  { href: "/documents", label: "Documents" },
   { href: "/about", label: "About" },
 ];
 

@@ -29,7 +29,11 @@ export default function LoginPage() {
       localStorage.setItem("iatronix_email", userCredential.user.email || email);
       window.location.href = "/";
     } catch (err: any) {
-      setError(err.message || "Invalid email or password");
+      if (err.code === "auth/too-many-requests") {
+        setError("Too many failed attempts. Please try again later or reset your password.");
+      } else {
+        setError(err.message || "Invalid email or password");
+      }
       setShaking(true);
       setTimeout(() => setShaking(false), 500);
     } finally {

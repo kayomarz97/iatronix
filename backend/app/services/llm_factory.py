@@ -14,6 +14,10 @@ def get_provider(model_id: str) -> str:
     """Determine provider from model ID."""
     if "/" in model_id:
         return "openrouter"
+    if model_id.startswith("gemini") or model_id.startswith("models/gemini"):
+        return "gemini"
+    if model_id.startswith("gpt-") or model_id.startswith("o1") or model_id.startswith("o3"):
+        return "openai"
     return "anthropic"
 
 
@@ -51,6 +55,23 @@ def create_llm(
             max_tokens=effective_max_tokens,
             timeout=settings.llm_timeout_seconds,
             max_retries=0,
+        )
+    elif provider == "gemini":
+        try:
+            from langchain_google_genai import ChatGoogleGenerativeAI
+        except ImportError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "error": "gemini_unavailable",
+                    "message": "Gemini support requires langchain-google-genai. Contact support.",
+                },
+            ) from exc
+        return ChatGoogleGenerativeAI(
+            model=model_id,
+            google_api_key=api_key,
+            max_output_tokens=effective_max_tokens,
+            timeout=settings.llm_timeout_seconds,
         )
     elif provider == "openai":
         return ChatOpenAI(

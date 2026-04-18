@@ -46,6 +46,11 @@ class User(TimestampMixin, Base):
     # BYOK: user's own LLM API key (Fernet-encrypted at rest)
     encrypted_llm_key: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     llm_provider: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    
+    # Specific API keys
+    openai_api_key: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    gemini_api_key: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    anthropic_api_key: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
     # Profile (for personalisation and future monetisation analytics)
     username: Mapped[Optional[str]] = mapped_column(
