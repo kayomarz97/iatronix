@@ -33,23 +33,25 @@ export function ReferenceList({ references }: ReferenceListProps) {
           return (
             <li
               key={i}
-              className="rounded-2xl border border-border/70 bg-background/70 px-4 py-3 text-sm"
+              className="rounded-2xl border border-border/70 bg-background/70 px-4 py-3 text-sm flex flex-col items-start gap-1"
             >
+              <div className="flex items-center gap-2">
+                <span className="inline-flex items-center rounded-md bg-secondary px-2 py-0.5 text-xs font-medium text-secondary-foreground">
+                  {ref.source}
+                </span>
+                {ref.year && (
+                  <span className="text-xs text-text-muted">({ref.year})</span>
+                )}
+              </div>
               <a
                 href={url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"
+                className="inline-flex items-start gap-1.5 text-sm font-medium text-primary hover:underline leading-snug"
               >
-                {ref.source}
-                <ExternalLink size={12} className="flex-shrink-0" />
+                <span>{ref.title || "Source Reference"}</span>
+                <ExternalLink size={12} className="flex-shrink-0 mt-1" />
               </a>
-              {ref.title && (
-                <span className="text-text-secondary"> — {ref.title}</span>
-              )}
-              {ref.year && (
-                <span className="text-text-muted"> ({ref.year})</span>
-              )}
             </li>
           );
         })}

@@ -73,19 +73,27 @@ export function QueryProvider({ children }: { children: ReactNode }) {
     setActiveModelName(modelName);
 
     setIsLoading(true);
-    setLoadingStage("fetching");
+    setLoadingStage("classifying");
     setError(null);
 
-    const stageTimer = setTimeout(() => setLoadingStage("generating"), 4000);
+    const t1 = setTimeout(() => setLoadingStage("fetching"), 1000);
+    const t2 = setTimeout(() => setLoadingStage("generating"), 5000);
 
     try {
       const response = await apiSubmitQuery(query, modelId, apiKey, undefined, sourceMode, false);
-      setLoadingStage("validating");
+      setLoadingStage("verifying");
+      await new Promise((r) => setTimeout(r, 400));
       setResult(response);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "An error occurred");
+      const msg = err instanceof Error ? err.message : "An error occurred";
+      if (msg.includes("429") || msg.toLowerCase().includes("rate limit")) {
+        setError("Rate limit exceeded. Please wait a minute before trying again.");
+      } else {
+        setError(msg);
+      }
     } finally {
-      clearTimeout(stageTimer);
+      clearTimeout(t1);
+      clearTimeout(t2);
       setIsLoading(false);
       setLoadingStage("");
     }

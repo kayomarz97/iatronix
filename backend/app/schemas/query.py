@@ -10,8 +10,8 @@ from app.config import settings
 
 class EvidencedClaim(BaseModel):
     value: str
-    loe: Literal["I", "II-1", "II-2", "II-3", "III"]
-    cor: Literal["I", "IIa", "IIb", "III-no-benefit", "III-harm"]
+    loe: Optional[str] = None
+    cor: Optional[str] = None
     source: str
     source_year: Optional[int] = None
     confidence: Literal["high", "moderate", "low"]
@@ -54,6 +54,9 @@ class DrugResponse(BaseModel):
     special_populations: list[EvidencedClaim] = []
     monitoring: list[EvidencedClaim] = []
     references: list[Reference] = []
+    tables: list[dict] = []
+    flowcharts: list[dict] = []
+    extended_data: Optional[dict] = None
 
 
 # --- Disease Response ---
@@ -77,6 +80,9 @@ class DiseaseResponse(BaseModel):
     complications: list[EvidencedClaim] = []
     prognosis: Optional[EvidencedClaim] = None
     references: list[Reference] = []
+    tables: list[dict] = []
+    flowcharts: list[dict] = []
+    extended_data: Optional[dict] = None
 
 
 class TreatmentSection(BaseModel):
@@ -104,6 +110,7 @@ class ComparativeResponse(BaseModel):
     detailed_comparison: list[ComparisonDimension] = []
     clinical_preference: Optional[EvidencedClaim] = None
     references: list[Reference] = []
+    extended_data: Optional[dict] = None
 
 
 # --- Procedure Response ---
@@ -127,6 +134,7 @@ class ProcedureResponse(BaseModel):
     complications: list[EvidencedClaim] = []
     guidelines: list[ProcedureGuideline] = []
     references: list[Reference] = []
+    extended_data: Optional[dict] = None
 
 
 # --- Evidence Response ---
@@ -149,6 +157,7 @@ class EvidenceResponse(BaseModel):
     clinical_recommendation: Optional[EvidencedClaim] = None
     guideline_status: str = "No formal guideline exists"
     references: list[Reference] = []
+    extended_data: Optional[dict] = None
 
 
 # --- General Response ---
@@ -161,6 +170,7 @@ class GeneralResponse(BaseModel):
     related_conditions: list[str] = []
     confidence: Literal["high", "moderate", "low"]
     references: list[Reference] = []
+    extended_data: Optional[dict] = None
 
 
 # --- Degraded Response ---
@@ -213,6 +223,7 @@ class AdaptiveResponse(BaseModel):
     response_focus: str
     depth: str
     related_topics: list[str] = []
+    extended_data: Optional[dict] = None
 
 
 # --- Text Nodes ---
@@ -245,16 +256,7 @@ class QueryResponse(BaseModel):
         "drug", "disease", "comparative", "general", "procedure", "evidence", "adaptive"
     ]
     model_used: str
-    response: Union[
-        DrugResponse,
-        DiseaseResponse,
-        ComparativeResponse,
-        ProcedureResponse,
-        EvidenceResponse,
-        GeneralResponse,
-        AdaptiveResponse,
-        DegradedResponse,
-    ]
+    response: Union[AdaptiveResponse, DegradedResponse]
     text_nodes: list[TextNode] = []
     safety_warnings: list[str] = []
     validation_warnings: list[str] = []
@@ -262,6 +264,12 @@ class QueryResponse(BaseModel):
     cached: bool = False
     truncated: bool = False
     latency_ms: int = 0
+    recommendation_level: Optional[str] = None
+    audit_id: Optional[int] = None
+    version: str = "2.1"
+    needs_review: bool = False
+    rewritten_query: Optional[str] = None
+    fetch_sources: list[str] = []
 
 
 DegradedResponse.model_rebuild()

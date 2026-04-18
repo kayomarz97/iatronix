@@ -12,6 +12,7 @@ export default function DocumentsPage() {
   const [dragActive, setDragActive] = useState(false);
 
   const getApiKey = () => localStorage.getItem(API_KEY_STORAGE_KEY) || "";
+  const authHeader = () => ({ "Authorization": `Bearer ${getApiKey()}` });
 
   const fetchDocuments = useCallback(async () => {
     const apiKey = getApiKey();
@@ -19,7 +20,7 @@ export default function DocumentsPage() {
 
     try {
       const res = await fetch("/api/v1/documents", {
-        headers: { "X-API-Key": apiKey },
+        headers: authHeader(),
       });
       if (res.ok) {
         const data: DocumentListResponse = await res.json();
@@ -51,7 +52,7 @@ export default function DocumentsPage() {
       // Call backend directly through nginx (handles 25MB body limit)
       const res = await fetch("/api/v1/documents/upload", {
         method: "POST",
-        headers: { "X-API-Key": getApiKey() },
+        headers: authHeader(),
         body: formData,
       });
 
@@ -77,7 +78,7 @@ export default function DocumentsPage() {
     try {
       const res = await fetch(`/api/v1/documents/${id}`, {
         method: "DELETE",
-        headers: { "X-API-Key": getApiKey() },
+        headers: authHeader(),
       });
       if (res.ok) {
         fetchDocuments();

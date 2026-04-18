@@ -41,6 +41,8 @@ services:
     environment:
       DSPY_ENABLED: "true"
       GUNICORN_WORKERS: "6"
+    volumes:
+      - ./backend/firebase-adminsdk.json:/app/firebase-adminsdk.json:ro
     ports:
       - "127.0.0.1:8200:8000"
     healthcheck:

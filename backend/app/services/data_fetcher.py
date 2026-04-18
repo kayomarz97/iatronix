@@ -8,6 +8,7 @@ All API calls are async, fire-and-forget, and silent on failure.
 
 import asyncio
 import contextlib
+import contextvars
 import json
 import logging
 import os
@@ -18,11 +19,29 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from typing import Optional
 
+# Request-scoped user email for Unpaywall lookups — set by fetch_data_for_query
+_user_email_ctx: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "_user_email_ctx", default=None
+)
+
+# Request-scoped NCBI API key for PubMed rate limit bypass — set by fetch_data_for_query
+_ncbi_key_ctx: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "_ncbi_key_ctx", default=None
+)
+
 import httpx
 
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+# PubMed rate limiter: without key (3 req/sec), with key (10 req/sec)
+# Use semaphores + minimum gap enforcement to stay within NCBI limits
+_PUBMED_SEM_NO_KEY = asyncio.Semaphore(2)
+_PUBMED_SEM_WITH_KEY = asyncio.Semaphore(8)
+_PUBMED_LAST_REQUEST: float = 0.0
+_PUBMED_MIN_GAP_NO_KEY = 0.5
+_PUBMED_MIN_GAP_WITH_KEY = 0.1
 
 # ------------------------------------------------------------------
 # Journal registry (loaded once at import time)
@@ -198,6 +217,7 @@ class DrugFetchResult:
     clinical_trial_abstracts: list = field(default_factory=list)
     data_source: str = "unknown"
     fetch_success: bool = False
+    data_sources: list = field(default_factory=list)
 
 
 @dataclass
@@ -207,7 +227,9 @@ class DiseaseFetchResult:
     nice_recommendations: list = field(default_factory=list)
     medlineplus_summary: Optional[str] = None
     semantic_papers: list = field(default_factory=list)
+    ncbi_structured: Optional[str] = None
     fetch_success: bool = False
+    data_sources: list = field(default_factory=list)
 
 
 @dataclass
@@ -215,6 +237,7 @@ class ProcedureFetchResult:
     guideline_abstracts: list = field(default_factory=list)
     practice_guideline_abstracts: list = field(default_factory=list)
     fetch_success: bool = False
+    data_sources: list = field(default_factory=list)
 
 
 @dataclass
@@ -223,6 +246,7 @@ class EvidenceFetchResult:
     systematic_review_abstracts: list = field(default_factory=list)
     guideline_abstracts: list = field(default_factory=list)
     fetch_success: bool = False
+    data_sources: list = field(default_factory=list)
 
 
 @dataclass
@@ -240,6 +264,7 @@ class FetchedData:
     drug_interactions: list = field(default_factory=list)  # RxNorm DDI pairs for 2-drug queries
     total_fetch_time_ms: int = 0
     fallback_to_llm: bool = False
+    data_sources: list = field(default_factory=list)
 
 
 # Local Indian drug repositories were intentionally removed.
@@ -690,11 +715,13 @@ async def _resolve_drug_name_online(client: httpx.AsyncClient, drug_name: str) -
 
 async def _fetch_pubmed_abstracts(
     client: httpx.AsyncClient, entity: str, pub_type: str = "guideline"
-) -> list:
+) -> tuple[list, set[str]]:
     """Fetch PubMed guideline or systematic review abstracts for an entity.
 
     Searches the broad PubMed corpus first. Journal registry is used only to boost
     priority sources, never to restrict the evidence base.
+
+    Returns: (articles, sources_used)
     """
     if pub_type == "guideline":
         pt_filter = "(Practice Guideline[pt] OR Guideline[pt])"
@@ -719,11 +746,11 @@ async def _fetch_pubmed_abstracts(
         else None
     )
     search_tasks = [
-        _pubmed_esearch(client, term, retmax),
-        _pubmed_esearch(client, broad_fallback, max(retmax // 2, 6)),
+        _pubmed_esearch_throttled(client, term, retmax),
+        _pubmed_esearch_throttled(client, broad_fallback, max(retmax // 2, 6)),
     ]
     if journal_term:
-        search_tasks.append(_pubmed_esearch(client, journal_term, 6))
+        search_tasks.append(_pubmed_esearch_throttled(client, journal_term, 6))
 
     search_results = await asyncio.gather(*search_tasks, return_exceptions=True)
 
@@ -738,9 +765,10 @@ async def _fetch_pubmed_abstracts(
                 all_ids.append(pid)
 
     if not all_ids:
-        return []
+        return [], set()
 
-    return await _pubmed_efetch(client, all_ids)
+    articles, sources = await _pubmed_efetch(client, all_ids)
+    return articles, sources
 
 
 async def _pubmed_esearch(
@@ -754,8 +782,9 @@ async def _pubmed_esearch(
         "retmode": "json",
         "sort": "relevance",
     }
-    if settings.pubmed_api_key:
-        params["api_key"] = settings.pubmed_api_key
+    api_key = _ncbi_key_ctx.get(None) or settings.pubmed_api_key
+    if api_key:
+        params["api_key"] = api_key
 
     for attempt in range(3):
         search_data = await _safe_get(
@@ -771,10 +800,32 @@ async def _pubmed_esearch(
     return []
 
 
-async def _pubmed_efetch(client: httpx.AsyncClient, ids: list[str]) -> list:
-    """PubMed efetch → parsed abstract list."""
+async def _pubmed_esearch_throttled(
+    client: httpx.AsyncClient, term: str, retmax: int
+) -> list[str]:
+    """PubMed esearch with rate limiting: respects NCBI's 3 req/s (no key) or 10 req/s (with key)."""
+    api_key = _ncbi_key_ctx.get(None) or settings.pubmed_api_key
+    sem = _PUBMED_SEM_WITH_KEY if api_key else _PUBMED_SEM_NO_KEY
+    gap = _PUBMED_MIN_GAP_WITH_KEY if api_key else _PUBMED_MIN_GAP_NO_KEY
+
+    async with sem:
+        global _PUBMED_LAST_REQUEST
+        loop = asyncio.get_event_loop()
+        wait = gap - (loop.time() - _PUBMED_LAST_REQUEST)
+        if wait > 0:
+            await asyncio.sleep(wait)
+        _PUBMED_LAST_REQUEST = loop.time()
+        return await _pubmed_esearch(client, term, retmax)
+
+
+async def _pubmed_efetch(client: httpx.AsyncClient, ids: list[str]) -> tuple[list, set[str]]:
+    """PubMed efetch → parsed article list, enriched with PMC full text or Unpaywall PDF.
+
+    Returns: (articles, sources_used) where sources_used is a set like
+    {'PMC (full text)', 'Unpaywall (open access PDF)'}
+    """
     if not ids:
-        return []
+        return [], set()
     fetch_params: dict = {
         "db": "pubmed",
         "id": ",".join(ids),
@@ -790,15 +841,24 @@ async def _pubmed_efetch(client: httpx.AsyncClient, ids: list[str]) -> list:
         params=fetch_params,
     )
     if not xml_text:
-        return []
-    return _parse_pubmed_xml(xml_text)
+        return [], set()
+    articles = _parse_pubmed_xml(xml_text)
+    # Enrich with PMC full text (free) and Unpaywall PDF (free, needs user email from context)
+    articles, sources = await _enrich_abstracts_with_fulltext(
+        client, articles, user_email=_user_email_ctx.get()
+    )
+    return articles, sources
 
 
-async def _fetch_pubmed_classification(client: httpx.AsyncClient, entity: str) -> list:
-    """Fetch PubMed abstracts for classification/staging systems (e.g. WHO groups, NYHA)."""
+async def _fetch_pubmed_classification(client: httpx.AsyncClient, entity: str) -> tuple[list, set[str]]:
+    """Fetch PubMed abstracts for classification/staging systems (e.g. WHO groups, NYHA).
+
+    Returns: (articles, sources_used)
+    """
     term = f"{entity} classification[Title/Abstract] AND 2010:2026[dp]"
-    ids = await _pubmed_esearch(client, term, 4)
-    return await _pubmed_efetch(client, ids)
+    ids = await _pubmed_esearch_throttled(client, term, 4)
+    articles, sources = await _pubmed_efetch(client, ids)
+    return articles, sources
 
 
 def _parse_pubmed_xml(xml_text: str) -> list:
@@ -841,21 +901,155 @@ def _parse_pubmed_xml(xml_text: str) -> list:
             journal_el = article.find(".//Journal/Title")
             journal = journal_el.text if journal_el is not None else None
 
+            # Extract DOI for Unpaywall/open access lookup
+            doi_el = article.find(".//ArticleId[@IdType='doi']")
+            doi = doi_el.text if doi_el is not None else None
+
+            # Extract PMCID for PMC full text
+            pmcid_el = article.find(".//ArticleId[@IdType='pmc']")
+            pmcid = pmcid_el.text if pmcid_el is not None else None
+
             if title:
                 results.append(
                     {
                         "pmid": pmid,
                         "title": title,
-                        "abstract": abstract[:650],
+                        "abstract": abstract if abstract else "(No abstract available)",
                         "year": year,
                         "collective_name": collective,
                         "journal": journal,
+                        "doi": doi,
+                        "pmcid": pmcid,
                     }
                 )
         except Exception:
             continue
 
     return results
+
+
+# ------------------------------------------------------------------
+# PMC full text + Unpaywall open-access enrichment
+# ------------------------------------------------------------------
+
+
+async def _fetch_pmc_fulltext(client: httpx.AsyncClient, pmcid: str) -> str | None:
+    """Fetch full article text from PubMed Central OA (free, no key needed).
+
+    pmcid should be like 'PMC12345' or just '12345'.
+    Returns plain text of the article body, or None on failure.
+    """
+    numeric_id = pmcid.lstrip("PMCpmc")
+    params: dict = {
+        "db": "pmc",
+        "id": numeric_id,
+        "rettype": "xml",
+        "retmode": "xml",
+    }
+    if settings.pubmed_api_key:
+        params["api_key"] = settings.pubmed_api_key
+
+    xml_text = await _safe_get_text(
+        client,
+        "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi",
+        params=params,
+    )
+    if not xml_text:
+        return None
+    try:
+        root = ET.fromstring(xml_text)
+        parts: list[str] = []
+        # Extract all paragraph text from article body
+        for tag in ("abstract", "body", "sec", "p"):
+            for el in root.iter(tag):
+                text = "".join(el.itertext()).strip()
+                if text and len(text) > 50:
+                    parts.append(text)
+        return " ".join(parts)[:8000] if parts else None
+    except Exception:
+        return None
+
+
+async def _fetch_unpaywall(
+    client: httpx.AsyncClient,
+    doi: str,
+    user_email: str,
+) -> str | None:
+    """Look up a free PDF via Unpaywall (free API, requires user email).
+
+    Returns extracted article text or None if unavailable.
+    """
+    if not doi or not user_email:
+        return None
+
+    data = await _safe_get(
+        client,
+        f"https://api.unpaywall.org/v2/{doi}",
+        params={"email": user_email},
+    )
+    if not data:
+        return None
+
+    oa_location = data.get("best_oa_location") or {}
+    pdf_url = oa_location.get("url_for_pdf") or oa_location.get("url")
+    if not pdf_url:
+        return None
+
+    try:
+        resp = await client.get(pdf_url, timeout=10, follow_redirects=True)
+        if resp.status_code != 200:
+            return None
+        import io
+        import pdfplumber
+        with pdfplumber.open(io.BytesIO(resp.content)) as pdf:
+            pages = [p.extract_text() or "" for p in pdf.pages[:12]]
+            text = "\n".join(pages).strip()
+        return text[:8000] if text else None
+    except Exception:
+        return None
+
+
+async def _enrich_abstracts_with_fulltext(
+    client: httpx.AsyncClient,
+    articles: list,
+    user_email: str | None = None,
+) -> tuple[list, set[str]]:
+    """Try to upgrade each article from abstract → full text using PMC then Unpaywall.
+
+    Runs all lookups in parallel. Original article dicts are updated in-place with
+    a 'full_text' key when richer content is found.
+
+    Returns: (enriched_articles, sources_used) where sources_used is a set like
+    {'PMC (full text)', 'Unpaywall (open access PDF)'}
+    """
+    if not articles:
+        return articles, set()
+
+    sources_used: set[str] = set()
+
+    async def _enrich_one(article: dict) -> None:
+        nonlocal sources_used
+        pmcid = article.get("pmcid")
+        doi = article.get("doi")
+        full_text: str | None = None
+
+        # Priority 1: PMC free full text (no auth needed)
+        if pmcid:
+            full_text = await _fetch_pmc_fulltext(client, pmcid)
+            if full_text:
+                sources_used.add("PMC (full text)")
+
+        # Priority 2: Unpaywall PDF (needs user email, completely free)
+        if not full_text and doi and user_email:
+            full_text = await _fetch_unpaywall(client, doi, user_email)
+            if full_text:
+                sources_used.add("Unpaywall (open access PDF)")
+
+        if full_text:
+            article["full_text"] = full_text
+
+    await asyncio.gather(*[_enrich_one(a) for a in articles], return_exceptions=True)
+    return articles, sources_used
 
 
 # ------------------------------------------------------------------
@@ -1141,6 +1335,63 @@ async def _fetch_pmc_statpearls(client: httpx.AsyncClient, entity: str) -> Optio
 
 
 # ------------------------------------------------------------------
+# NCBI Disease Structured
+# ------------------------------------------------------------------
+
+
+async def _fetch_ncbi_disease_structured(
+    client: httpx.AsyncClient, disease_name: str
+) -> Optional[str]:
+    """Fetch StatPearls monograph sections + MeSH/ClinVar for disease."""
+    search_data = await _safe_get(
+        client,
+        "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi",
+        params={
+            "db": "pmc",
+            "term": f"{disease_name}[Title] AND StatPearls[journal]",
+            "retmax": 2,
+            "retmode": "json",
+            **({"api_key": settings.pubmed_api_key} if settings.pubmed_api_key else {}),
+        },
+    )
+    if not search_data:
+        return None
+    ids = search_data.get("esearchresult", {}).get("idlist", [])
+    if not ids:
+        return None
+    fetch_data = await _safe_get_text(
+        client,
+        "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi",
+        params={
+            "db": "pmc",
+            "id": ",".join(ids[:2]),
+            "rettype": "full",
+            "retmode": "xml",
+            **({"api_key": settings.pubmed_api_key} if settings.pubmed_api_key else {}),
+        },
+    )
+    if not fetch_data:
+        return None
+        
+    try:
+        import xml.etree.ElementTree as ET
+        root = ET.fromstring(fetch_data)
+        sections = []
+        for sec in root.findall(".//sec"):
+            title_el = sec.find(".//title")
+            if title_el is not None and title_el.text:
+                title = "".join(title_el.itertext()).strip()
+                if any(k in title.lower() for k in ["etiology", "pathophysiology", "history", "evaluation", "treatment", "management", "prognosis", "complication"]):
+                    text = " ".join(" ".join(p.itertext()).strip() for p in sec.findall(".//p"))
+                    if text:
+                        sections.append(f"### {title}\\n{text}")
+        if sections:
+            return "\\n\\n".join(sections)[:4000]
+    except Exception:
+        pass
+    return None
+
+# ------------------------------------------------------------------
 # ChEMBL — additional drug pharmacology source
 # ------------------------------------------------------------------
 
@@ -1292,8 +1543,8 @@ async def fetch_drug_data(drug_name: str) -> DrugFetchResult:
             fda_label,
             fda_events,
             rxnorm_class,
-            guidelines,
-            sysreviews,
+            guidelines_result,
+            sysreviews_result,
             dailymed_result,
             medlineplus_drug,
             statpearls_text,
@@ -1311,16 +1562,50 @@ async def fetch_drug_data(drug_name: str) -> DrugFetchResult:
             return_exceptions=True,
         )
 
+        # Unpack guidelines and sysreviews results (now tuples with sources)
+        guidelines = []
+        guidelines_sources = set()
+        if isinstance(guidelines_result, tuple):
+            guidelines, guidelines_sources = guidelines_result
+        elif isinstance(guidelines_result, list):
+            guidelines = guidelines_result
+
+        sysreviews = []
+        sysreviews_sources = set()
+        if isinstance(sysreviews_result, tuple):
+            sysreviews, sysreviews_sources = sysreviews_result
+        elif isinstance(sysreviews_result, list):
+            sysreviews = sysreviews_result
+
         _merge_fda_label(
             result, fda_label if not isinstance(fda_label, Exception) else None
         )
+        if isinstance(fda_label, dict) and fda_label.get("results"):
+            if "FDA" not in result.data_sources:
+                result.data_sources.append("FDA")
+
         result.top_adverse_events = fda_events if isinstance(fda_events, list) else []
-        result.guideline_abstracts = _cap_abstracts(
-            guidelines if isinstance(guidelines, list) else [], 3000
-        )
-        result.systematic_review_abstracts = _cap_abstracts(
-            sysreviews if isinstance(sysreviews, list) else [], 3000
-        )
+        if result.top_adverse_events:
+            if "FDA" not in result.data_sources:
+                result.data_sources.append("FDA")
+
+        guidelines_list = _cap_abstracts(guidelines if guidelines else [], 3000)
+        result.guideline_abstracts = guidelines_list
+        if guidelines_list and "PubMed" not in result.data_sources:
+            result.data_sources.append("PubMed")
+        # Add PMC/Unpaywall sources from enrichment
+        for src in guidelines_sources:
+            if src not in result.data_sources:
+                result.data_sources.append(src)
+
+        sysreviews_list = _cap_abstracts(sysreviews if sysreviews else [], 3000)
+        result.systematic_review_abstracts = sysreviews_list
+        if sysreviews_list and "PubMed" not in result.data_sources:
+            result.data_sources.append("PubMed")
+        # Add PMC/Unpaywall sources from enrichment
+        for src in sysreviews_sources:
+            if src not in result.data_sources:
+                result.data_sources.append(src)
         # Apply RxNorm class from chain result (no sequential round-trip needed)
         if (
             isinstance(rxnorm_class, str)
@@ -1328,18 +1613,24 @@ async def fetch_drug_data(drug_name: str) -> DrugFetchResult:
             and not result.drug_class_rxnorm
         ):
             result.drug_class_rxnorm = rxnorm_class
+            if "RxNorm" not in result.data_sources:
+                result.data_sources.append("RxNorm")
 
         if isinstance(medlineplus_drug, str) and medlineplus_drug:
             if result.indications_raw:
                 result.indications_raw = result.indications_raw + f"\n[MedlinePlus]: {medlineplus_drug[:300]}"
             else:
                 result.indications_raw = medlineplus_drug[:400]
+            if "MedlinePlus" not in result.data_sources:
+                result.data_sources.append("MedlinePlus")
 
         if isinstance(statpearls_text, str) and statpearls_text:
             if result.dosing_raw:
                 result.dosing_raw = result.dosing_raw + f"\n[StatPearls]: {statpearls_text[:400]}"
             else:
                 result.dosing_raw = statpearls_text[:600]
+            if "PMC (full text)" not in result.data_sources:
+                result.data_sources.append("PMC (full text)")
 
         # ChEMBL: enrich mechanism and drug class
         if isinstance(chembl_data, dict) and chembl_data:
@@ -1370,6 +1661,9 @@ async def fetch_drug_data(drug_name: str) -> DrugFetchResult:
             dm.guideline_abstracts = result.guideline_abstracts
             dm.systematic_review_abstracts = result.systematic_review_abstracts
             dm.top_adverse_events = result.top_adverse_events
+            dm.data_sources = result.data_sources.copy()
+            if "DailyMed" not in dm.data_sources:
+                dm.data_sources.append("DailyMed")
             return dm
 
         mi = await _fetch_medindia(client, drug_name)
@@ -1383,6 +1677,9 @@ async def fetch_drug_data(drug_name: str) -> DrugFetchResult:
             mi.guideline_abstracts = result.guideline_abstracts
             mi.systematic_review_abstracts = result.systematic_review_abstracts
             mi.top_adverse_events = result.top_adverse_events
+            mi.data_sources = result.data_sources.copy()
+            if "Medindia" not in mi.data_sources:
+                mi.data_sources.append("Medindia")
             return mi
 
     return result
@@ -1420,18 +1717,17 @@ async def fetch_disease_data(disease_name: str) -> DiseaseFetchResult:
 
     async with _make_client() as client:
         # Phase 1: ALL esearch calls + non-PubMed sources in parallel
+        # NOTE: Limited to 4 esearch calls to avoid NCBI rate limits (3 req/s without key, 10 req/s with)
         tasks: list = [
-            _pubmed_esearch(client, guideline_term, 16),
-            _pubmed_esearch(client, review_term, 12),
-            _pubmed_esearch(client, classification_term, 6),
-            _pubmed_esearch(client, broad_guideline_term, 8),
-            _pubmed_esearch(client, broad_review_term, 8),
+            _pubmed_esearch_throttled(client, guideline_term, 16),
+            _pubmed_esearch_throttled(client, review_term, 12),
+            _pubmed_esearch_throttled(client, broad_guideline_term, 8),
+            _pubmed_esearch_throttled(client, broad_review_term, 8),
             _fetch_nice(client, disease_name),
             _fetch_medlineplus(client, disease_name),
             _fetch_semantic_scholar(client, disease_name),
+            _fetch_ncbi_disease_structured(client, disease_name),
         ]
-        if journal_term:
-            tasks.append(_pubmed_esearch(client, journal_term, 4))
 
         # Use asyncio.wait so partial results are recovered if some calls time out
         task_objs = [asyncio.ensure_future(coro) for coro in tasks]
@@ -1452,19 +1748,14 @@ async def fetch_disease_data(disease_name: str) -> DiseaseFetchResult:
 
         guideline_ids = results[0] if isinstance(results[0], list) else []
         review_ids = results[1] if isinstance(results[1], list) else []
-        classification_ids = results[2] if isinstance(results[2], list) else []
-        broad_guideline_ids = results[3] if isinstance(results[3], list) else []
-        broad_review_ids = results[4] if isinstance(results[4], list) else []
-        nice_recs = results[5] if isinstance(results[5], list) else []
-        medlineplus = results[6] if isinstance(results[6], str) else None
-        semantic = results[7] if isinstance(results[7], list) else []
-        journal_ids = (
-            results[8] if len(results) > 8 and isinstance(results[8], list) else []
-        )
+        broad_guideline_ids = results[2] if isinstance(results[2], list) else []
+        broad_review_ids = results[3] if isinstance(results[3], list) else []
+        nice_recs = results[4] if isinstance(results[4], list) else []
+        medlineplus = results[5] if isinstance(results[5], str) else None
+        semantic = results[6] if isinstance(results[6], list) else []
+        ncbi = results[7] if len(results) > 7 and isinstance(results[7], str) else None
 
-        all_guideline_ids = (
-            guideline_ids + broad_guideline_ids + classification_ids + journal_ids
-        )
+        all_guideline_ids = guideline_ids + broad_guideline_ids
         # Deduplicate while keeping order
         seen: set[str] = set()
         unique_guideline_ids = [
@@ -1473,7 +1764,13 @@ async def fetch_disease_data(disease_name: str) -> DiseaseFetchResult:
 
         all_review_ids = review_ids + broad_review_ids
         all_ids = list(set(unique_guideline_ids + all_review_ids))
-        all_abstracts = await _pubmed_efetch(client, all_ids) if all_ids else []
+        if all_ids:
+            all_abstracts, enrichment_sources = await _pubmed_efetch(client, all_ids)
+            for src in enrichment_sources:
+                if src not in result.data_sources:
+                    result.data_sources.append(src)
+        else:
+            all_abstracts = []
 
         # Tag abstracts by which search found them (by PMID membership)
         guideline_set = set(unique_guideline_ids)
@@ -1489,9 +1786,17 @@ async def fetch_disease_data(disease_name: str) -> DiseaseFetchResult:
 
         result.guideline_abstracts = _cap_abstracts(guideline_abstracts, 12000)
         result.systematic_review_abstracts = _cap_abstracts(review_abstracts, 7000)
+        if result.guideline_abstracts or result.systematic_review_abstracts:
+            if "PubMed" not in result.data_sources:
+                result.data_sources.append("PubMed")
         result.nice_recommendations = nice_recs
+        if nice_recs and "NICE" not in result.data_sources:
+            result.data_sources.append("NICE")
         result.medlineplus_summary = medlineplus
+        if medlineplus and "MedlinePlus" not in result.data_sources:
+            result.data_sources.append("MedlinePlus")
         result.semantic_papers = semantic
+        result.ncbi_structured = ncbi
 
     result.fetch_success = bool(
         result.guideline_abstracts
@@ -1503,9 +1808,12 @@ async def fetch_disease_data(disease_name: str) -> DiseaseFetchResult:
     if not result.guideline_abstracts and not result.systematic_review_abstracts:
         fallback_term = f"{disease_name}[Title/Abstract] AND (guideline OR consensus OR recommendation) AND 2015:2026[dp]"
         async with _make_client() as client:
-            fallback_ids = await _pubmed_esearch(client, fallback_term, 8)
+            fallback_ids = await _pubmed_esearch_throttled(client, fallback_term, 8)
             if fallback_ids:
-                fallback_abstracts = await _pubmed_efetch(client, fallback_ids)
+                fallback_abstracts, fallback_sources = await _pubmed_efetch(client, fallback_ids)
+                for src in fallback_sources:
+                    if src not in result.data_sources:
+                        result.data_sources.append(src)
                 result.guideline_abstracts = _cap_abstracts(fallback_abstracts, 8000)
                 result.fetch_success = bool(result.guideline_abstracts)
 
@@ -1517,7 +1825,7 @@ async def fetch_procedure_data(procedure_name: str) -> ProcedureFetchResult:
     result = ProcedureFetchResult()
 
     async with _make_client() as client:
-        guidelines, practice, reviews, statpearls = await asyncio.gather(
+        guidelines_result, practice_result, reviews_result, statpearls = await asyncio.gather(
             _fetch_pubmed_abstracts(client, procedure_name, "guideline"),
             _fetch_pubmed_procedure_guidelines(client, procedure_name),
             _fetch_pubmed_abstracts(client, procedure_name, "systematic_review"),
@@ -1525,12 +1833,43 @@ async def fetch_procedure_data(procedure_name: str) -> ProcedureFetchResult:
             return_exceptions=True,
         )
 
+        # Unpack results from _fetch_pubmed_abstracts and _fetch_pubmed_procedure_guidelines (now tuples)
+        guidelines = []
+        guidelines_sources = set()
+        if isinstance(guidelines_result, tuple):
+            guidelines, guidelines_sources = guidelines_result
+        elif isinstance(guidelines_result, list):
+            guidelines = guidelines_result
+
+        practice = []
+        practice_sources = set()
+        if isinstance(practice_result, tuple):
+            practice, practice_sources = practice_result
+        elif isinstance(practice_result, list):
+            practice = practice_result
+
+        reviews = []
+        reviews_sources = set()
+        if isinstance(reviews_result, tuple):
+            reviews, reviews_sources = reviews_result
+        elif isinstance(reviews_result, list):
+            reviews = reviews_result
+
+        # Collect all sources
+        all_sources = guidelines_sources | practice_sources | reviews_sources
+        for src in all_sources:
+            if src not in result.data_sources:
+                result.data_sources.append(src)
+
         result.guideline_abstracts = _cap_abstracts(
             (guidelines if isinstance(guidelines, list) else []) +
             (practice if isinstance(practice, list) else []) +
             (reviews if isinstance(reviews, list) else []),
             6000
         )
+        if result.guideline_abstracts and "PubMed" not in result.data_sources:
+            result.data_sources.append("PubMed")
+
         result.practice_guideline_abstracts = []  # merged above
         if isinstance(statpearls, str) and statpearls:
             # Add StatPearls as a synthetic abstract entry
@@ -1541,6 +1880,8 @@ async def fetch_procedure_data(procedure_name: str) -> ProcedureFetchResult:
                 "year": 2024,
                 "journal": "StatPearls",
             })
+            if "PMC (full text)" not in result.data_sources:
+                result.data_sources.append("PMC (full text)")
 
     result.fetch_success = bool(
         result.guideline_abstracts or result.practice_guideline_abstracts
@@ -1550,15 +1891,19 @@ async def fetch_procedure_data(procedure_name: str) -> ProcedureFetchResult:
 
 async def _fetch_pubmed_procedure_guidelines(
     client: httpx.AsyncClient, entity: str
-) -> list:
-    """Fetch PubMed practice guidelines specifically for procedures."""
+) -> tuple[list, set[str]]:
+    """Fetch PubMed practice guidelines specifically for procedures.
+
+    Returns: (articles, sources_used)
+    """
     term = (
         f"{entity}[Title/Abstract] AND "
         "(Practice Guideline[pt] OR Consensus Development Conference[pt]) "
         "AND 2015:2025[dp]"
     )
-    ids = await _pubmed_esearch(client, term, 5)
-    return await _pubmed_efetch(client, ids)
+    ids = await _pubmed_esearch_throttled(client, term, 5)
+    articles, sources = await _pubmed_efetch(client, ids)
+    return articles, sources
 
 
 async def fetch_evidence_data(query: str) -> EvidenceFetchResult:
@@ -1582,10 +1927,10 @@ async def fetch_evidence_data(query: str) -> EvidenceFetchResult:
     async with _make_client() as client:
         # Phase 1: all esearch in parallel
         trial_ids, review_ids, guideline_ids, broad_ids = await asyncio.gather(
-            _pubmed_esearch(client, trial_term, 12),
-            _pubmed_esearch(client, review_term, 8),
-            _pubmed_esearch(client, guideline_term, 10),
-            _pubmed_esearch(client, broad_evidence_term, 12),
+            _pubmed_esearch_throttled(client, trial_term, 12),
+            _pubmed_esearch_throttled(client, review_term, 8),
+            _pubmed_esearch_throttled(client, guideline_term, 10),
+            _pubmed_esearch_throttled(client, broad_evidence_term, 12),
             return_exceptions=True,
         )
         trial_ids = trial_ids if isinstance(trial_ids, list) else []
@@ -1595,7 +1940,13 @@ async def fetch_evidence_data(query: str) -> EvidenceFetchResult:
 
         # Phase 2: single batch efetch
         all_ids = list(set(trial_ids + review_ids + guideline_ids + broad_ids))
-        all_abstracts = await _pubmed_efetch(client, all_ids) if all_ids else []
+        if all_ids:
+            all_abstracts, enrichment_sources = await _pubmed_efetch(client, all_ids)
+            for src in enrichment_sources:
+                if src not in result.data_sources:
+                    result.data_sources.append(src)
+        else:
+            all_abstracts = []
 
         trial_set = set(trial_ids)
         review_set = set(review_ids)
@@ -1620,6 +1971,10 @@ async def fetch_evidence_data(query: str) -> EvidenceFetchResult:
         )
         result.guideline_abstracts = _cap_abstracts(result.guideline_abstracts, 4000)
 
+        if result.clinical_trial_abstracts or result.systematic_review_abstracts or result.guideline_abstracts:
+            if "PubMed" not in result.data_sources:
+                result.data_sources.append("PubMed")
+
     result.fetch_success = bool(
         result.clinical_trial_abstracts
         or result.systematic_review_abstracts
@@ -1628,15 +1983,19 @@ async def fetch_evidence_data(query: str) -> EvidenceFetchResult:
     return result
 
 
-async def _fetch_pubmed_clinical_trials(client: httpx.AsyncClient, query: str) -> list:
-    """Fetch clinical trial and RCT abstracts from PubMed."""
+async def _fetch_pubmed_clinical_trials(client: httpx.AsyncClient, query: str) -> tuple[list, set[str]]:
+    """Fetch clinical trial and RCT abstracts from PubMed.
+
+    Returns: (articles, sources_used)
+    """
     term = (
         f"{query}[Title/Abstract] AND "
         "(Clinical Trial[pt] OR Randomized Controlled Trial[pt]) "
         "AND 2010:2026[dp]"
     )
-    ids = await _pubmed_esearch(client, term, 8)
-    return await _pubmed_efetch(client, ids)
+    ids = await _pubmed_esearch_throttled(client, term, 8)
+    articles, sources = await _pubmed_efetch(client, ids)
+    return articles, sources
 
 
 def _fire_and_forget_index(abstracts: list) -> None:
@@ -1652,7 +2011,11 @@ def _fire_and_forget_index(abstracts: list) -> None:
 
 
 async def fetch_data_for_query(
-    query_type: str, entities: list, condition_context: Optional[str] = None
+    query_type: str,
+    entities: list,
+    condition_context: Optional[str] = None,
+    user_email: Optional[str] = None,
+    ncbi_api_key: Optional[str] = None,
 ) -> FetchedData:
     """Top-level orchestrator called by the pipeline.
 
@@ -1661,7 +2024,11 @@ async def fetch_data_for_query(
         entities: Extracted entity names (drug names, disease names, etc.).
         condition_context: For drug-in-condition queries, the condition name to fetch
             management guidelines for in parallel (e.g., "atrial fibrillation" for "digoxin in AF").
+        user_email: Authenticated user's email — used for Unpaywall open-access PDF lookup (free).
+        ncbi_api_key: User's free NCBI API key for PubMed rate limit increase (3→10 req/s).
     """
+    _user_email_ctx.set(user_email)  # available to all _pubmed_efetch calls in this request
+    _ncbi_key_ctx.set(ncbi_api_key)  # available to all _pubmed_esearch_throttled calls in this request
     start = time.time()
     fetched = FetchedData(query_type=query_type)
 

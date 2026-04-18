@@ -185,13 +185,7 @@ MANDATORY DRUG IDENTITY RULE: drug_class and mechanism_of_action MUST always be 
 - drug_class: state the pharmacological group (e.g. "HMG-CoA reductase inhibitor (statin)", "ACE inhibitor", "Beta-1 selective blocker")
 - mechanism_of_action: include specific receptor/enzyme target + physiological effect (e.g. "Competitively inhibits HMG-CoA reductase, reducing hepatic cholesterol synthesis and upregulating LDL receptors")
 
-MINIMUM ENTRY COUNTS (mandatory — short, sparse responses are FAILED responses):
-- indications: 3+ entries
-- dosing: 4+ entries (include ALL common routes/regimens)
-- contraindications: 3+ entries
-- side_effects: 5+ entries (both common AND serious)
-- interactions: 5+ entries with severity ratings
-- monitoring: 2+ entries
+Ensure all arrays have sufficient entries to fully answer the query. Sparse or incomplete responses will be rejected.
 
 ANSWER STRATEGY — Read the query carefully and follow these steps:
 1. BLUF FIRST: Write "bluf" as 1-3 sentences that DIRECTLY answer the specific question asked.
@@ -375,12 +369,7 @@ PROCEDURE_PROMPT = """You are a clinical procedure reference assistant.
 
 {focus_instruction}
 
-MINIMUM ENTRY COUNTS (mandatory — incomplete responses are FAILED responses):
-- technique_steps: 5+ sequential steps covering all key procedural phases (prep, insertion/execution, confirmation, post-procedure)
-- indications: 3+ specific evidence-based indications with clinical criteria
-- contraindications: 2+ entries (absolute and relative)
-- complications: 3+ entries with incidence rates where known
-- guidelines: 2+ specific guideline recommendations citing society and year
+Ensure all arrays have sufficient entries to fully answer the query. Sparse or incomplete responses will be rejected.
 
 HALLUCINATION PREVENTION: For "indications", "contraindications", and "complications", prefer items supported by approved sources — but when source data is absent for a well-established procedure, include standard clinical consensus entries rather than outputting empty arrays. "technique_steps" and "guidelines" may use established clinical consensus for well-known procedural steps.
 
@@ -408,11 +397,7 @@ EVIDENCE_PROMPT = """You are a clinical evidence synthesizer.
 
 {focus_instruction}
 
-MINIMUM ENTRY COUNTS (mandatory — shallow responses are FAILED responses):
-- supporting_studies: 3+ entries, each with specific finding, sample size, and LOE
-- summary: 4-6 sentences covering mechanism/rationale, evidence quality, clinical context, and remaining uncertainty
-- clinical_recommendation: REQUIRED when ≥1 supporting study exists (null only when zero evidence found)
-- guideline_status: name SPECIFIC society + year if any formal recommendation exists — do NOT output "No formal guideline exists" without checking
+Ensure all arrays have sufficient entries to fully answer the query. Sparse or incomplete responses will be rejected.
 
 The user is asking about evidence for a clinical question that may not have formal guidelines.
 Your job is to summarize the available studies and provide a balanced recommendation.
@@ -508,13 +493,7 @@ Your ONLY job: extract and format this data into the required JSON schema.
 
 {condition_context_block}
 
-MINIMUM ENTRY COUNTS (mandatory — short, sparse responses are FAILED responses):
-- indications: 3+ entries
-- dosing: 4+ entries (include ALL common routes/regimens)
-- contraindications: 3+ entries
-- side_effects: 5+ entries (both common AND serious)
-- interactions: 5+ entries with severity ratings
-- monitoring: 2+ entries
+Ensure all arrays have sufficient entries to fully answer the query. Sparse or incomplete responses will be rejected.
 
 ANSWER STRATEGY — Read the query carefully:
 1. BLUF: Write 1-3 sentences DIRECTLY answering the specific clinical question from source data.
@@ -524,6 +503,7 @@ ANSWER STRATEGY — Read the query carefully:
 3. EXPAND: Give most detail to the section the user asked about (dosing/interactions/side effects/guideline role/monitoring/etc.)
 4. COMPLETE: Fill remaining sections with standard coverage from source data.
 "additional_clinical_context": query-specific nuance from source data (monitoring pearls, off-label, special populations). null if nothing.
+Use tables and flowcharts in response generation where applicable.
 
 {evidence_rules}
 {json_contract_rules}
@@ -563,6 +543,8 @@ Respond ONLY with a JSON object matching this EXACT structure:
   "pharmacokinetics": {{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}} or null,
   "special_populations": [{{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}}],
   "monitoring": [{{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}}],
+  "tables": [{{"title": "string", "headers": ["string"], "rows": [["string"]]}}],
+  "flowcharts": [{{"title": "string", "steps": ["string"]}}],
   "references": [{{"source": "string", "title": "string or null", "year": int_or_null, "url": null}}]
 }}
 
@@ -585,6 +567,7 @@ ANSWER STRATEGY — Read the query carefully:
    If the query is just the disease name (e.g. "pulmonary embolism") → give EQUAL depth to ALL sections.
 4. COMPLETE: Fill ALL remaining sections thoroughly. Do NOT leave ANY section sparse.
 "additional_clinical_context": Query-specific nuance from source data. null if nothing.
+Use tables and flowcharts in response structuring where applicable.
 
 DEPTH REQUIREMENTS — CRITICAL — every section MUST be fully populated with clinically actionable detail:
 - etiology: 5-8 entries covering ALL causes and risk factors — be SPECIFIC (e.g., "Virchow's triad: venous stasis (immobilization >3 days, long-haul flights >4h), endothelial injury (surgery, trauma, central lines), hypercoagulability (Factor V Leiden, protein C/S deficiency, antiphospholipid syndrome, malignancy, OCP use)")
@@ -652,6 +635,8 @@ Respond ONLY with a JSON object matching this EXACT structure:
   }},
   "complications": [{{"value": "string — include incidence rate where known", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}}],
   "prognosis": {{"value": "string — include mortality rates, recurrence rates, prognostic factors", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}} or null,
+  "tables": [{{"title": "string", "headers": ["string"], "rows": [["string"]]}}],
+  "flowcharts": [{{"title": "string", "steps": ["string"]}}],
   "references": [{{"source": "string", "title": "string or null", "year": int_or_null, "url": null}}]
 }}
 
@@ -712,12 +697,7 @@ PROCEDURE_FORMAT_PROMPT = """You are a clinical procedure reference formatter. U
 
 {focus_instruction}
 
-MINIMUM ENTRY COUNTS (mandatory — incomplete responses are FAILED responses):
-- technique_steps: 5+ sequential steps covering all key procedural phases
-- indications: 3+ entries — cite from retrieved data where available; supplement with clinical consensus when data is absent
-- contraindications: 2+ entries
-- complications: 3+ entries with incidence rates where known
-- guidelines: 2+ entries — from retrieved data or well-established society recommendations
+Ensure all arrays have sufficient entries to fully answer the query. Sparse or incomplete responses will be rejected.
 
 HALLUCINATION PREVENTION: Prefer items supported by the retrieved data below for indications/contraindications/complications. For technique_steps and guidelines, clinical consensus is acceptable when retrieved data is insufficient. Do NOT output empty arrays for a well-known procedure — provide standard consensus entries.
 
@@ -749,11 +729,7 @@ EVIDENCE_FORMAT_PROMPT = """You are a clinical evidence synthesizer. Use the ret
 
 {focus_instruction}
 
-MINIMUM ENTRY COUNTS (mandatory — shallow responses are FAILED responses):
-- supporting_studies: 3+ entries from the retrieved data, each with specific finding, sample size, and LOE
-- summary: 4-6 sentences covering mechanism/rationale, evidence quality, key findings, clinical context, residual uncertainty
-- clinical_recommendation: REQUIRED when ≥1 supporting study exists in the data (null only when retrieved data shows zero evidence)
-- guideline_status: name SPECIFIC society + year from the guideline mentions section above
+Ensure all arrays have sufficient entries to fully answer the query. Sparse or incomplete responses will be rejected.
 
 pmid rule: numeric string only, no "PMID:" prefix (e.g. "38293847") — output null if unavailable.
 guideline_status rule: output EXACTLY one of these three templates (fill in the blanks):
@@ -817,10 +793,11 @@ def _format_abstracts(abstracts: list) -> str:
         year = a.get("year", "")
         pmid = a.get("pmid", "")
         title = a.get("title", "No title")
-        abstract = a.get("abstract", "")
+        # Prefer full article text (PMC/Unpaywall) over truncated abstract
+        text = a.get("full_text") or a.get("abstract", "")
         lines.append(f"[{i}] {title}")
         lines.append(f"    Source: {society} {year}  PMID:{pmid}")
-        lines.append(f"    {abstract}")
+        lines.append(f"    {text}")
     return "\n".join(lines)
 
 
@@ -1311,3 +1288,211 @@ def _build_format_prompt(
 
 def get_prompt_version() -> int:
     return settings.prompt_version
+
+
+# ──────────────────────────────────────────────
+# Unified adaptive prompt (all query types → AdaptiveResponse)
+# ──────────────────────────────────────────────
+
+_SECTION_GUIDANCE: dict[str, str] = {
+    "drug": (
+        "Mechanism of Action · Indications · Dosing (all routes/regimens) · "
+        "Contraindications · Side Effects (common AND serious) · Drug Interactions · "
+        "Pharmacokinetics · Monitoring Parameters · Special Populations"
+    ),
+    "disease": (
+        "Overview & Aetiology · Pathophysiology · Epidemiology · Clinical Features · "
+        "Diagnostic Criteria · Treatment (first-line, second-line, non-pharmacological) · "
+        "Complications · Prognosis"
+    ),
+    "comparative": (
+        "Summary · [One dedicated section per entity being compared] · "
+        "Head-to-Head Comparison · Clinical Preference & Guideline Positioning"
+    ),
+    "procedure": (
+        "Overview & Indications · Contraindications · Step-by-Step Technique · "
+        "Complications & Incidence · Post-procedure Care · Guideline Recommendations"
+    ),
+    "evidence": (
+        "Clinical Summary · Supporting Studies (with sample size, LOE) · "
+        "Opposing / Conflicting Evidence · Clinical Recommendation · Guideline Status"
+    ),
+    "general": "Summary · Key Points · Clinical Context · Related Considerations",
+}
+
+_ADAPTIVE_SYSTEM_TEMPLATE = """\
+You are a clinical reference assistant for medical professionals.
+{approved_sources}
+{evidence_rules}
+{json_contract_rules}
+
+QUERY TYPE: {query_type}
+REQUIRED SECTIONS (prioritise these): {required_sections}
+DEPTH: comprehensive — populate every relevant section fully; sparse responses are rejected.
+
+SECTION GUIDANCE FOR {query_type_upper}:
+{section_guidance}
+
+{condition_context_block}{focus_instruction}
+{data_block}"""
+
+_ADAPTIVE_RESPONSE_SCHEMA = """\
+
+RESPOND WITH A SINGLE JSON OBJECT — no markdown fences, no prose outside the JSON:
+{
+  "bluf": {
+    "headline": "One sentence directly answering the query",
+    "body": "2-4 sentence elaboration with the key clinical bottom line",
+    "key_points": ["Actionable bullet 1", "Actionable bullet 2", ...],
+    "caveats": ["Safety or evidence caveat 1", ...]
+  },
+  "sections": [
+    {
+      "title": "Section heading",
+      "content_items": [
+        {
+          "text": "Evidence-based claim — GitHub-flavored markdown supported (bold, tables, lists)",
+          "loe": "I | II | III | null",
+          "cor": "I | IIa | IIb | III-no-benefit | III-harm | null",
+          "source": "Source label e.g. 'AHA/ACC 2022', 'FDA label', 'PubMed PMID:38293847'"
+        }
+      ],
+      "loe": null,
+      "cor": null
+    }
+  ],
+  "references": [
+    {
+      "title": "Article or guideline title",
+      "source": "FDA | PubMed | NICE | AHA | WHO | etc.",
+      "pmid": "numeric string or null",
+      "year": "4-digit year string or null",
+      "url": null
+    }
+  ]
+}"""
+
+
+def _build_adaptive_data_block(
+    query_type: str,
+    fetched_data: "FetchedData | None",
+    vector_results: "list[SearchResult] | None" = None,
+) -> str:
+    """Build a formatted data block from fetched API data for injection into the adaptive prompt."""
+    parts: list[str] = []
+
+    if fetched_data and not fetched_data.fallback_to_llm:
+        if query_type == "drug" and fetched_data.drug_data and fetched_data.drug_data.fetch_success:
+            parts.append("=== DRUG DATA (FDA/RxNorm) ===\n" + _format_drug_block(fetched_data.drug_data))
+            if fetched_data.condition_data:
+                cd = fetched_data.condition_data
+                if hasattr(cd, "guideline_abstracts") and cd.guideline_abstracts:
+                    parts.append(
+                        "=== CONDITION MANAGEMENT GUIDELINES ===\n"
+                        + _format_abstracts(cd.guideline_abstracts[:6])
+                    )
+
+        elif query_type == "disease" and fetched_data.disease_data and fetched_data.disease_data.fetch_success:
+            d = fetched_data.disease_data
+            if d.guideline_abstracts:
+                parts.append("=== DISEASE GUIDELINES ===\n" + _format_abstracts(d.guideline_abstracts))
+            if d.systematic_review_abstracts:
+                parts.append("=== SYSTEMATIC REVIEWS ===\n" + _format_abstracts(d.systematic_review_abstracts))
+            if d.medlineplus_summary:
+                parts.append(f"=== MEDLINEPLUS SUMMARY ===\n{d.medlineplus_summary}")
+            if d.nice_recommendations:
+                parts.append("=== NICE RECOMMENDATIONS ===\n" + _format_nice_recs(d.nice_recommendations))
+
+        elif query_type == "comparative" and fetched_data.comparative_drug_data:
+            for i, drug in enumerate(fetched_data.comparative_drug_data[:3], 1):
+                parts.append(f"=== DRUG {i} DATA ===\n" + _format_drug_block(drug))
+
+        elif query_type == "procedure" and fetched_data.procedure_data and fetched_data.procedure_data.fetch_success:
+            d = fetched_data.procedure_data
+            if d.guideline_abstracts:
+                parts.append("=== PROCEDURE GUIDELINES ===\n" + _format_abstracts(d.guideline_abstracts))
+            if d.practice_guideline_abstracts:
+                parts.append("=== PRACTICE GUIDELINES ===\n" + _format_abstracts(d.practice_guideline_abstracts))
+
+        elif query_type == "evidence" and fetched_data.evidence_data and fetched_data.evidence_data.fetch_success:
+            d = fetched_data.evidence_data
+            if d.clinical_trial_abstracts:
+                parts.append("=== CLINICAL TRIALS / RCTs ===\n" + _format_abstracts(d.clinical_trial_abstracts))
+            if d.systematic_review_abstracts:
+                parts.append("=== SYSTEMATIC REVIEWS ===\n" + _format_abstracts(d.systematic_review_abstracts))
+            if d.guideline_abstracts:
+                parts.append("=== GUIDELINES ===\n" + _format_abstracts(d.guideline_abstracts))
+
+        # Cross-type PubMed pull — collect abstracts from whichever sub-result has them
+        _cross_abs: list = []
+        for _sub in (fetched_data.drug_data, fetched_data.disease_data, fetched_data.condition_data,
+                     fetched_data.procedure_data, fetched_data.evidence_data):
+            if _sub and getattr(_sub, "pubmed_abstracts", None):
+                _cross_abs.extend(_sub.pubmed_abstracts)  # type: ignore[attr-defined]
+        if _cross_abs:
+            parts.append("=== PUBMED ARTICLES ===\n" + _format_abstracts(_cross_abs[:15]))
+
+    if not parts:
+        parts.append(
+            "=== NO EXTERNAL DATA RETRIEVED ===\n"
+            "Use your training knowledge. Apply extra caution and set confidence 'low' for claims without a citable source."
+        )
+
+    if vector_results:
+        parts.append(_format_vector_context(vector_results))
+
+    return "\n\n".join(parts)
+
+
+def build_adaptive_messages(
+    query: str,
+    query_type: str,
+    fetched_data: "FetchedData | None" = None,
+    vector_results: "list[SearchResult] | None" = None,
+    required_sections: "list[str] | None" = None,
+    condition_context: "str | None" = None,
+) -> tuple[str, str]:
+    """Return (system_text, user_text) for the unified adaptive LLM generation call.
+
+    system_text is suitable for Anthropic cache_control (contains all static + data context).
+    user_text is just the query.
+    """
+    focus_instruction = _detect_focus_instruction(query)
+    if query_type == "drug":
+        drug_focus = _drug_focus_hint(query)
+        if drug_focus:
+            focus_instruction = drug_focus
+    elif query_type == "disease":
+        disease_focus = _disease_focus_hint(query)
+        if disease_focus:
+            focus_instruction = disease_focus
+
+    condition_block = ""
+    if condition_context:
+        condition_block = (
+            f"CONDITION CONTEXT: This is a drug-in-disease query for "
+            f'"{condition_context}". Prioritise dosing, contraindications, '
+            f"monitoring, and guideline positioning for this condition.\n\n"
+        )
+
+    sections_str = ", ".join(required_sections) if required_sections else _SECTION_GUIDANCE.get(query_type, "")
+    data_block = _build_adaptive_data_block(query_type, fetched_data, vector_results)
+
+    system_text = (
+        _ADAPTIVE_SYSTEM_TEMPLATE.format(
+            approved_sources=APPROVED_SOURCES,
+            evidence_rules=EVIDENCE_RULES,
+            json_contract_rules=JSON_CONTRACT_RULES,
+            query_type=query_type,
+            query_type_upper=query_type.upper(),
+            required_sections=sections_str,
+            section_guidance=_SECTION_GUIDANCE.get(query_type, ""),
+            condition_context_block=condition_block,
+            focus_instruction=(focus_instruction + "\n\n") if focus_instruction else "",
+            data_block=data_block,
+        )
+        + _ADAPTIVE_RESPONSE_SCHEMA
+    )
+
+    user_text = f"Query: {query}"
+    return system_text, user_text

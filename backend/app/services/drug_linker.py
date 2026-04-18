@@ -1,6 +1,4 @@
-import json
 import logging
-import os
 import re
 
 from Levenshtein import distance as levenshtein_distance
@@ -11,50 +9,90 @@ from app.schemas.query import TextNode
 
 logger = logging.getLogger(__name__)
 
-# Drug dictionary loaded at module level
-_drug_dict: dict = {}
+# Drug name registry — populated at runtime from RxNorm API (Phase 4).
+# Empty set is safe: exact/fuzzy match simply never fires, text nodes pass through unlinked.
 _drug_names_lower: set[str] = set()
 _brand_to_generic: dict[str, str] = {}
 _abbreviation_to_generic: dict[str, str] = {}
+_rxnorm_loaded: bool = False
 
+import httpx
+import json
+import asyncio
 
-def load_drug_dictionary(path: str | None = None):
-    """Load the drug dictionary from JSON file."""
-    global _drug_dict, _drug_names_lower, _brand_to_generic, _abbreviation_to_generic
-
-    if path is None:
-        path = os.path.join(
-            os.path.dirname(__file__), "..", "..", "data", "drug_dictionary.json"
-        )
+async def _fetch_rxnorm_names(drug_name: str) -> list[str]:
+    """Fetch alternative drug names for a specific drug (4.1)."""
+    try:
+        import redis.asyncio as aioredis
+        _r = aioredis.from_url(settings.redis_url, decode_responses=True)
+        cache_key = f"rxnorm:drugnames:{drug_name.lower().strip()}"
+        cached = await _r.get(cache_key)
+        if cached:
+            await _r.aclose()
+            return json.loads(cached)
+    except Exception:
+        _r = None
 
     try:
-        with open(path) as f:
-            _drug_dict = json.load(f)
-    except FileNotFoundError:
-        logger.warning(f"Drug dictionary not found at {path}")
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                "https://rxnav.nlm.nih.gov/REST/drugs.json",
+                params={"name": drug_name}
+            )
+            data = resp.json()
+            names = []
+            if data.get("drugGroup", {}).get("conceptGroup"):
+                for cg in data["drugGroup"]["conceptGroup"]:
+                    for cp in cg.get("conceptProperties", []):
+                        if cp.get("name"):
+                            names.append(cp["name"])
+            
+            if _r and names:
+                await _r.setex(cache_key, 604800, json.dumps(names))
+            if _r:
+                await _r.aclose()
+            return names
+    except Exception:
+        if _r:
+            await _r.aclose()
+        return []
+
+async def _init_rxnorm_registry():
+    global _drug_names_lower, _rxnorm_loaded
+    if _rxnorm_loaded:
         return
 
-    _drug_names_lower = set()
-    _brand_to_generic = {}
-    _abbreviation_to_generic = {}
+    _rxnorm_loaded = True
+    try:
+        import redis.asyncio as aioredis
+        _r = aioredis.from_url(settings.redis_url, decode_responses=True)
+        cached = await _r.get("rxnorm:displaynames")
+        if cached:
+            _drug_names_lower = set(json.loads(cached))
+            await _r.aclose()
+            return
+    except Exception:
+        _r = None
 
-    for entry in _drug_dict.get("drugs", []):
-        generic = entry["generic_name"].lower()
-        _drug_names_lower.add(generic)
-        for brand in entry.get("brand_names", []):
-            _brand_to_generic[brand.lower()] = generic
-            _drug_names_lower.add(brand.lower())
-        for abbrev in entry.get("abbreviations", []):
-            _abbreviation_to_generic[abbrev.lower()] = generic
-            _drug_names_lower.add(abbrev.lower())
-        for synonym in entry.get("synonyms", []):
-            _drug_names_lower.add(synonym.lower())
-
-    logger.info(f"Loaded {len(_drug_dict.get('drugs', []))} drugs into dictionary")
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get("https://rxnav.nlm.nih.gov/REST/displaynames.json")
+            if resp.status_code == 200:
+                data = resp.json()
+                terms = data.get("displayTermsList", {}).get("term", [])
+                if terms:
+                    _drug_names_lower = {t.lower() for t in terms}
+                    if _r:
+                        await _r.setex("rxnorm:displaynames", 604800, json.dumps(list(_drug_names_lower)))
+    except Exception:
+        pass
+    finally:
+        if _r:
+            await _r.aclose()
 
 
 def _exact_match(word: str) -> str | None:
-    """Exact word-boundary match against dictionary."""
+    """Exact word-boundary match against runtime-populated drug registry."""
     w = word.lower()
     if w in _drug_names_lower:
         return w
@@ -67,6 +105,9 @@ def _exact_match(word: str) -> str | None:
 
 def _fuzzy_match(word: str) -> tuple[str, float] | None:
     """Fuzzy match using Levenshtein + metaphone tiebreaker. Only for drug_names fields."""
+    if not _drug_names_lower:
+        return None
+
     w = word.lower()
     w_len = len(w)
 
@@ -107,11 +148,14 @@ def _fuzzy_match(word: str) -> tuple[str, float] | None:
 FUZZY_ALLOWED_FIELDS = {"drug_names", "drug", "drug_name", "related_drugs"}
 
 
-def process_text_nodes(response_data: dict, query_type: str) -> list[TextNode]:
+async def process_text_nodes(response_data: dict, query_type: str) -> list[TextNode]:
     """
     Process response into TextNodes with drug links.
     Exact matching on all text, fuzzy only on designated drug fields.
+    When _drug_names_lower is empty (RxNorm not yet loaded), returns plain text nodes.
     """
+    await _init_rxnorm_registry()
+    
     text_nodes = []
     all_text = _extract_all_text(response_data)
     drug_field_words = _extract_drug_field_words(response_data)

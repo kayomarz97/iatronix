@@ -5,6 +5,7 @@ import { Monitor, Moon, Sun, Edit2, Check, X, Brain, Globe, FileText } from "luc
 import { API_KEY_STORAGE_KEY, LLM_PROVIDER_STORAGE_KEY } from "@/lib/constants";
 import { useTheme } from "@/hooks/useTheme";
 import { SOURCE_MODE_KEY } from "@/components/providers/QueryProvider";
+import { saveServiceKey, deleteServiceKey, listServiceKeys } from "@/lib/api";
 
 type SourceMode = "ai" | "scraping" | "pdfs";
 
@@ -29,6 +30,16 @@ export default function SettingsPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [email, setEmail] = useState("");
+
+  const [voyageKey, setVoyageKey] = useState("");
+  const [voyageStatus, setVoyageStatus] = useState<{ is_set: boolean } | null>(null);
+  const [voyageMessage, setVoyageMessage] = useState<string | null>(null);
+  const [voyageLoading, setVoyageLoading] = useState(false);
+
+  const [ncbiKey, setNcbiKey] = useState("");
+  const [ncbiStatus, setNcbiStatus] = useState<{ is_set: boolean } | null>(null);
+  const [ncbiMessage, setNcbiMessage] = useState<string | null>(null);
+  const [ncbiLoading, setNcbiLoading] = useState(false);
 
   const [profile, setProfile] = useState<{
     full_name?: string;
@@ -62,6 +73,8 @@ export default function SettingsPage() {
     if (stored && ["ai", "scraping", "pdfs"].includes(stored)) setSourceMode(stored);
     fetchProfile();
     fetchLlmStatus();
+    fetchVoyageStatus();
+    fetchNcbiStatus();
   }, []);
 
   const applySourceMode = (mode: SourceMode) => {
@@ -70,12 +83,13 @@ export default function SettingsPage() {
   };
 
   const getApiKey = () => localStorage.getItem(API_KEY_STORAGE_KEY) || "";
+  const authHeader = () => ({ "Authorization": `Bearer ${getApiKey()}` });
 
   const fetchProfile = async () => {
     const apiKey = getApiKey();
     if (!apiKey) return;
     try {
-      const res = await fetch("/api/v1/auth/me", { headers: { "X-API-Key": apiKey } });
+      const res = await fetch("/api/v1/auth/me", { headers: authHeader() });
       if (res.ok) {
         const data = await res.json();
         setProfile(data);
@@ -88,7 +102,7 @@ export default function SettingsPage() {
     const apiKey = getApiKey();
     if (!apiKey) return;
     try {
-      const res = await fetch("/api/v1/auth/llm-key", { headers: { "X-API-Key": apiKey } });
+      const res = await fetch("/api/v1/auth/llm-key", { headers: authHeader() });
       if (res.ok) {
         const data = await res.json();
         setLlmStatus(data);
@@ -114,7 +128,7 @@ export default function SettingsPage() {
     try {
       const res = await fetch("/api/v1/auth/profile", {
         method: "PUT",
-        headers: { "Content-Type": "application/json", "X-API-Key": getApiKey() },
+        headers: { "Content-Type": "application/json", ...authHeader() },
         body: JSON.stringify({
           full_name: editForm.full_name || null,
           username: editForm.username || null,
@@ -161,7 +175,7 @@ export default function SettingsPage() {
     try {
       const res = await fetch("/api/v1/auth/llm-key", {
         method: "PUT",
-        headers: { "Content-Type": "application/json", "X-API-Key": getApiKey() },
+        headers: { "Content-Type": "application/json", ...authHeader() },
         body: JSON.stringify({ key: llmKey, provider }),
       });
       const data = await res.json();
@@ -186,7 +200,7 @@ export default function SettingsPage() {
     try {
       const res = await fetch("/api/v1/auth/llm-key", {
         method: "DELETE",
-        headers: { "X-API-Key": getApiKey() },
+        headers: authHeader(),
       });
       if (res.ok) {
         setMessage("LLM key removed");
@@ -196,6 +210,88 @@ export default function SettingsPage() {
       setMessage("Network error");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchVoyageStatus = async () => {
+    const apiKey = getApiKey();
+    if (!apiKey) return;
+    try {
+      const keys = await listServiceKeys(apiKey);
+      const voyageKey = keys.find(k => k.service_name === "voyageai");
+      setVoyageStatus({ is_set: !!voyageKey });
+    } catch {}
+  };
+
+  const saveVoyageKey = async () => {
+    setVoyageLoading(true);
+    setVoyageMessage(null);
+    try {
+      const apiKey = getApiKey();
+      await saveServiceKey(apiKey, "voyageai", voyageKey);
+      setVoyageMessage("Voyage AI key saved successfully");
+      setVoyageKey("");
+      fetchVoyageStatus();
+    } catch (err) {
+      setVoyageMessage("Failed to save key");
+    } finally {
+      setVoyageLoading(false);
+    }
+  };
+
+  const removeVoyageKey = async () => {
+    setVoyageLoading(true);
+    setVoyageMessage(null);
+    try {
+      const apiKey = getApiKey();
+      await deleteServiceKey(apiKey, "voyageai");
+      setVoyageMessage("Voyage AI key removed");
+      fetchVoyageStatus();
+    } catch {
+      setVoyageMessage("Failed to remove key");
+    } finally {
+      setVoyageLoading(false);
+    }
+  };
+
+  const fetchNcbiStatus = async () => {
+    const apiKey = getApiKey();
+    if (!apiKey) return;
+    try {
+      const keys = await listServiceKeys(apiKey);
+      const ncbiKey = keys.find(k => k.service_name === "ncbi");
+      setNcbiStatus({ is_set: !!ncbiKey });
+    } catch {}
+  };
+
+  const saveNcbiKey = async () => {
+    setNcbiLoading(true);
+    setNcbiMessage(null);
+    try {
+      const apiKey = getApiKey();
+      await saveServiceKey(apiKey, "ncbi", ncbiKey);
+      setNcbiMessage("NCBI key saved successfully");
+      setNcbiKey("");
+      fetchNcbiStatus();
+    } catch (err) {
+      setNcbiMessage("Failed to save key");
+    } finally {
+      setNcbiLoading(false);
+    }
+  };
+
+  const removeNcbiKey = async () => {
+    setNcbiLoading(true);
+    setNcbiMessage(null);
+    try {
+      const apiKey = getApiKey();
+      await deleteServiceKey(apiKey, "ncbi");
+      setNcbiMessage("NCBI key removed");
+      fetchNcbiStatus();
+    } catch {
+      setNcbiMessage("Failed to remove key");
+    } finally {
+      setNcbiLoading(false);
     }
   };
 
@@ -423,6 +519,144 @@ export default function SettingsPage() {
           </div>
         </div>
         {message && <p className="text-sm" style={{ color: message.includes("saved") || message.includes("removed") ? "var(--success)" : "var(--text-secondary)" }}>{message}</p>}
+      </section>
+
+      {/* ── Voyage AI Key (Anthropic only) ── */}
+      {provider === "anthropic" && (
+        <section className="space-y-3">
+          <h2 className="text-lg font-semibold">Vector Search Key (Voyage AI)</h2>
+          <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
+            Anthropic has no embeddings API. To enable PDF vector search, add a free{" "}
+            <a
+              href="https://www.voyageai.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: "var(--primary)", textDecoration: "underline" }}
+            >
+              Voyage AI
+            </a>{" "}
+            key (free tier: 200M tokens/month).
+          </p>
+
+          {voyageStatus && (
+            <div className="p-3 rounded-md text-sm" style={{ background: "var(--bg-elevated)", border: "1px solid var(--border)" }}>
+              <span className="font-medium">Current: </span>
+              {voyageStatus.is_set ? (
+                <span style={{ color: "var(--success)" }}>Vector search enabled</span>
+              ) : (
+                <span style={{ color: "var(--text-muted)" }}>Not configured</span>
+              )}
+            </div>
+          )}
+
+          <div className="space-y-2">
+            <input
+              type="password"
+              value={voyageKey}
+              onChange={(e) => setVoyageKey(e.target.value)}
+              placeholder="voyage-..."
+              className="w-full px-3 py-2 rounded-md border border-border bg-surface text-sm min-h-[44px]"
+            />
+            <div className="flex gap-2">
+              <button
+                onClick={saveVoyageKey}
+                disabled={voyageLoading || !voyageKey}
+                className="px-4 py-2 bg-primary text-white rounded-md text-sm min-h-[44px] disabled:opacity-50"
+              >
+                {voyageLoading ? "Saving..." : "Save Key"}
+              </button>
+              {voyageStatus?.is_set && (
+                <button
+                  onClick={removeVoyageKey}
+                  disabled={voyageLoading}
+                  className="px-4 py-2 rounded-md border border-border text-sm min-h-[44px]"
+                >
+                  Remove Key
+                </button>
+              )}
+            </div>
+          </div>
+          {voyageMessage && (
+            <p
+              className="text-sm"
+              style={{
+                color: voyageMessage.includes("saved") || voyageMessage.includes("removed")
+                  ? "var(--success)"
+                  : "var(--text-secondary)",
+              }}
+            >
+              {voyageMessage}
+            </p>
+          )}
+        </section>
+      )}
+
+      {/* ── NCBI API Key ── */}
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold">PubMed API Key (NCBI)</h2>
+        <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
+          Free NCBI API key increases PubMed retrieval speed and reliability. Increases rate limit from 3 to 10 requests/second.{" "}
+          <a
+            href="https://www.ncbi.nlm.nih.gov/account/"
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ color: "var(--primary)", textDecoration: "underline" }}
+          >
+            Register free at NCBI
+          </a>
+          .
+        </p>
+
+        {ncbiStatus && (
+          <div className="p-3 rounded-md text-sm" style={{ background: "var(--bg-elevated)", border: "1px solid var(--border)" }}>
+            <span className="font-medium">Current: </span>
+            {ncbiStatus.is_set ? (
+              <span style={{ color: "var(--success)" }}>PubMed rate limit: 10 req/s (key active)</span>
+            ) : (
+              <span style={{ color: "var(--text-muted)" }}>PubMed rate limit: 3 req/s (no key — add a free NCBI key to improve retrieval)</span>
+            )}
+          </div>
+        )}
+
+        <div className="space-y-2">
+          <input
+            type="password"
+            value={ncbiKey}
+            onChange={(e) => setNcbiKey(e.target.value)}
+            placeholder="Your NCBI API key"
+            className="w-full px-3 py-2 rounded-md border border-border bg-surface text-sm min-h-[44px]"
+          />
+          <div className="flex gap-2">
+            <button
+              onClick={saveNcbiKey}
+              disabled={ncbiLoading || !ncbiKey}
+              className="px-4 py-2 bg-primary text-white rounded-md text-sm min-h-[44px] disabled:opacity-50"
+            >
+              {ncbiLoading ? "Saving..." : "Save Key"}
+            </button>
+            {ncbiStatus?.is_set && (
+              <button
+                onClick={removeNcbiKey}
+                disabled={ncbiLoading}
+                className="px-4 py-2 rounded-md border border-border text-sm min-h-[44px]"
+              >
+                Remove Key
+              </button>
+            )}
+          </div>
+        </div>
+        {ncbiMessage && (
+          <p
+            className="text-sm"
+            style={{
+              color: ncbiMessage.includes("saved") || ncbiMessage.includes("removed")
+                ? "var(--success)"
+                : "var(--text-secondary)",
+            }}
+          >
+            {ncbiMessage}
+          </p>
+        )}
       </section>
     </div>
   );

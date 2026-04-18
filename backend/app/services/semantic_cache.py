@@ -66,7 +66,7 @@ async def semantic_cache_get(
         from app.services.embedder import Embedder
 
         embedder = Embedder.get_instance()
-        embedding = await _asyncio.to_thread(embedder.embed_text, query)
+        embedding = await embedder.embed_text_async(query)
 
         async with session_factory() as session:
             # pgvector cosine distance: 1 - cosine_similarity
@@ -123,7 +123,7 @@ async def semantic_cache_set(
         from app.services.embedder import Embedder
 
         embedder = Embedder.get_instance()
-        embedding = await _asyncio.to_thread(embedder.embed_text, query)
+        embedding = await embedder.embed_text_async(query)
 
         async with session_factory() as session:
             entry = QueryCache(

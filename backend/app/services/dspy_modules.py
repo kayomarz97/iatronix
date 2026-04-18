@@ -40,6 +40,7 @@ class AdaptiveMedicalPipeline(dspy.Module):
         query_type_hint: str | None = None,
         condition_context_hint: str | None = None,
         pre_analysis: dict | None = None,
+        ncbi_structured_hint: str | None = None,
     ):
         if pre_analysis is not None:
             # Re-use Step 1 analysis result — skip the redundant LLM call
@@ -78,6 +79,8 @@ class AdaptiveMedicalPipeline(dspy.Module):
             vector_context=vector_results,
             required_sections=", ".join(analysis.required_sections),
             depth=analysis.depth,
+            ncbi_structured=ncbi_structured_hint or "",
+            output_format_hint="Use markdown tables or flowcharts for complex comparisons or pathways." if analysis.depth == "comprehensive" else "",
         )
 
         # Sparse-response retry (item 5): one retry with expansion instruction
@@ -99,6 +102,8 @@ class AdaptiveMedicalPipeline(dspy.Module):
                 vector_context=vector_results,
                 required_sections=", ".join(analysis.required_sections),
                 depth=analysis.depth,
+                ncbi_structured=ncbi_structured_hint or "",
+                output_format_hint="Use markdown tables or flowcharts for complex comparisons or pathways." if analysis.depth == "comprehensive" else "",
             )
 
         analysis.query_type = resolved_query_type

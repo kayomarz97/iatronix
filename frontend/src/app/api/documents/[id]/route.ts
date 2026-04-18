@@ -9,12 +9,15 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
-    const apiKey = request.headers.get("x-api-key") || "";
+    const authHeader = request.headers.get("authorization");
+    const headers: Record<string, string> = {};
+    if (authHeader) headers["Authorization"] = authHeader;
+
     const response = await fetch(
       `${INTERNAL_API_URL}/api/v1/documents/${id}`,
       {
         method: "DELETE",
-        headers: { "X-API-Key": apiKey },
+        headers,
       }
     );
     const data = await response.json();

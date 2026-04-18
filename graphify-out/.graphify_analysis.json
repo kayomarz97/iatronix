@@ -1,0 +1,1434 @@
+{
+  "communities": {
+    "0": [
+      "data_fetcher_build_medindia_url",
+      "data_fetcher_cap_abstracts",
+      "data_fetcher_drugfetchresult",
+      "data_fetcher_fetch_chembl",
+      "data_fetcher_fetch_chembl_remote",
+      "data_fetcher_fetch_dailymed",
+      "data_fetcher_fetch_data_for_query",
+      "data_fetcher_fetch_disease_data",
+      "data_fetcher_fetch_drug_data",
+      "data_fetcher_fetch_evidence_data",
+      "data_fetcher_fetch_fda_events",
+      "data_fetcher_fetch_fda_label",
+      "data_fetcher_fetch_medindia",
+      "data_fetcher_fetch_medlineplus",
+      "data_fetcher_fetch_ncbi_disease_structured",
+      "data_fetcher_fetch_nice",
+      "data_fetcher_fetch_pmc_statpearls",
+      "data_fetcher_fetch_procedure_data",
+      "data_fetcher_fetch_pubmed_abstracts",
+      "data_fetcher_fetch_pubmed_classification",
+      "data_fetcher_fetch_pubmed_clinical_trials",
+      "data_fetcher_fetch_pubmed_procedure_guidelines",
+      "data_fetcher_fetch_rxnorm_approximate_rxcui",
+      "data_fetcher_fetch_rxnorm_class",
+      "data_fetcher_fetch_rxnorm_class_chain",
+      "data_fetcher_fetch_rxnorm_cui",
+      "data_fetcher_fetch_rxnorm_ingredient",
+      "data_fetcher_fetch_rxnorm_interactions",
+      "data_fetcher_fetch_rxnorm_name",
+      "data_fetcher_fetch_semantic_scholar",
+      "data_fetcher_fire_and_forget_index",
+      "data_fetcher_first",
+      "data_fetcher_get_client",
+      "data_fetcher_get_journal_filter",
+      "data_fetcher_init_http_client",
+      "data_fetcher_load_journal_registry",
+      "data_fetcher_make_client",
+      "data_fetcher_merge_fda_label",
+      "data_fetcher_parse_pubmed_xml",
+      "data_fetcher_pubmed_efetch",
+      "data_fetcher_pubmed_esearch",
+      "data_fetcher_rationale_1",
+      "data_fetcher_rationale_1043",
+      "data_fetcher_rationale_1094",
+      "data_fetcher_rationale_1152",
+      "data_fetcher_rationale_1207",
+      "data_fetcher_rationale_1234",
+      "data_fetcher_rationale_1295",
+      "data_fetcher_rationale_131",
+      "data_fetcher_rationale_1337",
+      "data_fetcher_rationale_1450",
+      "data_fetcher_rationale_1577",
+      "data_fetcher_rationale_1615",
+      "data_fetcher_rationale_1626",
+      "data_fetcher_rationale_1693",
+      "data_fetcher_rationale_1704",
+      "data_fetcher_rationale_1718",
+      "data_fetcher_rationale_263",
+      "data_fetcher_rationale_277",
+      "data_fetcher_rationale_285",
+      "data_fetcher_rationale_298",
+      "data_fetcher_rationale_320",
+      "data_fetcher_rationale_337",
+      "data_fetcher_rationale_369",
+      "data_fetcher_rationale_567",
+      "data_fetcher_rationale_607",
+      "data_fetcher_rationale_629",
+      "data_fetcher_rationale_695",
+      "data_fetcher_rationale_750",
+      "data_fetcher_rationale_776",
+      "data_fetcher_rationale_799",
+      "data_fetcher_resolve_drug_name_online",
+      "data_fetcher_safe_get",
+      "data_fetcher_safe_get_text",
+      "data_fetcher_shutdown_http_client",
+      "data_fetcher_truncate",
+      "root_projects_med_ai_project_backend_app_services_data_fetcher_py"
+    ],
+    "1": [
+      "auth_config",
+      "auth_keyinfo",
+      "auth_llmkeyrequest",
+      "auth_registerrequest",
+      "auth_rotatekeyrequest",
+      "auth_rotatekeyresponse",
+      "auth_searchhistoryitem",
+      "auth_updatepreferencesrequest",
+      "auth_updateprofilerequest",
+      "auth_userprofileresponse",
+      "backend_app_models_query_log_py",
+      "backend_app_models_search_history_py",
+      "backend_app_schemas_auth_py",
+      "backend_app_schemas_models_py",
+      "basemodel",
+      "data_fetcher_diseasefetchresult",
+      "data_fetcher_evidencefetchresult",
+      "data_fetcher_fetcheddata",
+      "data_fetcher_procedurefetchresult",
+      "dspy_modules_adaptivemedicalpipeline",
+      "dspy_modules_adaptivemedicalpipeline_forward",
+      "dspy_modules_adaptivemedicalpipeline_init",
+      "dspy_modules_adaptivemedicalpipeline_is_critically_sparse",
+      "dspy_modules_rationale_25",
+      "dspy_signatures_medicalqueryanalysis",
+      "dspy_signatures_medicalresponsegeneration",
+      "dspy_signatures_rationale_38",
+      "dspy_signatures_rationale_9",
+      "models_modelinfo",
+      "query_adaptivebluf",
+      "query_adaptivecontentitem",
+      "query_adaptivereference",
+      "query_adaptiveresponse",
+      "query_adaptivesection",
+      "query_comparativeresponse",
+      "query_comparisondimension",
+      "query_degradedresponse",
+      "query_diseaseresponse",
+      "query_drugdosing",
+      "query_druginteraction",
+      "query_drugresponse",
+      "query_evidencedclaim",
+      "query_evidenceresponse",
+      "query_generalresponse",
+      "query_log_querylog",
+      "query_procedureguideline",
+      "query_procedureresponse",
+      "query_procedurestep",
+      "query_queryrequest",
+      "query_queryresponse",
+      "query_reference",
+      "query_studyevidence",
+      "query_treatmententry",
+      "query_treatmentsection",
+      "rag_pipeline_rationale_1039",
+      "rag_pipeline_rationale_1172",
+      "rag_pipeline_rationale_1937",
+      "rag_pipeline_rationale_272",
+      "rag_pipeline_rationale_279",
+      "rag_pipeline_rationale_644",
+      "rag_pipeline_rationale_702",
+      "rag_pipeline_rationale_720",
+      "rag_pipeline_rationale_727",
+      "rag_pipeline_rationale_738",
+      "rag_pipeline_rationale_74",
+      "rag_pipeline_rationale_750",
+      "rag_pipeline_rationale_797",
+      "rag_pipeline_rationale_818",
+      "rag_pipeline_rationale_885",
+      "rag_pipeline_rationale_939",
+      "rag_pipeline_rationale_969",
+      "root_projects_med_ai_project_backend_app_schemas_query_py",
+      "root_projects_med_ai_project_backend_app_services_dspy_modules_py",
+      "root_projects_med_ai_project_backend_app_services_dspy_signatures_py",
+      "search_history_searchhistory"
+    ],
+    "2": [
+      "backend_app_models_document_py",
+      "base",
+      "base_base",
+      "base_cachebase",
+      "base_timestampmixin",
+      "declarativebase",
+      "document_document",
+      "document_documentchunk",
+      "prompt_engine_build_condition_context_block",
+      "prompt_engine_build_condition_data_block",
+      "prompt_engine_build_format_prompt",
+      "prompt_engine_build_generate_prompt",
+      "prompt_engine_build_prompt",
+      "prompt_engine_detect_focus_instruction",
+      "prompt_engine_detect_query_focus",
+      "prompt_engine_disease_focus_hint",
+      "prompt_engine_drug_focus_hint",
+      "prompt_engine_format_abstracts",
+      "prompt_engine_format_drug_block",
+      "prompt_engine_format_nice_recs",
+      "prompt_engine_format_vector_context",
+      "prompt_engine_get_prompt_version",
+      "prompt_engine_rationale_1021",
+      "prompt_engine_rationale_1124",
+      "prompt_engine_rationale_1157",
+      "prompt_engine_rationale_1184",
+      "prompt_engine_rationale_31",
+      "prompt_engine_rationale_79",
+      "prompt_engine_rationale_878",
+      "prompt_engine_rationale_970",
+      "prompt_engine_rationale_984",
+      "query_audit_queryaudit",
+      "root_projects_med_ai_project_backend_app_models_base_py",
+      "root_projects_med_ai_project_backend_app_models_query_audit_py",
+      "root_projects_med_ai_project_backend_app_models_service_key_py",
+      "root_projects_med_ai_project_backend_app_models_user_py",
+      "root_projects_med_ai_project_backend_app_services_prompt_engine_py",
+      "root_projects_med_ai_project_backend_app_services_user_service_py",
+      "root_projects_med_ai_project_backend_app_services_vector_search_py",
+      "service_key_servicekey",
+      "str",
+      "timestampmixin",
+      "user_service_get_or_create_user",
+      "user_service_rationale_6",
+      "user_user",
+      "user_userposition",
+      "user_userrole",
+      "vector_search_rationale_1",
+      "vector_search_rationale_43",
+      "vector_search_search",
+      "vector_search_searchresult"
+    ],
+    "3": [
+      "backend_tests_test_m1_prompt_engine_py",
+      "test_m1_prompt_engine_get_prompt",
+      "test_m1_prompt_engine_rationale_1",
+      "test_m1_prompt_engine_rationale_130",
+      "test_m1_prompt_engine_rationale_139",
+      "test_m1_prompt_engine_rationale_226",
+      "test_m1_prompt_engine_rationale_59",
+      "test_m1_prompt_engine_rationale_76",
+      "test_m1_prompt_engine_rendered",
+      "test_m1_prompt_engine_test_build_prompt_generate_mode",
+      "test_m1_prompt_engine_test_json_contract_rules_present",
+      "test_m1_prompt_engine_test_no_na_string_rule_present",
+      "test_m1_prompt_engine_test_no_shorthand_in_prompt",
+      "test_m1_prompt_engine_testbuildpromptintegration",
+      "test_m1_prompt_engine_testbuildpromptintegration_test_build_prompt_highlights_mode",
+      "test_m1_prompt_engine_testdiseasebluf",
+      "test_m1_prompt_engine_testdiseasebluf_test_disease_format_prompt_contains_additional_clinical_context",
+      "test_m1_prompt_engine_testdiseasebluf_test_disease_format_prompt_contains_bluf_field",
+      "test_m1_prompt_engine_testdiseasebluf_test_disease_format_prompt_no_mandatory_order",
+      "test_m1_prompt_engine_testdiseasebluf_test_disease_prompt_contains_additional_clinical_context",
+      "test_m1_prompt_engine_testdiseasebluf_test_disease_prompt_contains_bluf_field",
+      "test_m1_prompt_engine_testdiseasebluf_test_disease_prompt_no_mandatory_order",
+      "test_m1_prompt_engine_testdiseaseresponseschema",
+      "test_m1_prompt_engine_testdiseaseresponseschema_test_additional_clinical_context_accepts_string",
+      "test_m1_prompt_engine_testdiseaseresponseschema_test_additional_clinical_context_field_exists_and_defaults_none",
+      "test_m1_prompt_engine_testdiseaseresponseschema_test_backward_compat_no_new_fields",
+      "test_m1_prompt_engine_testdiseaseresponseschema_test_bluf_accepts_string",
+      "test_m1_prompt_engine_testdiseaseresponseschema_test_bluf_field_exists_and_defaults_none",
+      "test_m1_prompt_engine_testdiseaseresponseschema_test_other_response_types_unchanged",
+      "test_m1_prompt_engine_testevidencepromptconstraints",
+      "test_m1_prompt_engine_testevidencepromptconstraints_test_guideline_status_templates_in_evidence_format_prompt",
+      "test_m1_prompt_engine_testevidencepromptconstraints_test_guideline_status_templates_in_evidence_prompt",
+      "test_m1_prompt_engine_testevidencepromptconstraints_test_pmid_numeric_rule_in_evidence_format_prompt",
+      "test_m1_prompt_engine_testevidencepromptconstraints_test_pmid_numeric_rule_in_evidence_prompt",
+      "test_m1_prompt_engine_testgeneralpromptconstraints",
+      "test_m1_prompt_engine_testgeneralpromptconstraints_test_key_points_no_markdown_rule",
+      "test_m1_prompt_engine_testgeneralpromptconstraints_test_related_drugs_generic_names_rule",
+      "test_m1_prompt_engine_testjsoncontractrules",
+      "test_m1_prompt_engine_testnoshorthands",
+      "test_m1_prompt_engine_testprocedurestepsconstraints",
+      "test_m1_prompt_engine_testprocedurestepsconstraints_test_procedure_steps_sequential_rule",
+      "test_m1_prompt_engine_testprocedurestepsconstraints_test_procedure_steps_start_at_1"
+    ],
+    "4": [
+      "backend_tests_test_m2_url_builder_py",
+      "test_m2_url_builder_fake_fetched",
+      "test_m2_url_builder_rationale_1",
+      "test_m2_url_builder_rationale_275",
+      "test_m2_url_builder_testbuildpmidindex",
+      "test_m2_url_builder_testbuildpmidindex_test_collects_from_multiple_abstract_lists",
+      "test_m2_url_builder_testbuildpmidindex_test_empty_fetched_data_returns_empty_index",
+      "test_m2_url_builder_testbuildpmidindex_test_extracts_pmid_from_guideline_abstracts",
+      "test_m2_url_builder_testbuildpmidindex_test_skips_abstracts_without_pmid",
+      "test_m2_url_builder_testcitationvalidatorurlwarnings",
+      "test_m2_url_builder_testcitationvalidatorurlwarnings_test_http_url_generates_warning",
+      "test_m2_url_builder_testcitationvalidatorurlwarnings_test_null_url_no_warning",
+      "test_m2_url_builder_testcitationvalidatorurlwarnings_test_unknown_domain_url_generates_warning",
+      "test_m2_url_builder_testcitationvalidatorurlwarnings_test_valid_pubmed_url_no_warning",
+      "test_m2_url_builder_testenrichreferences",
+      "test_m2_url_builder_testenrichreferences_test_cochrane_source_gets_cochrane_url",
+      "test_m2_url_builder_testenrichreferences_test_doi_inline_produces_doi_url",
+      "test_m2_url_builder_testenrichreferences_test_empty_references_list_no_crash",
+      "test_m2_url_builder_testenrichreferences_test_esc_source_gets_esc_url",
+      "test_m2_url_builder_testenrichreferences_test_existing_valid_url_preserved",
+      "test_m2_url_builder_testenrichreferences_test_fda_source_gets_fda_url",
+      "test_m2_url_builder_testenrichreferences_test_http_url_nulled",
+      "test_m2_url_builder_testenrichreferences_test_nice_source_gets_nice_url",
+      "test_m2_url_builder_testenrichreferences_test_no_references_key_no_crash",
+      "test_m2_url_builder_testenrichreferences_test_pmid_in_title_matched_from_fetched",
+      "test_m2_url_builder_testenrichreferences_test_pmid_inline_in_source_field",
+      "test_m2_url_builder_testenrichreferences_test_unknown_domain_url_nulled",
+      "test_m2_url_builder_testenrichreferences_test_unknown_source_stays_null",
+      "test_m2_url_builder_testenrichreferences_test_who_source_gets_who_url",
+      "test_m2_url_builder_testissafeurl",
+      "test_m2_url_builder_testissafeurl_test_empty_string_not_safe",
+      "test_m2_url_builder_testissafeurl_test_http_not_safe",
+      "test_m2_url_builder_testissafeurl_test_none_not_safe",
+      "test_m2_url_builder_testissafeurl_test_too_long_url_not_safe",
+      "test_m2_url_builder_testissafeurl_test_unknown_domain_not_safe",
+      "test_m2_url_builder_testissafeurl_test_valid_doi_url_safe",
+      "test_m2_url_builder_testissafeurl_test_valid_pubmed_url_safe",
+      "test_m2_url_builder_testprompturlrule",
+      "test_m2_url_builder_testprompturlrule_test_json_contract_rules_contains_url_null_instruction"
+    ],
+    "5": [
+      "agent_guide_overview",
+      "agent_guide_query_lifecycle",
+      "arch_circuit_breaker",
+      "arch_db_schema",
+      "arch_env_vars",
+      "arch_middleware_stack",
+      "arch_model_routing",
+      "arch_pdf_ingestion",
+      "arch_rag_format_mode",
+      "arch_rag_generate_mode",
+      "arch_redis_cache",
+      "arch_roadmap",
+      "arch_system_overview",
+      "checklist_master_plan",
+      "checklist_phase0_cleanup",
+      "checklist_phase1_auth_bug",
+      "checklist_phase2_arch",
+      "checklist_phase3_output",
+      "checklist_phase4_rxnorm",
+      "checklist_phase5_scalability",
+      "favicon_svg",
+      "log_backend_pytest_failures",
+      "log_cohesion_orphans",
+      "log_frontend_tsc_pass",
+      "log_security_findings",
+      "log_speed_redis_hits",
+      "model_comparison_haiku_vs_qwen",
+      "model_comparison_hallucination_risk",
+      "nginx_domain_migration",
+      "readme_byok_model",
+      "readme_dspy_pipeline",
+      "readme_iatronix_platform",
+      "readme_live_retrieval_sources",
+      "readme_production_architecture",
+      "readme_query_flow",
+      "readme_query_response_contract",
+      "readme_runtime_flags"
+    ],
+    "6": [
+      "rag_pipeline_adaptive_sparse_reasons",
+      "rag_pipeline_analyze_query_with_dspy",
+      "rag_pipeline_call_llm",
+      "rag_pipeline_coerce_evidenced_claims",
+      "rag_pipeline_default_model_for_provider",
+      "rag_pipeline_describe_data",
+      "rag_pipeline_enqueue_log",
+      "rag_pipeline_enrich_disease_result",
+      "rag_pipeline_enrich_evidence_result",
+      "rag_pipeline_enrich_procedure_result",
+      "rag_pipeline_expand_retrieval_if_needed",
+      "rag_pipeline_init_log_queue",
+      "rag_pipeline_is_critically_sparse",
+      "rag_pipeline_log_consumer",
+      "rag_pipeline_log_search_history",
+      "rag_pipeline_merge_abstracts",
+      "rag_pipeline_merge_text",
+      "rag_pipeline_model_tier",
+      "rag_pipeline_normalize_model_for_provider",
+      "rag_pipeline_process_query",
+      "rag_pipeline_retrieval_assessment",
+      "rag_pipeline_revalidate_semantic_cache",
+      "rag_pipeline_sanitize_entities",
+      "rag_pipeline_shutdown_log_queue",
+      "rag_pipeline_summarize_fetched",
+      "rag_pipeline_summarize_vectors",
+      "rag_pipeline_validate_evidence_consistency",
+      "rag_pipeline_validate_response",
+      "rag_pipeline_write_log_entry",
+      "root_projects_med_ai_project_backend_app_services_rag_pipeline_py"
+    ],
+    "7": [
+      "cachebase",
+      "embedder_embedder",
+      "embedder_embedder_embed_text",
+      "embedder_embedder_embed_text_async",
+      "embedder_embedder_embed_texts",
+      "embedder_embedder_embed_texts_async",
+      "embedder_embedder_init",
+      "embedder_embedder_truncate_or_pad",
+      "embedder_get_instance",
+      "embedder_rationale_1",
+      "embedder_rationale_43",
+      "embedder_rationale_63",
+      "embedder_rationale_76",
+      "query_cache_querycache",
+      "query_cache_rationale_1",
+      "root_projects_med_ai_project_backend_app_models_query_cache_py",
+      "root_projects_med_ai_project_backend_app_services_embedder_py",
+      "root_projects_med_ai_project_backend_app_services_semantic_cache_py",
+      "semantic_cache_is_cache_hit",
+      "semantic_cache_is_stale",
+      "semantic_cache_rationale_1",
+      "semantic_cache_rationale_111",
+      "semantic_cache_rationale_150",
+      "semantic_cache_rationale_28",
+      "semantic_cache_rationale_38",
+      "semantic_cache_rationale_50",
+      "semantic_cache_semantic_cache_get",
+      "semantic_cache_semantic_cache_revalidate",
+      "semantic_cache_semantic_cache_set"
+    ],
+    "8": [
+      "frontend_src_components_ui_tetrismodal_tsx",
+      "tetrismodal_collide",
+      "tetrismodal_controlicon",
+      "tetrismodal_creatematrix",
+      "tetrismodal_createpiece",
+      "tetrismodal_draw",
+      "tetrismodal_drawghost",
+      "tetrismodal_drawgrid",
+      "tetrismodal_drawmatrix",
+      "tetrismodal_drawpreviewcanvas",
+      "tetrismodal_getfulllines",
+      "tetrismodal_getrandompiece",
+      "tetrismodal_handlekeydown",
+      "tetrismodal_merge",
+      "tetrismodal_playerdrop",
+      "tetrismodal_playerharddrop",
+      "tetrismodal_playerhold",
+      "tetrismodal_playermove",
+      "tetrismodal_playerreset",
+      "tetrismodal_playerrotate",
+      "tetrismodal_processclearedlines",
+      "tetrismodal_restartgame",
+      "tetrismodal_rotate",
+      "tetrismodal_triggergameover",
+      "tetrismodal_update",
+      "tetrismodal_updatescore"
+    ],
+    "9": [
+      "backend_tests_test_m4_semantic_cache_py",
+      "test_m4_semantic_cache_rationale_1",
+      "test_m4_semantic_cache_testquerycachemodel",
+      "test_m4_semantic_cache_testquerycachemodel_test_model_has_required_columns",
+      "test_m4_semantic_cache_testquerycachemodel_test_model_importable",
+      "test_m4_semantic_cache_testquerycachemodel_test_model_table_name",
+      "test_m4_semantic_cache_testsemanticcacheconfig",
+      "test_m4_semantic_cache_testsemanticcacheconfig_test_semantic_cache_enabled_setting_exists",
+      "test_m4_semantic_cache_testsemanticcacheconfig_test_semantic_cache_swr_ttl_exists",
+      "test_m4_semantic_cache_testsemanticcacheconfig_test_semantic_cache_threshold_exists",
+      "test_m4_semantic_cache_testsemanticcacheservicedisabled",
+      "test_m4_semantic_cache_testsemanticcacheservicedisabled_test_get_returns_none_when_disabled",
+      "test_m4_semantic_cache_testsemanticcacheservicedisabled_test_set_noop_when_disabled",
+      "test_m4_semantic_cache_testsemanticcachestaleness",
+      "test_m4_semantic_cache_testsemanticcachestaleness_test_exactly_at_boundary_is_stale",
+      "test_m4_semantic_cache_testsemanticcachestaleness_test_fresh_entry_not_stale",
+      "test_m4_semantic_cache_testsemanticcachestaleness_test_none_last_verified_is_stale",
+      "test_m4_semantic_cache_testsemanticcachestaleness_test_old_entry_is_stale",
+      "test_m4_semantic_cache_testthresholdcheck",
+      "test_m4_semantic_cache_testthresholdcheck_test_above_threshold_is_hit",
+      "test_m4_semantic_cache_testthresholdcheck_test_below_threshold_is_miss",
+      "test_m4_semantic_cache_testthresholdcheck_test_exact_threshold_is_hit",
+      "test_m4_semantic_cache_testthresholdcheck_test_zero_similarity_is_miss"
+    ],
+    "10": [
+      "backend_app_middleware_payload_limit_py",
+      "backend_app_middleware_rate_limit_py",
+      "basehttpmiddleware",
+      "firebase_auth_cache_get",
+      "firebase_auth_cache_set",
+      "firebase_auth_firebaseauthmiddleware",
+      "firebase_auth_firebaseauthmiddleware_dispatch",
+      "firebase_auth_invalidate_user_cache",
+      "firebase_auth_rationale_58",
+      "payload_limit_payloadlimitmiddleware",
+      "payload_limit_payloadlimitmiddleware_dispatch",
+      "rate_limit_check_per_key_rate_limit",
+      "rate_limit_check_redis_rate_limit",
+      "rate_limit_inmemoryslidingwindow",
+      "rate_limit_inmemoryslidingwindow_init",
+      "rate_limit_inmemoryslidingwindow_is_rate_limited",
+      "rate_limit_preauthratelimitmiddleware",
+      "rate_limit_preauthratelimitmiddleware_dispatch",
+      "rate_limit_rationale_115",
+      "rate_limit_rationale_18",
+      "rate_limit_rationale_43",
+      "rate_limit_rationale_63",
+      "root_projects_med_ai_project_backend_app_middleware_firebase_auth_py"
+    ],
+    "11": [
+      "backend_app_services_ingestion_py",
+      "ingestion_chunk_pages",
+      "ingestion_extract_pdf_pages",
+      "ingestion_get_pdf_text_preview",
+      "ingestion_ingest_pdf",
+      "ingestion_ingest_pmc_article",
+      "ingestion_ingest_pubmed_abstracts",
+      "ingestion_ingest_statpearls",
+      "ingestion_parse_pmc_xml",
+      "ingestion_parse_statpearls_xml",
+      "ingestion_rationale_1",
+      "ingestion_rationale_128",
+      "ingestion_rationale_137",
+      "ingestion_rationale_148",
+      "ingestion_rationale_164",
+      "ingestion_rationale_238",
+      "ingestion_rationale_284",
+      "ingestion_rationale_379",
+      "ingestion_rationale_415",
+      "ingestion_rationale_49"
+    ],
+    "12": [
+      "backend_tests_test_m3a_drug_rag_py",
+      "test_m3a_drug_rag_rationale_1",
+      "test_m3a_drug_rag_rationale_122",
+      "test_m3a_drug_rag_rationale_130",
+      "test_m3a_drug_rag_testbuildpromptdrugincludes",
+      "test_m3a_drug_rag_testbuildpromptdrugincludes_make_fetched",
+      "test_m3a_drug_rag_testbuildpromptdrugincludes_test_empty_systematic_reviews_renders_cleanly",
+      "test_m3a_drug_rag_testbuildpromptdrugincludes_test_guidelines_still_included_alongside_reviews",
+      "test_m3a_drug_rag_testbuildpromptdrugincludes_test_systematic_reviews_appear_in_prompt",
+      "test_m3a_drug_rag_testdrugfetchresultschema",
+      "test_m3a_drug_rag_testdrugfetchresultschema_test_has_systematic_review_abstracts_field",
+      "test_m3a_drug_rag_testdrugfetchresultschema_test_systematic_review_abstracts_preserved_through_fallbacks",
+      "test_m3a_drug_rag_testdrugformatprompt",
+      "test_m3a_drug_rag_testdrugformatprompt_test_prompt_has_systematic_review_placeholder",
+      "test_m3a_drug_rag_testdrugformatprompt_test_prompt_has_systematic_review_section",
+      "test_m3a_drug_rag_testdrugformatprompt_test_prompt_still_has_guideline_section",
+      "test_m3a_drug_rag_testfetchdrugdatasystematicreviews",
+      "test_m3a_drug_rag_testfetchdrugdatasystematicreviews_test_cap_abstracts_applied_to_systematic_reviews",
+      "test_m3a_drug_rag_testfetchdrugdatasystematicreviews_test_fetch_drug_data_result_has_systematic_review_abstracts_attr"
+    ],
+    "13": [
+      "auth_routes_delete_account",
+      "auth_routes_delete_llm_key",
+      "auth_routes_get_authenticated_user",
+      "auth_routes_get_llm_key_status",
+      "auth_routes_get_me",
+      "auth_routes_llmkeyresponse",
+      "auth_routes_rationale_1",
+      "auth_routes_rationale_144",
+      "auth_routes_rationale_162",
+      "auth_routes_rationale_192",
+      "auth_routes_rationale_207",
+      "auth_routes_rationale_220",
+      "auth_routes_rationale_30",
+      "auth_routes_rationale_42",
+      "auth_routes_rationale_77",
+      "auth_routes_set_llm_key",
+      "auth_routes_update_preferences",
+      "auth_routes_update_profile",
+      "backend_app_api_v1_auth_routes_py"
+    ],
+    "14": [
+      "frontend_src_app_documents_page_tsx",
+      "frontend_src_app_settings_page_tsx",
+      "page_applysourcemode",
+      "page_applythememode",
+      "page_canceledit",
+      "page_deletedoc",
+      "page_fetchllmstatus",
+      "page_fetchprofile",
+      "page_getapikey",
+      "page_handledrop",
+      "page_handlefileinput",
+      "page_logout",
+      "page_removellmkey",
+      "page_savellmkey",
+      "page_saveprofile",
+      "page_startedit",
+      "page_uploadfile"
+    ],
+    "15": [
+      "scripts_test_security_py",
+      "test_security_grep_pattern",
+      "test_security_log",
+      "test_security_ollama",
+      "test_security_rationale_101",
+      "test_security_rationale_106",
+      "test_security_rationale_48",
+      "test_security_rationale_63",
+      "test_security_rationale_73",
+      "test_security_rationale_87",
+      "test_security_read_file",
+      "test_security_run",
+      "test_security_scan_auth_issues",
+      "test_security_scan_deps_for_vulns",
+      "test_security_scan_headers",
+      "test_security_scan_injection_risks",
+      "test_security_scan_secrets_in_code"
+    ],
+    "16": [
+      "backend_tests_test_m3b_scraping_py",
+      "test_m3b_scraping_rationale_1",
+      "test_m3b_scraping_rationale_17",
+      "test_m3b_scraping_testbuildscrapingresponse",
+      "test_m3b_scraping_testbuildscrapingresponse_make_disease_fetched",
+      "test_m3b_scraping_testbuildscrapingresponse_make_drug_fetched",
+      "test_m3b_scraping_testbuildscrapingresponse_test_disease_scraping_response_has_guideline_info",
+      "test_m3b_scraping_testbuildscrapingresponse_test_drug_scraping_response_has_key_points",
+      "test_m3b_scraping_testbuildscrapingresponse_test_drug_scraping_response_has_summary",
+      "test_m3b_scraping_testbuildscrapingresponse_test_drug_scraping_response_returns_general_response",
+      "test_m3b_scraping_testbuildscrapingresponse_test_failed_fetch_returns_none",
+      "test_m3b_scraping_testbuildscrapingresponse_test_no_fetched_data_returns_none",
+      "test_m3b_scraping_testbuildscrapingresponse_test_references_include_data_source",
+      "test_m3b_scraping_testmedindiaurlencoding",
+      "test_m3b_scraping_testmedindiaurlencoding_test_drug_name_spaces_encoded",
+      "test_m3b_scraping_testmedindiaurlencoding_test_drug_name_with_special_chars_is_encoded",
+      "test_m3b_scraping_testmedindiaurlencoding_test_normal_drug_name"
+    ],
+    "17": [
+      "scripts_test_speed_py",
+      "test_speed_check_db_slow_queries",
+      "test_speed_check_docker_stats",
+      "test_speed_check_redis_stats",
+      "test_speed_log",
+      "test_speed_measure_endpoint",
+      "test_speed_measure_frontend_bundle",
+      "test_speed_ollama",
+      "test_speed_rationale_110",
+      "test_speed_rationale_40",
+      "test_speed_rationale_68",
+      "test_speed_rationale_88",
+      "test_speed_rationale_98",
+      "test_speed_read_file_excerpt",
+      "test_speed_run"
+    ],
+    "18": [
+      "backend_app_services_byok_py",
+      "byok_decrypt_key",
+      "byok_encrypt_key",
+      "byok_get_fernet",
+      "byok_rationale_1",
+      "byok_rationale_107",
+      "byok_rationale_163",
+      "byok_rationale_45",
+      "byok_rationale_51",
+      "byok_rationale_61",
+      "byok_rationale_73",
+      "byok_validate_anthropic_key",
+      "byok_validate_key_format",
+      "byok_validate_openai_key",
+      "byok_validate_user_key"
+    ],
+    "19": [
+      "drug_linker_exact_match",
+      "drug_linker_extract_all_text",
+      "drug_linker_extract_drug_field_words",
+      "drug_linker_fetch_rxnorm_names",
+      "drug_linker_fuzzy_match",
+      "drug_linker_init_rxnorm_registry",
+      "drug_linker_process_text_nodes",
+      "drug_linker_rationale_107",
+      "drug_linker_rationale_152",
+      "drug_linker_rationale_219",
+      "drug_linker_rationale_236",
+      "drug_linker_rationale_24",
+      "drug_linker_rationale_95",
+      "query_textnode",
+      "root_projects_med_ai_project_backend_app_services_drug_linker_py"
+    ],
+    "20": [
+      "scripts_test_cohesiveness_py",
+      "test_cohesiveness_check_nav_links",
+      "test_cohesiveness_collect_backend_routes",
+      "test_cohesiveness_collect_frontend_api_calls",
+      "test_cohesiveness_extract_calls",
+      "test_cohesiveness_find_unused_components",
+      "test_cohesiveness_log",
+      "test_cohesiveness_ollama",
+      "test_cohesiveness_rationale_117",
+      "test_cohesiveness_rationale_48",
+      "test_cohesiveness_rationale_67",
+      "test_cohesiveness_rationale_96",
+      "test_cohesiveness_read",
+      "test_cohesiveness_run"
+    ],
+    "21": [
+      "backend_tests_integration_test_rag_pipeline_py",
+      "test_rag_pipeline_make_drug_response_json",
+      "test_rag_pipeline_make_mock_user",
+      "test_rag_pipeline_rationale_1",
+      "test_rag_pipeline_rationale_127",
+      "test_rag_pipeline_rationale_164",
+      "test_rag_pipeline_rationale_193",
+      "test_rag_pipeline_rationale_214",
+      "test_rag_pipeline_rationale_240",
+      "test_rag_pipeline_test_circuit_breaker_trip",
+      "test_rag_pipeline_test_disease_query_cache_hit",
+      "test_rag_pipeline_test_drug_query_full_flow",
+      "test_rag_pipeline_test_sparse_response_retry",
+      "test_rag_pipeline_test_timeout_handling"
+    ],
+    "22": [
+      "backend_app_api_v1_documents_py",
+      "documents_delete_document",
+      "documents_deleteresponse",
+      "documents_documentlistresponse",
+      "documents_documentresponse",
+      "documents_estimate_upload_cost",
+      "documents_get_user",
+      "documents_list_documents",
+      "documents_rationale_1",
+      "documents_rationale_114",
+      "documents_rationale_148",
+      "documents_rationale_191",
+      "documents_rationale_58",
+      "documents_upload_pdf"
+    ],
+    "23": [
+      "backend_app_services_pdf_verifier_py",
+      "pdf_verifier_check_doi",
+      "pdf_verifier_check_isbn",
+      "pdf_verifier_check_metadata",
+      "pdf_verifier_check_publisher_patterns",
+      "pdf_verifier_extract_first_pages",
+      "pdf_verifier_rationale_1",
+      "pdf_verifier_rationale_114",
+      "pdf_verifier_rationale_127",
+      "pdf_verifier_rationale_150",
+      "pdf_verifier_rationale_159",
+      "pdf_verifier_rationale_70",
+      "pdf_verifier_rationale_99",
+      "pdf_verifier_verify_pdf"
+    ],
+    "24": [
+      "backend_app_services_cache_py",
+      "cache_cache_get",
+      "cache_cache_get_any_version",
+      "cache_cache_set",
+      "cache_make_cache_key",
+      "cache_normalize_query",
+      "cache_rationale_13",
+      "cache_rationale_22",
+      "cache_rationale_37",
+      "cache_rationale_53",
+      "cache_rationale_67",
+      "cache_ttl_for_type"
+    ],
+    "25": [
+      "backend_app_services_r2_storage_py",
+      "r2_storage_delete_pdf",
+      "r2_storage_delete_sync",
+      "r2_storage_get_client",
+      "r2_storage_is_configured",
+      "r2_storage_r2_configured",
+      "r2_storage_rationale_1",
+      "r2_storage_rationale_89",
+      "r2_storage_rationale_96",
+      "r2_storage_upload_pdf",
+      "r2_storage_upload_sync"
+    ],
+    "26": [
+      "root_projects_med_ai_project_frontend_src_app_api_auth_llm_key_route_ts",
+      "root_projects_med_ai_project_frontend_src_app_api_documents_id_route_ts",
+      "root_projects_med_ai_project_frontend_src_app_api_documents_route_ts",
+      "root_projects_med_ai_project_frontend_src_app_api_history_id_route_ts",
+      "root_projects_med_ai_project_frontend_src_app_api_history_route_ts",
+      "route_delete",
+      "route_extractapikey",
+      "route_get",
+      "route_proxyheaders",
+      "route_put"
+    ],
+    "27": [
+      "backend_app_api_v1_history_py",
+      "history_clear_history",
+      "history_delete_history_item",
+      "history_get_authenticated_user",
+      "history_get_history",
+      "history_rationale_1",
+      "history_rationale_14",
+      "history_rationale_28",
+      "history_rationale_59",
+      "history_rationale_83"
+    ],
+    "28": [
+      "registry_rationale_15",
+      "registry_rationale_24",
+      "registry_rationale_39",
+      "registry_rationale_5",
+      "registry_serviceregistry",
+      "registry_serviceregistry_get_best",
+      "registry_serviceregistry_init",
+      "registry_serviceregistry_register",
+      "registry_serviceregistry_report",
+      "root_projects_med_ai_project_backend_app_services_registry_py"
+    ],
+    "29": [
+      "scripts_test_frontend_py",
+      "test_frontend_find_dead_features",
+      "test_frontend_log",
+      "test_frontend_ollama",
+      "test_frontend_rationale_55",
+      "test_frontend_run",
+      "test_frontend_run_docker_cmd",
+      "test_frontend_run_lint",
+      "test_frontend_run_tsc"
+    ],
+    "30": [
+      "backend_tests_test_dspy_comparison_py",
+      "test_dspy_comparison_count_sections",
+      "test_dspy_comparison_get_query_type",
+      "test_dspy_comparison_get_tokens",
+      "test_dspy_comparison_has_bluf",
+      "test_dspy_comparison_query",
+      "test_dspy_comparison_rationale_1",
+      "test_dspy_comparison_rationale_53",
+      "test_dspy_comparison_rationale_68"
+    ],
+    "31": [
+      "backend_app_services_source_router_py",
+      "source_router_extract_condition_context",
+      "source_router_extract_entities",
+      "source_router_normalize_entity_text",
+      "source_router_rationale_1",
+      "source_router_rationale_59",
+      "source_router_route_query",
+      "source_router_routingdecision",
+      "source_router_strip_condition_suffix"
+    ],
+    "32": [
+      "root_projects_med_ai_project_backend_app_services_url_builder_py",
+      "url_builder_build_pmid_index",
+      "url_builder_enrich_references",
+      "url_builder_is_safe_url",
+      "url_builder_match_source_pattern",
+      "url_builder_rationale_1",
+      "url_builder_rationale_148",
+      "url_builder_rationale_165",
+      "url_builder_rationale_203"
+    ],
+    "33": [
+      "citation_validator_extract_claims",
+      "citation_validator_is_approved_source",
+      "citation_validator_rationale_172",
+      "citation_validator_rationale_69",
+      "citation_validator_rationale_80",
+      "citation_validator_truncate",
+      "citation_validator_validate_citations",
+      "root_projects_med_ai_project_backend_app_services_citation_validator_py"
+    ],
+    "34": [
+      "backend_app_services_query_classifier_py",
+      "query_classifier_classify_query",
+      "query_classifier_classify_query_llm",
+      "query_classifier_detect_intent",
+      "query_classifier_rationale_105",
+      "query_classifier_rationale_59",
+      "query_classifier_rationale_66"
+    ],
+    "35": [
+      "backend_app_services_llm_factory_py",
+      "llm_factory_create_llm",
+      "llm_factory_get_alternative_model",
+      "llm_factory_get_provider",
+      "llm_factory_rationale_14",
+      "llm_factory_rationale_26",
+      "llm_factory_rationale_81"
+    ],
+    "36": [
+      "auth_generate_api_key",
+      "auth_parse_api_key",
+      "auth_rationale_19",
+      "auth_rationale_24",
+      "auth_rationale_8",
+      "auth_verify_key_secret",
+      "backend_app_core_auth_py"
+    ],
+    "37": [
+      "scripts_test_backend_py",
+      "test_backend_check_api_health",
+      "test_backend_log",
+      "test_backend_ollama",
+      "test_backend_run",
+      "test_backend_run_pytest"
+    ],
+    "38": [
+      "backend_app_services_cost_estimator_py",
+      "cost_estimator_estimate_pdf_ingestion",
+      "cost_estimator_estimate_query_cost",
+      "cost_estimator_rationale_1",
+      "cost_estimator_rationale_32",
+      "cost_estimator_rationale_8"
+    ],
+    "39": [
+      "frontend_src_components_layout_header_tsx",
+      "header_handler",
+      "header_isactive",
+      "header_logout",
+      "header_toggletheme"
+    ],
+    "40": [
+      "backend_migrations_env_py",
+      "env_do_run_migrations",
+      "env_run_async_migrations",
+      "env_run_migrations_offline",
+      "env_run_migrations_online"
+    ],
+    "41": [
+      "backend_app_services_json_repair_py",
+      "json_repair_parse_llm_json",
+      "json_repair_rationale_11",
+      "json_repair_rationale_19",
+      "json_repair_strip_markdown_fences"
+    ],
+    "42": [
+      "backend_app_services_circuit_breaker_py",
+      "circuit_breaker_get_breaker",
+      "circuit_breaker_is_provider_available",
+      "circuit_breaker_logginglistener",
+      "circuit_breaker_logginglistener_state_change"
+    ],
+    "43": [
+      "frontend_src_app_login_page_tsx",
+      "frontend_src_app_page_tsx",
+      "page_handlesubmit",
+      "page_runsearch"
+    ],
+    "44": [
+      "frontend_src_app_register_page_tsx",
+      "page_handlestep1",
+      "page_handlestep2",
+      "page_handlestep3"
+    ],
+    "45": [
+      "frontend_src_hooks_usetheme_ts",
+      "usetheme_applytheme",
+      "usetheme_getsystemtheme",
+      "usetheme_usetheme"
+    ],
+    "46": [
+      "formatters_confidencecolor",
+      "formatters_formatlatency",
+      "formatters_severitycolor",
+      "frontend_src_lib_formatters_ts"
+    ],
+    "47": [
+      "002_vector_search_downgrade",
+      "002_vector_search_rationale_1",
+      "002_vector_search_upgrade",
+      "backend_migrations_versions_002_vector_search_py"
+    ],
+    "48": [
+      "e325edba0af9_v2_1_update_downgrade",
+      "e325edba0af9_v2_1_update_rationale_1",
+      "e325edba0af9_v2_1_update_upgrade",
+      "root_projects_med_ai_project_backend_migrations_versions_e325edba0af9_v2_1_update_py"
+    ],
+    "49": [
+      "003_user_profile_and_r2_downgrade",
+      "003_user_profile_and_r2_rationale_1",
+      "003_user_profile_and_r2_upgrade",
+      "backend_migrations_versions_003_user_profile_and_r2_py"
+    ],
+    "50": [
+      "001_initial_schema_downgrade",
+      "001_initial_schema_rationale_1",
+      "001_initial_schema_upgrade",
+      "backend_migrations_versions_001_initial_schema_py"
+    ],
+    "51": [
+      "004_semantic_cache_downgrade",
+      "004_semantic_cache_rationale_1",
+      "004_semantic_cache_upgrade",
+      "backend_migrations_versions_004_semantic_cache_py"
+    ],
+    "52": [
+      "backend_app_services_scraping_response_py",
+      "scraping_response_build_scraping_response",
+      "scraping_response_rationale_1",
+      "scraping_response_rationale_21"
+    ],
+    "53": [
+      "evidencebadge_evidencebadge",
+      "evidencebadge_evidencedtext",
+      "frontend_src_components_results_evidencebadge_tsx"
+    ],
+    "54": [
+      "frontend_src_components_ui_skeleton_tsx",
+      "skeleton_queryskeleton",
+      "skeleton_skeleton"
+    ],
+    "55": [
+      "authprovider_authprovider",
+      "authprovider_useauth",
+      "frontend_src_components_providers_authprovider_tsx"
+    ],
+    "56": [
+      "frontend_src_components_providers_queryprovider_tsx",
+      "queryprovider_getprovidermodel",
+      "queryprovider_queryprovider"
+    ],
+    "57": [
+      "root_projects_med_ai_project_frontend_src_app_api_documents_upload_route_ts",
+      "root_projects_med_ai_project_frontend_src_app_api_query_route_ts",
+      "route_post"
+    ],
+    "58": [
+      "api_fetchmodels",
+      "api_submitquery",
+      "root_projects_med_ai_project_frontend_src_lib_api_ts"
+    ],
+    "59": [
+      "basesettings",
+      "config_settings",
+      "root_projects_med_ai_project_backend_app_config_py"
+    ],
+    "60": [
+      "backend_app_services_safety_checker_py",
+      "safety_checker_check_safety",
+      "safety_checker_rationale_52"
+    ],
+    "61": [
+      "root_projects_med_ai_project_frontend_src_components_versionbadge_tsx",
+      "versionbadge_versionbadge"
+    ],
+    "62": [
+      "frontend_src_components_results_truncatedlist_tsx",
+      "truncatedlist_truncatedlist"
+    ],
+    "63": [
+      "referencelist_buildfallbackurl",
+      "root_projects_med_ai_project_frontend_src_components_results_referencelist_tsx"
+    ],
+    "64": [
+      "claimitem_claimitem",
+      "frontend_src_components_results_claimitem_tsx"
+    ],
+    "65": [
+      "frontend_src_components_ui_searchbar_tsx",
+      "searchbar_searchbar"
+    ],
+    "66": [
+      "frontend_src_components_ui_searchhistorysidebar_tsx",
+      "searchhistorysidebar_timeago"
+    ],
+    "67": [
+      "badge_badge",
+      "frontend_src_components_ui_badge_tsx"
+    ],
+    "68": [
+      "button_button",
+      "frontend_src_components_ui_button_tsx"
+    ],
+    "69": [
+      "card_card",
+      "frontend_src_components_ui_card_tsx"
+    ],
+    "70": [
+      "footer_footer",
+      "frontend_src_components_layout_footer_tsx"
+    ],
+    "71": [
+      "frontend_src_components_layout_mobilenav_tsx",
+      "mobilenav_mobilenav"
+    ],
+    "72": [
+      "frontend_src_hooks_usesearchhistory_ts",
+      "usesearchhistory_usesearchhistory"
+    ],
+    "73": [
+      "backend_app_main_py",
+      "main_lifespan"
+    ],
+    "74": [
+      "backend_app_api_v1_models_py",
+      "models_list_models"
+    ],
+    "75": [
+      "backend_app_api_v1_health_py",
+      "health_health_check"
+    ],
+    "76": [
+      "backend_app_api_v1_query_py",
+      "query_query_endpoint"
+    ],
+    "77": [
+      "backend_app_services_dspy_lm_py",
+      "dspy_lm_get_dspy_lm"
+    ],
+    "78": [
+      "init_db_check_db_connection",
+      "root_projects_med_ai_project_backend_app_db_init_db_py"
+    ],
+    "79": [
+      "backend_app_db_session_py",
+      "session_get_session"
+    ],
+    "80": [
+      "frontend_next_config_ts"
+    ],
+    "81": [
+      "frontend_next_env_d_ts"
+    ],
+    "82": [
+      "frontend_src_components_results_textnoderenderer_tsx"
+    ],
+    "83": [
+      "root_projects_med_ai_project_frontend_src_components_results_tablerenderer_tsx"
+    ],
+    "84": [
+      "frontend_src_components_results_disclaimerbanner_tsx"
+    ],
+    "85": [
+      "frontend_src_components_results_procedureresult_tsx"
+    ],
+    "86": [
+      "frontend_src_components_results_adaptiveresultrenderer_tsx"
+    ],
+    "87": [
+      "frontend_src_components_results_evidenceresult_tsx"
+    ],
+    "88": [
+      "frontend_src_components_results_resultchrome_tsx"
+    ],
+    "89": [
+      "frontend_src_components_results_comparativeresult_tsx"
+    ],
+    "90": [
+      "root_projects_med_ai_project_frontend_src_components_results_diseaseinforesult_tsx"
+    ],
+    "91": [
+      "root_projects_med_ai_project_frontend_src_components_results_flowchartrenderer_tsx"
+    ],
+    "92": [
+      "frontend_src_components_results_generalresult_tsx"
+    ],
+    "93": [
+      "root_projects_med_ai_project_frontend_src_components_results_druginforesult_tsx"
+    ],
+    "94": [
+      "frontend_src_components_ui_thinkinganimation_tsx"
+    ],
+    "95": [
+      "frontend_src_components_ui_accordion_tsx"
+    ],
+    "96": [
+      "root_projects_med_ai_project_frontend_src_app_layout_tsx"
+    ],
+    "97": [
+      "frontend_src_app_about_page_tsx"
+    ],
+    "98": [
+      "frontend_src_app_query_page_tsx"
+    ],
+    "99": [
+      "frontend_src_lib_constants_ts"
+    ],
+    "100": [
+      "frontend_src_lib_firebase_ts"
+    ],
+    "101": [
+      "root_projects_med_ai_project_frontend_src_lib_types_ts"
+    ],
+    "102": [
+      "backend_tests_init_py"
+    ],
+    "103": [
+      "backend_app_init_py"
+    ],
+    "104": [
+      "backend_app_api_init_py"
+    ],
+    "105": [
+      "backend_app_api_v1_init_py"
+    ],
+    "106": [
+      "backend_app_middleware_init_py"
+    ],
+    "107": [
+      "backend_app_services_init_py"
+    ],
+    "108": [
+      "backend_app_core_init_py"
+    ],
+    "109": [
+      "backend_app_schemas_init_py"
+    ],
+    "110": [
+      "backend_app_db_init_py"
+    ],
+    "111": [
+      "root_projects_med_ai_project_backend_app_models_init_py"
+    ]
+  },
+  "cohesion": {
+    "0": 0.06,
+    "1": 0.16,
+    "2": 0.08,
+    "3": 0.05,
+    "4": 0.06,
+    "5": 0.06,
+    "6": 0.13,
+    "7": 0.1,
+    "8": 0.18,
+    "9": 0.09,
+    "10": 0.11,
+    "11": 0.12,
+    "12": 0.12,
+    "13": 0.16,
+    "14": 0.2,
+    "15": 0.2,
+    "16": 0.15,
+    "17": 0.21,
+    "18": 0.18,
+    "19": 0.23,
+    "20": 0.29,
+    "21": 0.16,
+    "22": 0.22,
+    "23": 0.2,
+    "24": 0.24,
+    "25": 0.24,
+    "26": 0.36,
+    "27": 0.27,
+    "28": 0.2,
+    "29": 0.44,
+    "30": 0.22,
+    "31": 0.39,
+    "32": 0.31,
+    "33": 0.36,
+    "34": 0.38,
+    "35": 0.33,
+    "36": 0.29,
+    "37": 0.6,
+    "38": 0.33,
+    "39": 0.4,
+    "40": 0.5,
+    "41": 0.5,
+    "42": 0.5,
+    "43": 0.5,
+    "44": 0.5,
+    "45": 0.5,
+    "46": 0.5,
+    "47": 0.5,
+    "48": 0.5,
+    "49": 0.5,
+    "50": 0.5,
+    "51": 0.5,
+    "52": 0.5,
+    "53": 0.67,
+    "54": 0.67,
+    "55": 0.67,
+    "56": 0.67,
+    "57": 0.67,
+    "58": 0.67,
+    "59": 0.67,
+    "60": 0.67,
+    "61": 1.0,
+    "62": 1.0,
+    "63": 1.0,
+    "64": 1.0,
+    "65": 1.0,
+    "66": 1.0,
+    "67": 1.0,
+    "68": 1.0,
+    "69": 1.0,
+    "70": 1.0,
+    "71": 1.0,
+    "72": 1.0,
+    "73": 1.0,
+    "74": 1.0,
+    "75": 1.0,
+    "76": 1.0,
+    "77": 1.0,
+    "78": 1.0,
+    "79": 1.0,
+    "80": 1.0,
+    "81": 1.0,
+    "82": 1.0,
+    "83": 1.0,
+    "84": 1.0,
+    "85": 1.0,
+    "86": 1.0,
+    "87": 1.0,
+    "88": 1.0,
+    "89": 1.0,
+    "90": 1.0,
+    "91": 1.0,
+    "92": 1.0,
+    "93": 1.0,
+    "94": 1.0,
+    "95": 1.0,
+    "96": 1.0,
+    "97": 1.0,
+    "98": 1.0,
+    "99": 1.0,
+    "100": 1.0,
+    "101": 1.0,
+    "102": 1.0,
+    "103": 1.0,
+    "104": 1.0,
+    "105": 1.0,
+    "106": 1.0,
+    "107": 1.0,
+    "108": 1.0,
+    "109": 1.0,
+    "110": 1.0,
+    "111": 1.0
+  },
+  "gods": [
+    {
+      "id": "data_fetcher_diseasefetchresult",
+      "label": "DiseaseFetchResult",
+      "edges": 28
+    },
+    {
+      "id": "data_fetcher_fetcheddata",
+      "label": "FetchedData",
+      "edges": 28
+    },
+    {
+      "id": "dspy_modules_adaptivemedicalpipeline",
+      "label": "AdaptiveMedicalPipeline",
+      "edges": 23
+    },
+    {
+      "id": "rag_pipeline_rationale_74",
+      "label": "Summarize fetched API data for DSPy input with enough depth for adaptive output.",
+      "edges": 22
+    },
+    {
+      "id": "rag_pipeline_rationale_272",
+      "label": "Summarize vector search results for DSPy input.",
+      "edges": 22
+    },
+    {
+      "id": "rag_pipeline_rationale_279",
+      "label": "Describe what data sources were fetched.",
+      "edges": 22
+    },
+    {
+      "id": "rag_pipeline_rationale_644",
+      "label": "Detect if an LLM response is critically sparse and needs a retry.      Returns (",
+      "edges": 22
+    },
+    {
+      "id": "rag_pipeline_rationale_702",
+      "label": "Return a tier number for a model \u2014 higher = more capable.",
+      "edges": 22
+    },
+    {
+      "id": "rag_pipeline_rationale_720",
+      "label": "Initialize the async logging queue and consumer.",
+      "edges": 22
+    },
+    {
+      "id": "rag_pipeline_rationale_727",
+      "label": "Shutdown the async logging queue.",
+      "edges": 22
+    }
+  ],
+  "surprises": [
+    {
+      "source": "Iatronix Favicon (SVG brand icon)",
+      "target": "Iatronix Medical Reference Platform",
+      "source_files": [
+        "frontend/public/favicon.svg",
+        "README.md"
+      ],
+      "confidence": "INFERRED",
+      "relation": "conceptually_related_to",
+      "why": "inferred connection - not explicitly stated in source; crosses file types (doc \u2194 image); connects across different repos/directories; peripheral node `Iatronix Favicon (SVG brand icon)` unexpectedly reaches hub `Iatronix Medical Reference Platform`"
+    },
+    {
+      "source": "Query Lifecycle for Agents (Classification \u2192 Cache \u2192 Fetch \u2192 LLM \u2192 Post-process)",
+      "target": "End-to-End Query Flow",
+      "source_files": [
+        "AGENT_INTEGRATION_GUIDE.md",
+        "README.md"
+      ],
+      "confidence": "INFERRED",
+      "relation": "semantically_similar_to",
+      "why": "inferred connection - not explicitly stated in source; connects across different repos/directories; semantically similar concepts with no structural link"
+    },
+    {
+      "source": "Architecture Roadmap & Pending Changes",
+      "target": "Phase 5: Scalability (FastEmbed, Vercel, Supabase \u2014 future)",
+      "source_files": [
+        "IATRONIX_ARCHITECTURE.md",
+        "IMPLEMENTATION_CHECKLIST.md"
+      ],
+      "confidence": "INFERRED",
+      "relation": "semantically_similar_to",
+      "why": "inferred connection - not explicitly stated in source; connects across different repos/directories; semantically similar concepts with no structural link"
+    },
+    {
+      "source": "Call this when a user's role or LLM key changes.",
+      "target": "User",
+      "source_files": [
+        "/root/projects/med-ai-project/backend/app/middleware/firebase_auth.py",
+        "/root/projects/med-ai-project/backend/app/models/user.py"
+      ],
+      "confidence": "INFERRED",
+      "relation": "uses",
+      "why": "inferred connection - not explicitly stated in source; bridges separate communities; peripheral node `Call this when a user's role or LLM key changes.` unexpectedly reaches hub `User`"
+    },
+    {
+      "source": "SearchResult",
+      "target": "Document",
+      "source_files": [
+        "/root/projects/med-ai-project/backend/app/services/vector_search.py",
+        "backend/app/models/document.py"
+      ],
+      "confidence": "INFERRED",
+      "relation": "uses",
+      "why": "inferred connection - not explicitly stated in source; connects across different repos/directories"
+    }
+  ],
+  "questions": [
+    {
+      "type": "bridge_node",
+      "question": "Why does `DiseaseFetchResult` connect `Community 1` to `Community 0`, `Community 2`?",
+      "why": "High betweenness centrality (0.023) - this node is a cross-community bridge."
+    },
+    {
+      "type": "bridge_node",
+      "question": "Why does `FetchedData` connect `Community 1` to `Community 0`, `Community 2`?",
+      "why": "High betweenness centrality (0.023) - this node is a cross-community bridge."
+    },
+    {
+      "type": "bridge_node",
+      "question": "Why does `SearchResult` connect `Community 2` to `Community 7`?",
+      "why": "High betweenness centrality (0.022) - this node is a cross-community bridge."
+    },
+    {
+      "type": "verify_inferred",
+      "question": "Are the 26 inferred relationships involving `DiseaseFetchResult` (e.g. with `Summarize fetched API data for DSPy input with enough depth for adaptive output.` and `Summarize vector search results for DSPy input.`) actually correct?",
+      "why": "`DiseaseFetchResult` has 26 INFERRED edges - model-reasoned connections that need verification."
+    },
+    {
+      "type": "verify_inferred",
+      "question": "Are the 26 inferred relationships involving `FetchedData` (e.g. with `Summarize fetched API data for DSPy input with enough depth for adaptive output.` and `Summarize vector search results for DSPy input.`) actually correct?",
+      "why": "`FetchedData` has 26 INFERRED edges - model-reasoned connections that need verification."
+    },
+    {
+      "type": "verify_inferred",
+      "question": "Are the 19 inferred relationships involving `AdaptiveMedicalPipeline` (e.g. with `MedicalQueryAnalysis` and `MedicalResponseGeneration`) actually correct?",
+      "why": "`AdaptiveMedicalPipeline` has 19 INFERRED edges - model-reasoned connections that need verification."
+    },
+    {
+      "type": "verify_inferred",
+      "question": "Are the 21 inferred relationships involving `Summarize fetched API data for DSPy input with enough depth for adaptive output.` (e.g. with `QueryLog` and `ComparativeResponse`) actually correct?",
+      "why": "`Summarize fetched API data for DSPy input with enough depth for adaptive output.` has 21 INFERRED edges - model-reasoned connections that need verification."
+    }
+  ]
+}
