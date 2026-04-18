@@ -26,9 +26,11 @@ from app.schemas.query import (
     DrugResponse,
     EvidenceResponse,
     GeneralResponse,
+    ModelCost,
     ProcedureResponse,
     QueryRequest,
     QueryResponse,
+    TokenUsage,
 )
 from app.services.cache import cache_get, cache_get_any_version, cache_set
 from app.services.circuit_breaker import get_breaker, is_provider_available
@@ -950,6 +952,26 @@ _CLAIM_FIELDS = {"loe", "cor", "source", "confidence", "value"}
 _VALID_LOE = {"I", "II-1", "II-2", "II-3", "III"}
 _VALID_COR = {"I", "IIa", "IIb", "III-no-benefit", "III-harm"}
 
+_PRICING = {
+    "claude-haiku-4-5-20251001": {"in": 0.80, "out": 4.00},
+    "claude-sonnet-4-20250514": {"in": 3.00, "out": 15.00},
+}
+
+
+def _model_cost(model_id: str, inp: int, out: int) -> ModelCost:
+    key = next((k for k in _PRICING if k in model_id), None)
+    rates = _PRICING.get(key, {"in": 3.00, "out": 15.00})
+    in_cost = round(inp / 1_000_000 * rates["in"], 6)
+    out_cost = round(out / 1_000_000 * rates["out"], 6)
+    return ModelCost(
+        model_id=model_id,
+        input_tokens=inp,
+        output_tokens=out,
+        input_cost_usd=in_cost,
+        output_cost_usd=out_cost,
+        subtotal_usd=round(in_cost + out_cost, 6),
+    )
+
 
 def _coerce_evidenced_claims(obj: object) -> None:
     """Recursively fill missing/invalid required EvidencedClaim fields with safe defaults.
@@ -1659,6 +1681,7 @@ async def process_query(
 
     _llm_t0 = time.perf_counter()
     raw_response: str | None = None
+    _gen_usage: dict = {}
     try:
         _gen_llm = create_llm(
             effective_model,
@@ -1671,6 +1694,7 @@ async def process_query(
 
         @_gen_breaker
         async def _invoke_adaptive():
+            nonlocal _gen_usage
             if _gen_provider == "anthropic":
                 _msgs = [
                     SystemMessage(content=[{"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}}]),
@@ -1678,7 +1702,13 @@ async def process_query(
                 ]
             else:
                 _msgs = [SystemMessage(content=system_text), HumanMessage(content=user_text)]
-            return (await _gen_llm.ainvoke(_msgs)).content
+            _llm_msg = await _gen_llm.ainvoke(_msgs)
+            _usage = getattr(_llm_msg, "usage_metadata", None) or {}
+            _gen_usage = {
+                "input_tokens": _usage.get("input_tokens", _usage.get("prompt_tokens", 0)) or 0,
+                "output_tokens": _usage.get("output_tokens", _usage.get("completion_tokens", 0)) or 0,
+            }
+            return _llm_msg.content
 
         raw_response = await _invoke_adaptive()
     except pybreaker.CircuitBreakerError:
@@ -1900,6 +1930,28 @@ async def process_query(
     except Exception:
         logger.warning("Audit log write failed", exc_info=True)
 
+    # Build token usage if we have usage data
+    token_usage = None
+    if _gen_usage:
+        models_cost = []
+        if _gen_usage:
+            gen_cost = _model_cost(
+                effective_model,
+                _gen_usage.get("input_tokens", 0),
+                _gen_usage.get("output_tokens", 0),
+            )
+            models_cost.append(gen_cost)
+        if models_cost:
+            total_in = sum(m.input_tokens for m in models_cost)
+            total_out = sum(m.output_tokens for m in models_cost)
+            total_cost = sum(m.subtotal_usd for m in models_cost)
+            token_usage = TokenUsage(
+                models=models_cost,
+                total_input_tokens=total_in,
+                total_output_tokens=total_out,
+                total_cost_usd=total_cost,
+            )
+
     response = QueryResponse(
         query_type="adaptive",
         model_used=effective_model,
@@ -1914,6 +1966,7 @@ async def process_query(
         audit_id=audit_id,
         rewritten_query=rewritten_query if rewritten_query != request.query else None,
         fetch_sources=fetch_sources,
+        token_usage=token_usage,
     )
 
     cache_data = response.model_dump()

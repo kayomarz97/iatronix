@@ -9,7 +9,7 @@ import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { useQueryContext } from "@/components/providers/QueryProvider";
 import { formatLatency } from "@/lib/formatters";
-import type { DegradedResponse, AdaptiveResponse } from "@/lib/types";
+import type { DegradedResponse, AdaptiveResponse, TokenUsage } from "@/lib/types";
 
 function QueryContent() {
   const { result, isLoading, loadingStage, error, activeModelName, submitQuery } = useQueryContext();
@@ -18,11 +18,6 @@ function QueryContent() {
     <div className="space-y-6">
       <div className="space-y-3">
         <SearchBar onSubmit={submitQuery} isLoading={isLoading} />
-        <div className="flex justify-end">
-          <span className="rounded-full bg-surface-alt px-2.5 py-1 text-xs text-text-muted">
-            {activeModelName}
-          </span>
-        </div>
       </div>
 
       {error && (
@@ -76,6 +71,27 @@ function QueryContent() {
           {/* Adaptive result — always rendered for non-degraded responses */}
           {"sections" in result.response && (
             <AdaptiveResultRenderer data={result.response as AdaptiveResponse} fetchSources={result.fetch_sources} />
+          )}
+
+          {/* Token usage breakdown */}
+          {result.token_usage && (
+            <div className="mt-3 rounded-lg border bg-surface-alt p-3 text-xs space-y-1">
+              {result.token_usage.models.map((m) => (
+                <div key={m.model_id} className="flex justify-between gap-4">
+                  <span className="font-mono text-text-muted">{m.model_id}</span>
+                  <span>{m.input_tokens.toLocaleString()} in · ${m.input_cost_usd.toFixed(5)}</span>
+                  <span>{m.output_tokens.toLocaleString()} out · ${m.output_cost_usd.toFixed(5)}</span>
+                  <span className="font-semibold">${m.subtotal_usd.toFixed(5)}</span>
+                </div>
+              ))}
+              <div className="flex justify-between border-t pt-1 font-bold">
+                <span>
+                  Total — {result.token_usage.total_input_tokens.toLocaleString()} in /{" "}
+                  {result.token_usage.total_output_tokens.toLocaleString()} out
+                </span>
+                <span>${result.token_usage.total_cost_usd.toFixed(5)}</span>
+              </div>
+            </div>
           )}
 
           <DisclaimerBanner
