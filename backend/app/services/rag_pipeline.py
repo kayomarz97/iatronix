@@ -1330,7 +1330,7 @@ async def process_query(
     _dspy_result, _cache_prefetch, _rewritten = await asyncio.gather(
         _analyze_query_with_dspy(
             request.query,
-            model_id=normalized_request_model,
+            model_id=settings.model_classify,
             user_key=user_llm_key,
             user_provider=user_llm_provider,
         ),
@@ -1626,8 +1626,12 @@ async def process_query(
 
     # Model and token budget selection
     # If user explicitly chose a model, respect it unconditionally.
-    # Routing only applies when user is on the default (auto) model.
+    # Otherwise use the two-model strategy: classify with Sonnet, generate with configurable model.
     effective_model = normalized_request_model
+    if request.model_explicit:
+        effective_model = normalized_request_model
+    elif user_llm_provider == "anthropic":
+        effective_model = settings.model_generate
     max_tokens = settings.llm_max_tokens_generate
     if (
         settings.model_routing_enabled
@@ -1646,22 +1650,16 @@ async def process_query(
             max_tokens = settings.llm_max_tokens_format_procedure
         elif query_type == "drug" and condition_context:
             max_tokens = settings.llm_max_tokens_format_drug_context
-            if not request.model_explicit and user_llm_provider == "anthropic":
-                effective_model = settings.model_sonnet
         else:
             max_tokens = settings.llm_max_tokens_format
     elif query_type == "disease":
         max_tokens = settings.llm_max_tokens_format_disease
-        if not request.model_explicit and user_llm_provider == "anthropic":
-            effective_model = settings.model_sonnet
     elif query_type == "evidence":
         max_tokens = settings.llm_max_tokens_format_evidence
     elif query_type == "procedure":
         max_tokens = settings.llm_max_tokens_format_procedure
     elif query_type == "drug" and condition_context:
         max_tokens = settings.llm_max_tokens_format_drug_context
-        if not request.model_explicit and user_llm_provider == "anthropic":
-            effective_model = settings.model_sonnet
 
     # ── Unified Adaptive Generation ───────────────────────────────────────────
     # All query types use a single adaptive prompt. DSPy is kept only for
