@@ -3,6 +3,7 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
 import { onAuthStateChanged, User } from "firebase/auth";
 import { auth } from "@/lib/firebase";
+import { API_KEY_STORAGE_KEY } from "@/lib/constants";
 
 interface AuthContextType {
   user: User | null;
@@ -23,8 +24,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
+      if (currentUser) {
+        const token = await currentUser.getIdToken();
+        localStorage.setItem(API_KEY_STORAGE_KEY, token);
+      } else {
+        localStorage.removeItem(API_KEY_STORAGE_KEY);
+      }
       setLoading(false);
     });
 
