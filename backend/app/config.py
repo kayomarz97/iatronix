@@ -27,9 +27,9 @@ class Settings(BaseSettings):
     pubmed_vector_cache_enabled: bool = True
 
     # Semantic query cache (pgvector SWR)
-    semantic_cache_enabled: bool = False
+    semantic_cache_enabled: bool = True
     semantic_cache_threshold: float = (
-        0.98  # cosine similarity — 0.98 ensures only near-identical queries match
+        0.92  # cosine similarity — 0.92 allows semantically similar queries to match
     )
     semantic_cache_swr_ttl_seconds: int = (
         604800  # 7 days — beyond this, revalidate in background
