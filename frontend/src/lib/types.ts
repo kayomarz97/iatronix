@@ -203,6 +203,24 @@ export interface TextNode {
   match_score?: number | null;
 }
 
+// --- Token Usage ---
+
+export interface ModelCost {
+  model_id: string;
+  input_tokens: number;
+  output_tokens: number;
+  input_cost_usd: number;
+  output_cost_usd: number;
+  subtotal_usd: number;
+}
+
+export interface TokenUsage {
+  models: ModelCost[];
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_cost_usd: number;
+}
+
 // --- Request / Response ---
 
 export interface QueryResponse {
@@ -229,6 +247,7 @@ export interface QueryResponse {
   needs_review?: boolean;
   rewritten_query?: string | null;
   fetch_sources?: string[];
+  token_usage?: TokenUsage | null;
 }
 
 export interface ModelInfo {

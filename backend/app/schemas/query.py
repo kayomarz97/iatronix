@@ -251,6 +251,22 @@ class QueryRequest(BaseModel):
     source_mode: Literal["ai", "scraping", "pdfs"] = "ai"
 
 
+class ModelCost(BaseModel):
+    model_id: str
+    input_tokens: int = 0
+    output_tokens: int = 0
+    input_cost_usd: float = 0.0
+    output_cost_usd: float = 0.0
+    subtotal_usd: float = 0.0
+
+
+class TokenUsage(BaseModel):
+    models: list[ModelCost] = []
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0
+    total_cost_usd: float = 0.0
+
+
 class QueryResponse(BaseModel):
     query_type: Literal[
         "drug", "disease", "comparative", "general", "procedure", "evidence", "adaptive"
@@ -270,6 +286,7 @@ class QueryResponse(BaseModel):
     needs_review: bool = False
     rewritten_query: Optional[str] = None
     fetch_sources: list[str] = []
+    token_usage: Optional[TokenUsage] = None
 
 
 DegradedResponse.model_rebuild()
