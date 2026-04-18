@@ -106,6 +106,8 @@ class Settings(BaseSettings):
     # Model routing (RAG optimization)
     model_haiku: str = "claude-haiku-4-5-20251001"
     model_sonnet: str = "claude-sonnet-4-20250514"
+    model_classify: str = "claude-sonnet-4-20250514"
+    model_generate: str = "claude-haiku-4-5-20251001"
     openai_default_model: str = "gpt-4o-mini"
     openrouter_default_model: str = "meta-llama/llama-3.3-70b-instruct:free"
     openrouter_api_base: str = "https://openrouter.ai/api/v1"
