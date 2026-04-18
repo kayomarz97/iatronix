@@ -2,10 +2,16 @@
 
 import React from "react";
 import { ResultSection } from "./ResultChrome";
-import { ArrowDown } from "lucide-react";
+import { MermaidRenderer } from "./MermaidRenderer";
 
 interface FlowchartRendererProps {
   flowcharts?: { title: string; steps: string[] }[];
+}
+
+function stepsToMermaid(steps: string[]): string {
+  const nodes = steps.map((s, i) => `  S${i}["${s.replace(/"/g, "'")}"]`).join("\n");
+  const edges = steps.slice(1).map((_, i) => `  S${i} --> S${i + 1}`).join("\n");
+  return `flowchart TD\n${nodes}\n${edges}`;
 }
 
 export function FlowchartRenderer({ flowcharts }: FlowchartRendererProps) {
@@ -21,21 +27,7 @@ export function FlowchartRenderer({ flowcharts }: FlowchartRendererProps) {
                 {flowchart.title}
               </h4>
             )}
-            <div className="flex flex-col items-center">
-              {flowchart.steps.map((step, sIdx) => (
-                <React.Fragment key={sIdx}>
-                  <div className="max-w-md rounded-xl border border-secondary bg-background/50 px-5 py-3 text-center text-sm shadow-sm backdrop-blur-sm transition-all hover:border-primary/50">
-                    {step}
-                  </div>
-                  {sIdx < flowchart.steps.length - 1 && (
-                    <div className="flex h-6 flex-col items-center justify-center my-1 text-muted-foreground">
-                      <div className="h-full w-px bg-border"></div>
-                      <ArrowDown size={14} className="text-border -mt-1" />
-                    </div>
-                  )}
-                </React.Fragment>
-              ))}
-            </div>
+            <MermaidRenderer chart={stepsToMermaid(flowchart.steps)} />
           </div>
         ))}
       </div>
