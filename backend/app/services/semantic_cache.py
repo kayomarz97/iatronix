@@ -46,12 +46,12 @@ async def semantic_cache_get(
     query: str,
     query_type: str,
     model_id: str,
-) -> tuple[Optional[dict], Optional[int]]:
+) -> tuple[Optional[dict], Optional[int], Optional[datetime]]:
     """
     Look up a semantically similar cached response.
 
-    Returns (response_dict, cache_id) on hit, or (None, None) on miss.
-    The caller should check is_stale(entry.last_verified_at) to decide
+    Returns (response_dict, cache_id, last_verified_at) on hit, or (None, None, None) on miss.
+    The caller should check is_stale(last_verified_at) to decide
     whether to trigger background revalidation.
     """
     if not settings.semantic_cache_enabled:
@@ -95,11 +95,11 @@ async def semantic_cache_get(
                 query_type,
                 entry.id,
             )
-            return entry.response_json, entry.id
+            return entry.response_json, entry.id, entry.last_verified_at
 
     except Exception:
         logger.debug("Semantic cache get failed — treating as miss", exc_info=True)
-        return None, None
+        return None, None, None
 
 
 async def semantic_cache_set(

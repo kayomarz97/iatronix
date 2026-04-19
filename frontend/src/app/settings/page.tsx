@@ -1,17 +1,16 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Monitor, Moon, Sun, Edit2, Check, X, Brain, Globe, FileText } from "lucide-react";
+import { Monitor, Moon, Sun, Edit2, Check, X, Brain, FileText } from "lucide-react";
 import { API_KEY_STORAGE_KEY, LLM_PROVIDER_STORAGE_KEY } from "@/lib/constants";
 import { useTheme } from "@/hooks/useTheme";
 import { SOURCE_MODE_KEY } from "@/components/providers/QueryProvider";
 import { saveServiceKey, deleteServiceKey, listServiceKeys } from "@/lib/api";
 
-type SourceMode = "ai" | "scraping" | "pdfs";
+type SourceMode = "ai" | "pdfs";
 
 const SOURCE_MODES: { id: SourceMode; icon: React.ReactNode; title: string; desc: string }[] = [
   { id: "ai", icon: <Brain size={16} />, title: "AI Mode", desc: "Live API data + LLM formatting. Best for comprehensive, structured answers." },
-  { id: "scraping", icon: <Globe size={16} />, title: "Web Sources Only", desc: "Live data from OpenFDA, PubMed, RxNorm — no AI formatting. Faster, no LLM key needed for data." },
   { id: "pdfs", icon: <FileText size={16} />, title: "Personal PDFs", desc: "Search only your uploaded documents via vector search." },
 ];
 
@@ -70,7 +69,7 @@ export default function SettingsPage() {
   useEffect(() => {
     setEmail(localStorage.getItem("iatronix_email") || "");
     const stored = localStorage.getItem(SOURCE_MODE_KEY) as SourceMode | null;
-    if (stored && ["ai", "scraping", "pdfs"].includes(stored)) setSourceMode(stored);
+    if (stored && ["ai", "pdfs"].includes(stored)) setSourceMode(stored);
     fetchProfile();
     fetchLlmStatus();
     fetchVoyageStatus();

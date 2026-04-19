@@ -1547,7 +1547,10 @@ async def process_query(
 
     # Handle semantic cache hit (checked in parallel above)
     if _sem_result is not None:
-        sem_response, sem_cache_id = _sem_result if isinstance(_sem_result, tuple) else (None, None)
+        if isinstance(_sem_result, tuple) and len(_sem_result) == 3:
+            sem_response, sem_cache_id, sem_verified_at = _sem_result
+        else:
+            sem_response, sem_cache_id, sem_verified_at = None, None, None
         if sem_response:
             latency_ms = int((time.time() - start_time) * 1000)
             sem_response["cached"] = True
@@ -1558,7 +1561,7 @@ async def process_query(
                 _sem_hit_resp = None
             if _sem_hit_resp:
                 _sem_stale = is_stale(
-                    sem_response.get("_last_verified_at"),
+                    sem_verified_at,
                     settings.semantic_cache_swr_ttl_seconds,
                 )
                 if _sem_stale and sem_cache_id:

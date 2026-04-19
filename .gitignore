@@ -52,3 +52,4 @@ logs/
 firebase-adminsdk.json
 *firebase*.json
 .gstack/
+graphify-out/
