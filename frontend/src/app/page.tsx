@@ -58,7 +58,7 @@ export default function HomePage() {
         flexDirection: "column",
         alignItems: "center",
         justifyContent: "center",
-        padding: "2rem 1.5rem",
+        padding: "2rem 1.5rem 2rem calc(1.5rem + 24px)",
         position: "relative",
       }}
     >
