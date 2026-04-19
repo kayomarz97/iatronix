@@ -1,41 +1,109 @@
 "use client";
 
-import { ExternalLink, Brain, Globe, FileText } from "lucide-react";
+import { ExternalLink, Brain, FileText } from "lucide-react";
 
-const MODES = [
+const SEARCH_MODES = [
   {
     icon: <Brain size={18} />,
     title: "AI Mode",
-    desc: "Fetches live data from OpenFDA, PubMed, RxNorm, DailyMed and uses Claude to format it into a structured, evidence-graded response. Best for comprehensive clinical queries.",
-  },
-  {
-    icon: <Globe size={18} />,
-    title: "Web Sources Only",
-    desc: "Fetches live data from the same APIs without AI formatting. Returns raw authoritative data. Faster; does not consume LLM tokens.",
+    desc: "Fetches live data from OpenFDA, PubMed, RxNorm, DailyMed and uses your LLM key to format it into a structured, evidence-graded response. Best for comprehensive clinical queries.",
   },
   {
     icon: <FileText size={18} />,
     title: "Personal PDFs",
-    desc: "Searches only documents you have uploaded via semantic vector search. Answers come exclusively from your indexed PDFs — ideal for institutional guidelines.",
+    desc: "Searches only documents you have uploaded via semantic vector search. Answers come exclusively from your indexed PDFs — ideal for institutional guidelines and private protocols.",
   },
 ];
 
-const HOW_IT_WORKS = [
-  { step: "1", title: "Query rewriting", desc: "Fixes typos, expands abbreviations, standardizes terminology (e.g., HTN → hypertension) to maximize API search accuracy." },
-  { step: "2", title: "Classification", desc: "Regex pattern scoring instantly classifies the query (drug, disease, procedure, evidence, comparative). For ambiguous phrasing, a lightweight LLM call resolves the type." },
-  { step: "3", title: "Parallel data fetch", desc: "Relevant data is pulled in parallel from FDA, PubMed (guidelines + RCTs), PMC full text, Unpaywall free PDFs, RxNorm, MedlinePlus, NICE, and your uploaded PDFs — zero AI tokens at this stage." },
-  { step: "4", title: "Adaptive AI formatting", desc: "The adaptive pipeline analyses what you need, then formats fetched data into evidence-graded sections (LOE I–III, COR I–IIb) with approved citations. BLUF banner scales to data richness." },
-  { step: "5", title: "Evidence grading & safety", desc: "Each claim is assigned LOE and COR based on its source. RCT-backed guidelines earn LOE I; unsourced claims are capped at LOE III. Citations are verified. Results are cached." },
+const PIPELINE_STEPS = [
+  {
+    step: "1",
+    title: "Query rewriting",
+    desc: "Before any search begins, the query is cleaned: typos fixed, abbreviations expanded, terminology standardized (e.g. HTN → hypertension, MI → myocardial infarction). This maximizes match quality against PubMed MeSH terms and FDA drug labels.",
+  },
+  {
+    step: "2",
+    title: "Classification",
+    desc: "Regex pattern scoring instantly classifies the query into one of five types: drug, disease, procedure, evidence (study), or comparative (drug vs. drug). For ambiguous phrasing, a lightweight Claude Haiku call resolves the type. The query type determines which APIs to call and which response schema to fill.",
+  },
+  {
+    step: "3",
+    title: "Semantic cache lookup",
+    desc: "Before any API call, the query is embedded into a vector and compared against all previously answered queries using cosine similarity (threshold: 0.92). If a semantically identical past answer exists and is less than 7 days old, it is returned immediately. If it is older, the cached response is returned instantly while a fresh pipeline run happens in the background — this is stale-while-revalidate (SWR). Cache misses proceed to the full pipeline.",
+  },
+  {
+    step: "4",
+    title: "Parallel data fetch",
+    desc: "Relevant data is pulled in parallel from up to 10 sources with no LLM involvement at this stage. Drug queries: OpenFDA labels, interactions, adverse events, DailyMed, RxNorm. Disease queries: PubMed guidelines, recent RCTs (date-sorted), PMC full-text, StatPearls monographs, Unpaywall free PDFs, MedlinePlus summaries, NICE clinical guidelines. Evidence queries: PubMed search ranked by publication date. Each source has a 20-second timeout; failures are logged and skipped without blocking the response.",
+  },
+  {
+    step: "5",
+    title: "Evidence quality assessment",
+    desc: "Before any LLM call, the fetched data is scored for quality. If the total evidence falls below a minimum threshold, the pipeline returns a DegradedResponse (a clear message explaining what was found) instead of generating potentially unsupported claims. This fail-closed behavior is intentional: a transparent 'insufficient data' message is always safer than a confident hallucination.",
+  },
+  {
+    step: "6",
+    title: "Adaptive LLM formatting",
+    desc: "The LLM receives only the fetched evidence — not its training knowledge. The prompt instructs it to fill specific schema fields (BLUF headline, summary, sections, citations) and explicitly prohibits inventing data not present in the sources. Each claim must cite its source by index. The model used scales with query complexity: Haiku for drug/procedure formats, Sonnet for disease queries requiring depth (pathophysiology, diagnostics, management, complications).",
+  },
+  {
+    step: "7",
+    title: "Evidence grading & validation",
+    desc: "After generation, each section is assigned a Level of Evidence (LOE I–III) and Class of Recommendation (COR I–IIb) based on its source type. RCT-backed guidelines earn LOE I; expert consensus earns LOE III. Citations are verified against the fetched sources. If the response is too sparse, a second-pass LLM call is triggered with a wider evidence budget. Results passing validation are stored in the semantic cache.",
+  },
+];
+
+const HALLUCINATION_PREVENTION = [
+  {
+    label: "Evidence grounding",
+    desc: "The LLM is given only the fetched article text. It cannot use training knowledge to fill in gaps — any claim it makes must exist in the provided sources. The prompt states this explicitly.",
+  },
+  {
+    label: "Fail-closed design",
+    desc: "If retrieved evidence is insufficient, the pipeline stops and returns a DegradedResponse instead of proceeding to generation. A clear 'not enough data' message is safer than a confident wrong answer.",
+  },
+  {
+    label: "Citation validation",
+    desc: "Every section cites specific source indices. The formatter verifies citations exist in the fetched data. Unsupported claims cannot earn a high LOE rating.",
+  },
+  {
+    label: "LOE/COR consistency enforcement",
+    desc: "Levels of evidence are assigned by source type at a structural level — not inferred by the model. An expert opinion cannot be upgraded to LOE I regardless of how the LLM phrases the claim.",
+  },
+  {
+    label: "Query-focused retrieval",
+    desc: "PubMed is searched using the standardized query term, not freeform prose. MeSH-matched results are more likely to be on-topic than semantic similarity alone. Date-sorted results prioritize recent guidelines over older studies.",
+  },
 ];
 
 const DATA_SOURCES = [
   { name: "FDA OpenFDA", url: "https://open.fda.gov/", desc: "Drug labels, adverse events, recalls" },
-  { name: "PubMed", url: "https://pubmed.ncbi.nlm.nih.gov/", desc: "Guidelines, RCTs, systematic reviews" },
+  { name: "PubMed / NCBI", url: "https://pubmed.ncbi.nlm.nih.gov/", desc: "Guidelines, RCTs, systematic reviews" },
   { name: "PMC Open Access", url: "https://www.ncbi.nlm.nih.gov/pmc/", desc: "Full-text articles & StatPearls monographs" },
   { name: "Unpaywall", url: "https://unpaywall.org/", desc: "Free legal PDFs for open-access articles" },
-  { name: "RxNorm", url: "https://www.nlm.nih.gov/research/umls/rxnorm/", desc: "Drug names & interactions" },
-  { name: "MedlinePlus", url: "https://medlineplus.gov/", desc: "Drug & disease patient summaries" },
+  { name: "RxNorm", url: "https://www.nlm.nih.gov/research/umls/rxnorm/", desc: "Drug names & interaction data" },
+  { name: "DailyMed", url: "https://dailymed.nlm.nih.gov/dailymed/", desc: "FDA-approved prescribing information" },
+  { name: "MedlinePlus", url: "https://medlineplus.gov/", desc: "Drug & disease patient-facing summaries" },
   { name: "NICE", url: "https://www.nice.org.uk/", desc: "UK clinical practice guidelines" },
+];
+
+const LESSONS = [
+  {
+    title: "Quantity vs. quality is a harder trade-off than it looks",
+    desc: "Fetching more sources always sounds better on paper. In practice, a noisy PubMed result set with 20 weakly-relevant abstracts produces worse LLM output than 5 high-quality ones. We built evidence scoring precisely because raw retrieval count is a bad proxy for answer quality. More data causes the model to hedge, bury the key point, or invent a consensus that doesn't exist in the sources.",
+  },
+  {
+    title: "Medical research is behind paywalls — and that matters",
+    desc: "Most impactful RCTs and meta-analyses are published in journals that don't offer open access. PubMed gives titles and abstracts; the actual trial data is paywalled. Unpaywall helps for open-access articles, but institutional guideline PDFs — NICE, ACC/AHA, ESC — are not consistently machine-readable. This means a query about a rare disease or a recent trial update will frequently hit the evidence quality floor and return a DegradedResponse, not because the answer doesn't exist, but because it exists behind a paywall.",
+  },
+  {
+    title: "LLMs are good editors, not good researchers",
+    desc: "The pipeline treats the LLM purely as a formatter. Give it structured evidence and a schema to fill, and it produces clean, graded, citable output. Ask it to 'find information about X' without grounded sources and it will confabulate confidently. The fail-closed evidence gate exists because we learned early that the model will fill gaps with plausible-sounding but unsourced content if you let it.",
+  },
+  {
+    title: "Cache design has a correctness problem, not just a performance one",
+    desc: "Semantic caching at 0.92 cosine similarity means 'scabies management' and 'scabies treatment guidelines' return the same cached response. That is usually correct — but a cache hit from 10 days ago may miss a guideline update. The SWR pattern (return stale immediately, revalidate in background) solves the latency problem. The harder unsolved problem is knowing when a guideline is meaningfully different from its cached version without reading it.",
+  },
 ];
 
 const API_SOURCES = [
@@ -55,7 +123,7 @@ const API_SOURCES = [
   },
   {
     name: "Voyage AI (embeddings)",
-    desc: "Free embeddings API for Anthropic users (Anthropic has no embeddings). 200M tokens/month free tier.",
+    desc: "Free embeddings API for Anthropic users (Anthropic has no embeddings endpoint). 200M tokens/month free tier.",
     url: "https://www.voyageai.com",
     label: "Create free account",
     note: "Optional, for Anthropic users only",
@@ -73,66 +141,66 @@ export default function AboutPage() {
         </h1>
         <p style={{ color: "var(--text-secondary)", fontSize: "1rem", margin: 0, lineHeight: 1.6 }}>
           Iatronix is an evidence-based clinical reference built for medical professionals.
-          Query real-time data from FDA, PubMed, NICE, and your own documents — formatted with AI, graded by evidence.
+          It searches real-time data from FDA, PubMed, NICE, and your own documents, formats them with AI, and grades every claim by the evidence behind it.
           Your API key. Your data. Your control.
         </p>
       </div>
 
-      {/* How it works */}
+      {/* Search Pipeline */}
       <section>
-        <h2 style={sectionHeading}>How it works</h2>
+        <h2 style={sectionHeading}>How a search works — step by step</h2>
+        <p style={{ margin: "0 0 1rem", fontSize: "0.875rem", color: "var(--text-secondary)" }}>
+          Every query goes through a 7-stage pipeline. No AI token is spent until real data has been retrieved and quality-checked.
+        </p>
         <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
-          {HOW_IT_WORKS.map((item) => (
+          {PIPELINE_STEPS.map((item) => (
             <div key={item.step} style={{ display: "flex", gap: "1rem", padding: "0.875rem 1rem", background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)" }}>
               <div style={{ width: 28, height: 28, borderRadius: "50%", background: "var(--accent-glow)", border: "1px solid rgba(59,130,246,0.3)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontWeight: 700, fontSize: "0.8rem", color: "var(--accent)" }}>
                 {item.step}
               </div>
               <div>
                 <p style={{ margin: "0 0 0.2rem", fontWeight: 600, fontSize: "0.9rem", color: "var(--text-primary)" }}>{item.title}</p>
-                <p style={{ margin: 0, fontSize: "0.825rem", color: "var(--text-secondary)", lineHeight: 1.55 }}>{item.desc}</p>
+                <p style={{ margin: 0, fontSize: "0.825rem", color: "var(--text-secondary)", lineHeight: 1.6 }}>{item.desc}</p>
               </div>
             </div>
           ))}
         </div>
       </section>
 
-      {/* BYOK section */}
+      {/* Hallucination prevention */}
       <section>
-        <h2 style={sectionHeading}>BYOK — Your Key, Your Data</h2>
+        <h2 style={sectionHeading}>How hallucinations are prevented</h2>
         <p style={{ margin: "0 0 1rem", fontSize: "0.875rem", color: "var(--text-secondary)" }}>
-          All LLM calls use <strong style={{ color: "var(--text-primary)" }}>your own API key</strong>. Nothing is sent to Iatronix servers for generation.
-          Supported providers: Anthropic (Claude), OpenAI (GPT), Google Gemini, OpenRouter.
+          The pipeline is designed so the LLM cannot invent clinical facts. Five mechanisms enforce this:
         </p>
         <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
-          {[
-            { label: "Encrypted storage", desc: "API keys are encrypted at rest and in transit. Only you can use your key." },
-            { label: "No vendor lock-in", desc: "Switch providers anytime from Settings — your data is not locked in." },
-            { label: "Privacy by design", desc: "FDA data, PubMed articles, and your PDFs flow through your own LLM. No third-party processing." },
-          ].map((row) => (
-            <div key={row.label} style={{ display: "flex", gap: "0.75rem", padding: "0.75rem 1rem", background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)" }}>
-              <span style={{ fontWeight: 600, fontSize: "0.825rem", color: "var(--accent)", minWidth: 130, flexShrink: 0 }}>{row.label}</span>
-              <span style={{ fontSize: "0.825rem", color: "var(--text-secondary)", lineHeight: 1.5 }}>{row.desc}</span>
+          {HALLUCINATION_PREVENTION.map((row) => (
+            <div key={row.label} style={{ display: "flex", gap: "0.75rem", padding: "0.875rem 1rem", background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)" }}>
+              <span style={{ fontWeight: 600, fontSize: "0.825rem", color: "var(--accent)", minWidth: 170, flexShrink: 0 }}>{row.label}</span>
+              <span style={{ fontSize: "0.825rem", color: "var(--text-secondary)", lineHeight: 1.55 }}>{row.desc}</span>
             </div>
           ))}
         </div>
       </section>
 
-      {/* Response Format */}
+      {/* Evidence grading */}
       <section>
-        <h2 style={sectionHeading}>Response Format</h2>
+        <h2 style={sectionHeading}>Evidence grading</h2>
         <p style={{ margin: "0 0 1rem", fontSize: "0.875rem", color: "var(--text-secondary)" }}>
-          Adaptive responses open with a <strong style={{ color: "var(--text-primary)" }}>Bottom Line Up Front (BLUF)</strong> — the most important clinical takeaway, right at the top.
-          The BLUF scales to how much data was found:
+          Every claim is assigned a Level of Evidence and Class of Recommendation based on its source type — not inferred from phrasing:
         </p>
         <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
           {[
-            { label: "Headline", desc: "Always shown — single most important clinical sentence." },
-            { label: "Summary", desc: "2–6 sentence elaboration. Included when sufficient data is available." },
-            { label: "Key action points", desc: "Bulleted list with specific doses, thresholds, and timelines. Included for data-rich responses." },
-            { label: "Caveats", desc: "Safety warnings highlighted separately. Omitted when there are none." },
+            { label: "LOE I", desc: "Randomized controlled trial (RCT). The gold standard for causal evidence." },
+            { label: "LOE II", desc: "Prospective cohort study, systematic review of observational data, or major guideline consensus." },
+            { label: "LOE III", desc: "Case reports, cross-sectional studies, or expert opinion. Used when no higher evidence exists." },
+            { label: "COR I", desc: "Strong benefit — should be done. Supported by LOE I evidence." },
+            { label: "COR IIa", desc: "Moderate benefit — reasonable to do. Supported by LOE II or consistent LOE III." },
+            { label: "COR IIb", desc: "Weak benefit — may consider. Conflicting or limited evidence." },
+            { label: "COR III", desc: "No benefit or harmful — should not be done." },
           ].map((row) => (
             <div key={row.label} style={{ display: "flex", gap: "0.75rem", padding: "0.75rem 1rem", background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)" }}>
-              <span style={{ fontWeight: 600, fontSize: "0.825rem", color: "var(--accent)", minWidth: 130, flexShrink: 0 }}>{row.label}</span>
+              <span style={{ fontWeight: 700, fontSize: "0.825rem", color: "var(--accent)", minWidth: 60, flexShrink: 0 }}>{row.label}</span>
               <span style={{ fontSize: "0.825rem", color: "var(--text-secondary)", lineHeight: 1.5 }}>{row.desc}</span>
             </div>
           ))}
@@ -141,7 +209,7 @@ export default function AboutPage() {
 
       {/* Data Sources */}
       <section>
-        <h2 style={sectionHeading}>Data Sources</h2>
+        <h2 style={sectionHeading}>Data sources</h2>
         <p style={{ margin: "0 0 1rem", fontSize: "0.875rem", color: "var(--text-secondary)" }}>
           All data is fetched in real time from these authoritative sources before any AI processing:
         </p>
@@ -165,77 +233,25 @@ export default function AboutPage() {
         </div>
       </section>
 
-      {/* PDF Vector Search */}
+      {/* Lessons learnt */}
       <section>
-        <h2 style={sectionHeading}>PDF Vector Search</h2>
-        <p style={{ margin: "0 0 1rem", fontSize: "0.875rem", color: "var(--text-secondary)" }}>
-          Upload your own medical PDFs and search them semantically. Each query is embedded using your chosen provider's embeddings API.
-        </p>
-        <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
-          {[
-            { label: "Your embeddings key", desc: "OpenAI, Google, or Voyage AI. Select your provider in Settings." },
-            { label: "Anthropic users", desc: "Anthropic has no embeddings API. Get a free Voyage AI key (200M tokens/month) to enable PDF search." },
-            { label: "Encrypted storage", desc: "Uploaded PDFs are stored securely in Supabase pgvector. Only you can search them." },
-          ].map((row) => (
-            <div key={row.label} style={{ display: "flex", gap: "0.75rem", padding: "0.75rem 1rem", background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)" }}>
-              <span style={{ fontWeight: 600, fontSize: "0.825rem", color: "var(--accent)", minWidth: 130, flexShrink: 0 }}>{row.label}</span>
-              <span style={{ fontSize: "0.825rem", color: "var(--text-secondary)", lineHeight: 1.5 }}>{row.desc}</span>
+        <h2 style={sectionHeading}>Lessons learnt building this</h2>
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+          {LESSONS.map((l) => (
+            <div key={l.title} style={{ padding: "0.875rem 1rem", background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)" }}>
+              <p style={{ margin: "0 0 0.35rem", fontWeight: 600, fontSize: "0.9rem", color: "var(--text-primary)" }}>{l.title}</p>
+              <p style={{ margin: 0, fontSize: "0.825rem", color: "var(--text-secondary)", lineHeight: 1.6 }}>{l.desc}</p>
             </div>
           ))}
         </div>
       </section>
 
-      {/* Evidence Grading */}
+      {/* BYOK */}
       <section>
-        <h2 style={sectionHeading}>Evidence Grading</h2>
+        <h2 style={sectionHeading}>BYOK — Your Key, Your Data</h2>
         <p style={{ margin: "0 0 1rem", fontSize: "0.875rem", color: "var(--text-secondary)" }}>
-          Every claim is assigned a Level of Evidence and Class of Recommendation:
-        </p>
-        <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
-          {[
-            {
-              label: "Level of Evidence (LOE)",
-              desc: "I = Randomized controlled trial (RCT). II = Prospective cohort / guideline consensus. III = Case reports / expert opinion.",
-            },
-            {
-              label: "Class of Recommendation (COR)",
-              desc: "I = Strong benefit (should be done). IIa = Moderate benefit (reasonable). IIb = Weak benefit (may consider). III = No benefit or harmful.",
-            },
-          ].map((row) => (
-            <div key={row.label} style={{ display: "flex", gap: "0.75rem", padding: "0.75rem 1rem", background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)" }}>
-              <span style={{ fontWeight: 600, fontSize: "0.825rem", color: "var(--accent)", minWidth: 180, flexShrink: 0 }}>{row.label}</span>
-              <span style={{ fontSize: "0.825rem", color: "var(--text-secondary)", lineHeight: 1.5 }}>{row.desc}</span>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* Search Modes */}
-      <section>
-        <h2 style={sectionHeading}>Search Modes</h2>
-        <p style={{ margin: "0 0 1rem", fontSize: "0.875rem", color: "var(--text-secondary)" }}>
-          Iatronix supports three search modes. Change your active mode in{" "}
-          <a href="/settings" style={{ color: "var(--accent)" }}>Settings → Search Mode</a>.
-        </p>
-        <div style={{ display: "flex", flexDirection: "column", gap: "0.625rem" }}>
-          {MODES.map((m) => (
-            <div key={m.title} style={{ display: "flex", alignItems: "flex-start", gap: "1rem", padding: "0.875rem 1rem", background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)" }}>
-              <span style={{ color: "var(--accent)", flexShrink: 0, marginTop: 2 }}>{m.icon}</span>
-              <div>
-                <p style={{ margin: "0 0 0.2rem", fontWeight: 600, fontSize: "0.9rem", color: "var(--text-primary)" }}>{m.title}</p>
-                <p style={{ margin: 0, fontSize: "0.825rem", color: "var(--text-secondary)", lineHeight: 1.55 }}>{m.desc}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* API Keys */}
-      <section>
-        <h2 style={sectionHeading}>LLM & Embedding API Keys</h2>
-        <p style={{ margin: "0 0 1rem", fontSize: "0.875rem", color: "var(--text-secondary)" }}>
-          Iatronix uses your own API keys (BYOK — Bring Your Own Key). Keys are encrypted and never shared.
-          Add them in <a href="/settings" style={{ color: "var(--accent)" }}>Settings</a>.
+          All LLM calls use <strong style={{ color: "var(--text-primary)" }}>your own API key</strong>. Nothing is sent to Iatronix servers for generation.
+          Keys are encrypted at rest and in transit. Switch providers anytime from Settings.
         </p>
         <div style={{ display: "flex", flexDirection: "column", gap: "0.625rem" }}>
           {API_SOURCES.map((src) => (
@@ -259,6 +275,26 @@ export default function AboutPage() {
                   {src.label}
                   <ExternalLink size={12} />
                 </a>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Search modes */}
+      <section>
+        <h2 style={sectionHeading}>Search modes</h2>
+        <p style={{ margin: "0 0 1rem", fontSize: "0.875rem", color: "var(--text-secondary)" }}>
+          Choose your active mode in{" "}
+          <a href="/settings" style={{ color: "var(--accent)" }}>Settings → Search Mode</a>.
+        </p>
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.625rem" }}>
+          {SEARCH_MODES.map((m) => (
+            <div key={m.title} style={{ display: "flex", alignItems: "flex-start", gap: "1rem", padding: "0.875rem 1rem", background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)" }}>
+              <span style={{ color: "var(--accent)", flexShrink: 0, marginTop: 2 }}>{m.icon}</span>
+              <div>
+                <p style={{ margin: "0 0 0.2rem", fontWeight: 600, fontSize: "0.9rem", color: "var(--text-primary)" }}>{m.title}</p>
+                <p style={{ margin: 0, fontSize: "0.825rem", color: "var(--text-secondary)", lineHeight: 1.55 }}>{m.desc}</p>
               </div>
             </div>
           ))}
