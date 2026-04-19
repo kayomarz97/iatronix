@@ -4,8 +4,6 @@ import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
 import { QueryProvider } from "@/components/providers/QueryProvider";
 import { AuthProvider } from "@/components/providers/AuthProvider";
-import { VersionBadge } from "@/components/VersionBadge";
-
 export const metadata: Metadata = {
   title: "Iatronix — Medical Reference",
   description: "AI-powered medical reference platform with evidence grading",
@@ -35,7 +33,6 @@ export default function RootLayout({
               {children}
             </main>
             <Footer />
-            <VersionBadge />
           </AuthProvider>
         </QueryProvider>
       </body>

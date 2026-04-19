@@ -18,7 +18,7 @@ function QueryContent() {
   const { user } = useAuth();
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 pl-6">
       <SearchHistorySidebar onRerun={submitQuery} isLoggedIn={!!user} />
       <div className="space-y-3">
         <SearchBar onSubmit={submitQuery} isLoading={isLoading} />
