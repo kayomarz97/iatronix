@@ -4,6 +4,7 @@ import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
 import { QueryProvider } from "@/components/providers/QueryProvider";
 import { AuthProvider } from "@/components/providers/AuthProvider";
+import { PostHogProvider } from "@/components/providers/PostHogProvider";
 export const metadata: Metadata = {
   title: "Iatronix — Medical Reference",
   description: "AI-powered medical reference platform with evidence grading",
@@ -26,6 +27,7 @@ export default function RootLayout({
         />
       </head>
       <body style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
+        <PostHogProvider>
         <QueryProvider>
           <AuthProvider>
             <Header />
@@ -35,6 +37,7 @@ export default function RootLayout({
             <Footer />
           </AuthProvider>
         </QueryProvider>
+        </PostHogProvider>
       </body>
     </html>
   );

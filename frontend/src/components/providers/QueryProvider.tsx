@@ -13,6 +13,7 @@ import { submitQuery as apiSubmitQuery } from "@/lib/api";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { API_KEY_STORAGE_KEY, DEFAULT_MODEL, LLM_PROVIDER_STORAGE_KEY } from "@/lib/constants";
 import type { QueryResponse } from "@/lib/types";
+import { usePostHog } from "posthog-js/react";
 
 type LLMProvider = "anthropic" | "openai" | "openrouter";
 
@@ -51,6 +52,7 @@ const QueryContext = createContext<QueryContextType | null>(null);
 
 export function QueryProvider({ children }: { children: ReactNode }) {
   const { getIdToken } = useAuth();
+  const posthog = usePostHog();
   const [result, setResult] = useState<QueryResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [loadingStage, setLoadingStage] = useState<string>("");
@@ -81,12 +83,19 @@ export function QueryProvider({ children }: { children: ReactNode }) {
 
     const t1 = setTimeout(() => setLoadingStage("fetching"), 1000);
     const t2 = setTimeout(() => setLoadingStage("generating"), 5000);
+    const queryStart = Date.now();
 
     try {
       const response = await apiSubmitQuery(query, modelId, apiKey, undefined, sourceMode, false);
       setLoadingStage("verifying");
       await new Promise((r) => setTimeout(r, 400));
       setResult(response);
+      posthog?.capture("query_submitted", {
+        query_type: response.query_type,
+        cached: response.cached,
+        model_id: modelId,
+        response_time_ms: Date.now() - queryStart,
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : "An error occurred";
       if (msg.includes("401")) {
@@ -98,16 +107,26 @@ export function QueryProvider({ children }: { children: ReactNode }) {
             setLoadingStage("verifying");
             await new Promise((r) => setTimeout(r, 400));
             setResult(response);
+            posthog?.capture("query_submitted", {
+              query_type: response.query_type,
+              cached: response.cached,
+              model_id: modelId,
+              response_time_ms: Date.now() - queryStart,
+            });
             return;
           } catch {
+            posthog?.capture("query_error", { error_type: "auth", model_id: modelId });
             setError("Session expired. Please sign in again.");
             return;
           }
         }
+        posthog?.capture("query_error", { error_type: "auth", model_id: modelId });
         setError("Session expired. Please sign in again.");
       } else if (msg.includes("429") || msg.toLowerCase().includes("rate limit")) {
+        posthog?.capture("query_error", { error_type: "rate_limit", model_id: modelId });
         setError("Rate limit exceeded. Please wait a minute before trying again.");
       } else {
+        posthog?.capture("query_error", { error_type: "other", model_id: modelId });
         setError(msg);
       }
     } finally {
