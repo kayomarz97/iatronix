@@ -4,7 +4,6 @@ import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  Activity,
   Sun,
   Moon,
   ChevronDown,
@@ -17,9 +16,11 @@ import {
 import { signOut } from "firebase/auth";
 import { auth } from "@/lib/firebase";
 import { API_KEY_STORAGE_KEY } from "@/lib/constants";
+import { IatronixLogo } from "@/components/ui/IatronixLogo";
 
 const NAV_LINKS = [
   { href: "/", label: "Search" },
+  { href: "/waves", label: "Waves" },
   { href: "/about", label: "About" },
 ];
 
@@ -111,7 +112,7 @@ export function Header() {
             flexShrink: 0,
           }}
         >
-          <Activity size={20} color="var(--accent)" strokeWidth={2.5} />
+          <IatronixLogo size={28} />
           Iatronix
         </Link>
 

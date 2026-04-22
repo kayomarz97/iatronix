@@ -223,6 +223,9 @@ class AdaptiveResponse(BaseModel):
     response_focus: str
     depth: str
     related_topics: list[str] = []
+    tables: list[dict] = []
+    flowcharts: list[dict] = []
+    images: list[dict] = []
     extended_data: Optional[dict] = None
 
 

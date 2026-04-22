@@ -1,17 +1,12 @@
 "use client";
 
-import { ExternalLink, Brain, FileText } from "lucide-react";
+import { ExternalLink, Brain } from "lucide-react";
 
 const SEARCH_MODES = [
   {
     icon: <Brain size={18} />,
     title: "AI Mode",
     desc: "Fetches live data from OpenFDA, PubMed, RxNorm, DailyMed and uses your LLM key to format it into a structured, evidence-graded response. Best for comprehensive clinical queries.",
-  },
-  {
-    icon: <FileText size={18} />,
-    title: "Personal PDFs",
-    desc: "Searches only documents you have uploaded via semantic vector search. Answers come exclusively from your indexed PDFs — ideal for institutional guidelines and private protocols.",
   },
 ];
 
@@ -109,24 +104,10 @@ const LESSONS = [
 const API_SOURCES = [
   {
     name: "Anthropic (Claude)",
-    desc: "Powers AI-formatted responses and evidence structuring.",
+    desc: "Powers AI-formatted responses, evidence structuring, and medical image analysis in Waves.",
     url: "https://console.anthropic.com/",
     label: "Get API key",
-    note: "Required for AI Mode",
-  },
-  {
-    name: "OpenAI (GPT)",
-    desc: "Alternative LLM provider for AI-formatted responses.",
-    url: "https://platform.openai.com/api-keys",
-    label: "Get API key",
-    note: "Optional alternative to Claude",
-  },
-  {
-    name: "Voyage AI (embeddings)",
-    desc: "Free embeddings API for Anthropic users (Anthropic has no embeddings endpoint). 200M tokens/month free tier.",
-    url: "https://www.voyageai.com",
-    label: "Create free account",
-    note: "Optional, for Anthropic users only",
+    note: "Required",
   },
 ];
 

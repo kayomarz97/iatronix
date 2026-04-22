@@ -57,6 +57,24 @@ export interface AdaptiveBLUF {
   caveats: string[];
 }
 
+export interface AdaptiveTable {
+  title: string;
+  headers: string[];
+  rows: string[][];
+}
+
+export interface AdaptiveFlowchart {
+  title: string;
+  steps: string[];
+}
+
+export interface AdaptiveImage {
+  url: string;
+  caption?: string;
+  license?: string;
+  source?: string;
+}
+
 export interface AdaptiveResponse {
   query_type: string;
   bluf: AdaptiveBLUF;
@@ -65,6 +83,9 @@ export interface AdaptiveResponse {
   response_focus: string;
   depth: string;
   related_topics: string[];
+  tables?: AdaptiveTable[];
+  flowcharts?: AdaptiveFlowchart[];
+  images?: AdaptiveImage[];
 }
 
 // --- Text Nodes ---

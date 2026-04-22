@@ -1888,6 +1888,9 @@ async def process_query(
             response_focus=str((query_analysis or {}).get("response_focus", query_type)),
             depth="comprehensive",
             related_topics=list((query_analysis or {}).get("related_topics", [])),
+            tables=parsed.get("tables", []),
+            flowcharts=parsed.get("flowcharts", []),
+            images=getattr(fetched_data, "images", []) if fetched_data else [],
         )
     except Exception as _ve:
         logger.warning("AdaptiveResponse construction failed: %s", _ve)

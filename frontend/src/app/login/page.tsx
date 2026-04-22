@@ -7,6 +7,7 @@ import { PasswordInput } from "@/components/ui/PasswordInput";
 import { API_KEY_STORAGE_KEY } from "@/lib/constants";
 import { signInWithEmailAndPassword, setPersistence, browserLocalPersistence, browserSessionPersistence } from "firebase/auth";
 import { auth } from "@/lib/firebase";
+import posthog from "posthog-js";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -28,6 +29,10 @@ export default function LoginPage() {
 
       localStorage.setItem(API_KEY_STORAGE_KEY, token);
       localStorage.setItem("iatronix_email", userCredential.user.email || email);
+
+      posthog.identify(userCredential.user.uid, { email: userCredential.user.email ?? email });
+      posthog.capture("user_logged_in", { method: "email" });
+
       window.location.href = "/";
     } catch (err: any) {
       if (err.code === "auth/too-many-requests") {
