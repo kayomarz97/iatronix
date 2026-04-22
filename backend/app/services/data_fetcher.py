@@ -265,6 +265,7 @@ class FetchedData:
     total_fetch_time_ms: int = 0
     fallback_to_llm: bool = False
     data_sources: list = field(default_factory=list)
+    images: list = field(default_factory=list)  # [{url, caption, license, source}]
 
 
 # Local Indian drug repositories were intentionally removed.
@@ -723,30 +724,33 @@ async def _fetch_pubmed_abstracts(
 
     Returns: (articles, sources_used)
     """
+    from datetime import datetime as _dt
+    cur_year = _dt.now().year
+
     if pub_type == "guideline":
         pt_filter = "(Practice Guideline[pt] OR Guideline[pt])"
         retmax = 16
         broad_fallback = (
             f"{entity}[Title/Abstract] AND (guideline OR consensus OR recommendation) "
-            "AND 2010:2026[dp]"
+            f"AND 2010:{cur_year}[dp]"
         )
     else:
         pt_filter = "(Systematic Review[pt] OR Meta-Analysis[pt])"
         retmax = 12
         broad_fallback = (
             f"{entity}[Title/Abstract] AND (systematic review OR meta-analysis OR review) "
-            "AND 2010:2026[dp]"
+            f"AND 2010:{cur_year}[dp]"
         )
 
-    term = f"{entity}[Title/Abstract] AND {pt_filter} AND 2010:2026[dp]"
+    term = f"{entity}[Title/Abstract] AND {pt_filter} AND 2010:{cur_year}[dp]"
     journal_filter = _get_journal_filter(entity)
     journal_term = (
-        f"{entity}[Title/Abstract] AND {journal_filter} AND 2010:2026[dp]"
+        f"{entity}[Title/Abstract] AND {journal_filter} AND 2010:{cur_year}[dp]"
         if journal_filter
         else None
     )
     search_tasks = [
-        _pubmed_esearch_throttled(client, term, retmax),
+        _pubmed_esearch_throttled(client, term, retmax, sort="pub_date"),
         _pubmed_esearch_throttled(client, broad_fallback, max(retmax // 2, 6)),
     ]
     if journal_term:
@@ -772,7 +776,7 @@ async def _fetch_pubmed_abstracts(
 
 
 async def _pubmed_esearch(
-    client: httpx.AsyncClient, term: str, retmax: int
+    client: httpx.AsyncClient, term: str, retmax: int, sort: str = "relevance"
 ) -> list[str]:
     """PubMed esearch → list of PMID strings with exponential-backoff retry."""
     params: dict = {
@@ -780,7 +784,7 @@ async def _pubmed_esearch(
         "term": term,
         "retmax": retmax,
         "retmode": "json",
-        "sort": "relevance",
+        "sort": sort,
     }
     api_key = _ncbi_key_ctx.get(None) or settings.pubmed_api_key
     if api_key:
@@ -801,7 +805,7 @@ async def _pubmed_esearch(
 
 
 async def _pubmed_esearch_throttled(
-    client: httpx.AsyncClient, term: str, retmax: int
+    client: httpx.AsyncClient, term: str, retmax: int, sort: str = "relevance"
 ) -> list[str]:
     """PubMed esearch with rate limiting: respects NCBI's 3 req/s (no key) or 10 req/s (with key)."""
     api_key = _ncbi_key_ctx.get(None) or settings.pubmed_api_key
@@ -815,7 +819,7 @@ async def _pubmed_esearch_throttled(
         if wait > 0:
             await asyncio.sleep(wait)
         _PUBMED_LAST_REQUEST = loop.time()
-        return await _pubmed_esearch(client, term, retmax)
+        return await _pubmed_esearch(client, term, retmax, sort=sort)
 
 
 async def _pubmed_efetch(client: httpx.AsyncClient, ids: list[str]) -> tuple[list, set[str]]:
@@ -1601,10 +1605,10 @@ async def fetch_drug_data(drug_name: str) -> DrugFetchResult:
         elif isinstance(guidelines_result, list):
             guidelines = guidelines_result
 
-        # Fetch recent guidelines if any (recent_guidelines_ids is a list of PMIDs)
+        # Fetch recent guidelines if any — prepend so they survive the _cap_abstracts budget
         if isinstance(recent_guidelines_ids, list) and recent_guidelines_ids:
             recent_articles, recent_sources = await _pubmed_efetch(client, recent_guidelines_ids)
-            guidelines.extend(recent_articles)
+            guidelines = recent_articles + guidelines
             for src in recent_sources:
                 guidelines_sources.add(src)
 
@@ -1733,22 +1737,24 @@ async def fetch_disease_data(disease_name: str) -> DiseaseFetchResult:
     """
     result = DiseaseFetchResult()
 
+    from datetime import datetime as _dt
+    cur_year = _dt.now().year
     journal_filter = _get_journal_filter(disease_name)
 
     # Build PubMed search terms
-    guideline_term = f"{disease_name}[Title/Abstract] AND (Practice Guideline[pt] OR Guideline[pt]) AND 2010:2026[dp]"
-    review_term = f"{disease_name}[Title/Abstract] AND (Systematic Review[pt] OR Meta-Analysis[pt]) AND 2010:2026[dp]"
+    guideline_term = f"{disease_name}[Title/Abstract] AND (Practice Guideline[pt] OR Guideline[pt]) AND 2010:{cur_year}[dp]"
+    review_term = f"{disease_name}[Title/Abstract] AND (Systematic Review[pt] OR Meta-Analysis[pt]) AND 2010:{cur_year}[dp]"
     classification_term = (
-        f"{disease_name} classification[Title/Abstract] AND 2010:2026[dp]"
+        f"{disease_name} classification[Title/Abstract] AND 2010:{cur_year}[dp]"
     )
     broad_guideline_term = (
-        f"{disease_name}[Title/Abstract] AND (guideline OR consensus OR recommendation) AND 2010:2026[dp]"
+        f"{disease_name}[Title/Abstract] AND (guideline OR consensus OR recommendation) AND 2010:{cur_year}[dp]"
     )
     broad_review_term = (
-        f"{disease_name}[Title/Abstract] AND (systematic review OR meta-analysis OR review) AND 2010:2026[dp]"
+        f"{disease_name}[Title/Abstract] AND (systematic review OR meta-analysis OR review) AND 2010:{cur_year}[dp]"
     )
     journal_term = (
-        f"{disease_name}[Title/Abstract] AND {journal_filter} AND 2010:2026[dp]"
+        f"{disease_name}[Title/Abstract] AND {journal_filter} AND 2010:{cur_year}[dp]"
         if journal_filter
         else None
     )
@@ -1757,8 +1763,8 @@ async def fetch_disease_data(disease_name: str) -> DiseaseFetchResult:
         # Phase 1: ALL esearch calls + non-PubMed sources in parallel
         # NOTE: Limited to 4 esearch calls to avoid NCBI rate limits (3 req/s without key, 10 req/s with)
         tasks: list = [
-            _pubmed_esearch_throttled(client, guideline_term, 16),
-            _pubmed_esearch_throttled(client, review_term, 12),
+            _pubmed_esearch_throttled(client, guideline_term, 16, sort="pub_date"),
+            _pubmed_esearch_throttled(client, review_term, 12, sort="pub_date"),
             _pubmed_esearch_throttled(client, broad_guideline_term, 8),
             _pubmed_esearch_throttled(client, broad_review_term, 8),
             _pubmed_esearch_recent_guidelines(client, disease_name, 8),
@@ -1796,7 +1802,9 @@ async def fetch_disease_data(disease_name: str) -> DiseaseFetchResult:
         ncbi = results[8] if len(results) > 8 and isinstance(results[8], str) else None
 
         # Merge and deduplicate PMIDs (recent guidelines takes priority)
-        all_pmids = set(recent_guideline_ids) | set(guideline_ids) | set(review_ids) | set(broad_guideline_ids) | set(broad_review_ids)
+        unique_guideline_ids = list(set(recent_guideline_ids) | set(guideline_ids) | set(broad_guideline_ids))
+        all_review_ids = list(set(review_ids) | set(broad_review_ids))
+        all_pmids = set(unique_guideline_ids) | set(all_review_ids)
         all_ids = list(all_pmids)
         if all_ids:
             all_abstracts, enrichment_sources = await _pubmed_efetch(client, all_ids)
@@ -1840,7 +1848,7 @@ async def fetch_disease_data(disease_name: str) -> DiseaseFetchResult:
 
     # Fallback: if no PubMed results, retry without [pt] filter
     if not result.guideline_abstracts and not result.systematic_review_abstracts:
-        fallback_term = f"{disease_name}[Title/Abstract] AND (guideline OR consensus OR recommendation) AND 2015:2026[dp]"
+        fallback_term = f"{disease_name}[Title/Abstract] AND (guideline OR consensus OR recommendation) AND 2015:{_dt.now().year}[dp]"
         async with _make_client() as client:
             fallback_ids = await _pubmed_esearch_throttled(client, fallback_term, 8)
             if fallback_ids:
@@ -2044,6 +2052,45 @@ def _fire_and_forget_index(abstracts: list) -> None:
         logger.debug("Fire-and-forget indexing skipped", exc_info=True)
 
 
+_IMAGE_ELIGIBLE_TYPES = {"disease", "procedure", "evidence", "comparative"}
+
+
+async def _fetch_wikimedia_image(entity: str, query_type: str) -> list[dict]:
+    """Fetch open-source medical illustrations from Wikipedia/Wikimedia Commons.
+
+    Uses the Wikipedia REST API thumbnail for the entity page. Falls back silently
+    on any network or parsing error. Returns max 2 images with CC license metadata.
+    Only runs for disease, procedure, evidence, and comparative query types.
+    """
+    if query_type not in _IMAGE_ELIGIBLE_TYPES:
+        return []
+
+    images: list[dict] = []
+    slug = entity.replace(" ", "_")
+    try:
+        async with _make_client() as client:
+            data = await _safe_get(
+                client,
+                f"https://en.wikipedia.org/api/rest_v1/page/summary/{slug}",
+                params={},
+            )
+            if data:
+                thumb = data.get("thumbnail") or data.get("originalimage")
+                if thumb and thumb.get("source"):
+                    images.append(
+                        {
+                            "url": thumb["source"],
+                            "caption": data.get("description") or entity,
+                            "license": "CC BY-SA",
+                            "source": "Wikipedia",
+                        }
+                    )
+    except Exception:
+        pass
+
+    return images[:2]
+
+
 async def fetch_data_for_query(
     query_type: str,
     entities: list,
@@ -2164,6 +2211,13 @@ async def fetch_data_for_query(
 
         else:
             fetched.fallback_to_llm = True
+
+        # Fetch open-source medical illustration in parallel for eligible query types
+        if entities and query_type in _IMAGE_ELIGIBLE_TYPES:
+            try:
+                fetched.images = await _fetch_wikimedia_image(entities[0], query_type)
+            except Exception:
+                pass
 
     except Exception:
         logger.error("Data fetch orchestration failed", exc_info=True)

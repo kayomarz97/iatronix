@@ -10,8 +10,11 @@ import type {
   AdaptiveContentItem,
   AdaptiveReference,
   AdaptiveBLUF,
+  AdaptiveImage,
 } from "@/lib/types";
 import { ResultHero, ResultMetaCard, ResultSection } from "./ResultChrome";
+import { FlowchartRenderer } from "./FlowchartRenderer";
+import { TableRenderer } from "./TableRenderer";
 
 interface Props {
   data: AdaptiveResponse;
@@ -244,6 +247,38 @@ function EvidenceGlossary() {
   );
 }
 
+// ── Open-source medical illustrations ────────────────────────────────────────
+function MedicalImageRenderer({ images }: { images?: AdaptiveImage[] }) {
+  if (!images || images.length === 0) return null;
+
+  return (
+    <ResultSection title="Medical Illustrations" eyebrow="Open Source">
+      <div className="flex flex-wrap gap-6">
+        {images.map((img, i) => (
+          <figure key={i} className="max-w-sm w-full">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={img.url}
+              alt={img.caption ?? "Medical illustration"}
+              className="rounded-lg border border-border w-full object-contain max-h-72"
+            />
+            {img.caption && (
+              <figcaption className="text-xs text-muted-foreground mt-1.5 leading-tight">
+                {img.caption}
+              </figcaption>
+            )}
+            {(img.license || img.source) && (
+              <span className="text-[10px] text-muted-foreground">
+                {[img.license, img.source].filter(Boolean).join(" · ")}
+              </span>
+            )}
+          </figure>
+        ))}
+      </div>
+    </ResultSection>
+  );
+}
+
 // ── Main renderer ────────────────────────────────────────────────────────────
 export function AdaptiveResultRenderer({ data, fetchSources }: Props) {
   const router = useRouter();
@@ -288,6 +323,10 @@ export function AdaptiveResultRenderer({ data, fetchSources }: Props) {
       {data.sections.map((section, i) => (
         <SectionCard key={i} section={section} />
       ))}
+
+      <TableRenderer tables={data.tables} />
+      <FlowchartRenderer flowcharts={data.flowcharts} />
+      <MedicalImageRenderer images={data.images} />
 
       <DataSourceBadges sources={fetchSources} />
 

@@ -6,6 +6,7 @@ import { API_KEY_STORAGE_KEY, LLM_PROVIDER_STORAGE_KEY } from "@/lib/constants";
 import { useTheme } from "@/hooks/useTheme";
 import { SOURCE_MODE_KEY } from "@/components/providers/QueryProvider";
 import { saveServiceKey, deleteServiceKey, listServiceKeys } from "@/lib/api";
+// Voyage AI hidden — reserved for future re-enable
 
 type SourceMode = "ai" | "pdfs";
 
@@ -24,16 +25,11 @@ const GENDERS = ["Male", "Female", "Non-binary", "Prefer not to say", "Other"];
 
 export default function SettingsPage() {
   const [llmKey, setLlmKey] = useState("");
-  const [provider, setProvider] = useState<"anthropic" | "openai" | "openrouter">("anthropic");
+  const [provider, setProvider] = useState<"anthropic">("anthropic");
   const [llmStatus, setLlmStatus] = useState<{ provider: string; is_set: boolean } | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [email, setEmail] = useState("");
-
-  const [voyageKey, setVoyageKey] = useState("");
-  const [voyageStatus, setVoyageStatus] = useState<{ is_set: boolean } | null>(null);
-  const [voyageMessage, setVoyageMessage] = useState<string | null>(null);
-  const [voyageLoading, setVoyageLoading] = useState(false);
 
   const [ncbiKey, setNcbiKey] = useState("");
   const [ncbiStatus, setNcbiStatus] = useState<{ is_set: boolean } | null>(null);
@@ -72,7 +68,6 @@ export default function SettingsPage() {
     if (stored && ["ai", "pdfs"].includes(stored)) setSourceMode(stored);
     fetchProfile();
     fetchLlmStatus();
-    fetchVoyageStatus();
     fetchNcbiStatus();
   }, []);
 
@@ -209,47 +204,6 @@ export default function SettingsPage() {
       setMessage("Network error");
     } finally {
       setLoading(false);
-    }
-  };
-
-  const fetchVoyageStatus = async () => {
-    const apiKey = getApiKey();
-    if (!apiKey) return;
-    try {
-      const keys = await listServiceKeys(apiKey);
-      const voyageKey = keys.find(k => k.service_name === "voyageai");
-      setVoyageStatus({ is_set: !!voyageKey });
-    } catch {}
-  };
-
-  const saveVoyageKey = async () => {
-    setVoyageLoading(true);
-    setVoyageMessage(null);
-    try {
-      const apiKey = getApiKey();
-      await saveServiceKey(apiKey, "voyageai", voyageKey);
-      setVoyageMessage("Voyage AI key saved successfully");
-      setVoyageKey("");
-      fetchVoyageStatus();
-    } catch (err) {
-      setVoyageMessage("Failed to save key");
-    } finally {
-      setVoyageLoading(false);
-    }
-  };
-
-  const removeVoyageKey = async () => {
-    setVoyageLoading(true);
-    setVoyageMessage(null);
-    try {
-      const apiKey = getApiKey();
-      await deleteServiceKey(apiKey, "voyageai");
-      setVoyageMessage("Voyage AI key removed");
-      fetchVoyageStatus();
-    } catch {
-      setVoyageMessage("Failed to remove key");
-    } finally {
-      setVoyageLoading(false);
     }
   };
 
@@ -471,39 +425,28 @@ export default function SettingsPage() {
 
       {/* ── LLM Key ── */}
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold">LLM API Key (BYOK)</h2>
+        <h2 className="text-lg font-semibold">Anthropic API Key (BYOK)</h2>
         <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
-          Bring your own Anthropic, OpenAI, or OpenRouter API key. Your key is encrypted and stored securely.
+          Bring your own Anthropic (Claude) API key. Your key is encrypted and stored securely — never used server-side.
         </p>
 
         {llmStatus && (
           <div className="p-3 rounded-md text-sm" style={{ background: "var(--bg-elevated)", border: "1px solid var(--border)" }}>
             <span className="font-medium">Current: </span>
             {llmStatus.is_set ? (
-              <span style={{ color: "var(--success)" }}>{llmStatus.provider} key is set</span>
+              <span style={{ color: "var(--success)" }}>Anthropic key is active</span>
             ) : (
-              <span style={{ color: "var(--danger)" }}>No key set — AI features require your own API key</span>
+              <span style={{ color: "var(--danger)" }}>No key set — AI features require your own Anthropic API key</span>
             )}
           </div>
         )}
 
         <div className="space-y-2">
-          <select value={provider} onChange={(e) => setProvider(e.target.value as "anthropic" | "openai" | "openrouter")} className="w-full px-3 py-2 rounded-md border border-border bg-surface text-sm min-h-[44px]">
-            <option value="anthropic">Anthropic (Claude)</option>
-            <option value="openai">OpenAI (GPT)</option>
-            <option value="openrouter">OpenRouter</option>
-          </select>
           <input
             type="password"
             value={llmKey}
             onChange={(e) => setLlmKey(e.target.value)}
-            placeholder={
-              provider === "anthropic"
-                ? "sk-ant-..."
-                : provider === "openrouter"
-                ? "sk-or-v1-..."
-                : "sk-..."
-            }
+            placeholder="sk-ant-..."
             className="w-full px-3 py-2 rounded-md border border-border bg-surface text-sm min-h-[44px]"
           />
           <div className="flex gap-2">
@@ -519,76 +462,6 @@ export default function SettingsPage() {
         </div>
         {message && <p className="text-sm" style={{ color: message.includes("saved") || message.includes("removed") ? "var(--success)" : "var(--text-secondary)" }}>{message}</p>}
       </section>
-
-      {/* ── Voyage AI Key (Anthropic only) ── */}
-      {provider === "anthropic" && (
-        <section className="space-y-3">
-          <h2 className="text-lg font-semibold">Vector Search Key (Voyage AI)</h2>
-          <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
-            Anthropic has no embeddings API. To enable PDF vector search, add a free{" "}
-            <a
-              href="https://www.voyageai.com"
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{ color: "var(--primary)", textDecoration: "underline" }}
-            >
-              Voyage AI
-            </a>{" "}
-            key (free tier: 200M tokens/month).
-          </p>
-
-          {voyageStatus && (
-            <div className="p-3 rounded-md text-sm" style={{ background: "var(--bg-elevated)", border: "1px solid var(--border)" }}>
-              <span className="font-medium">Current: </span>
-              {voyageStatus.is_set ? (
-                <span style={{ color: "var(--success)" }}>Vector search enabled</span>
-              ) : (
-                <span style={{ color: "var(--text-muted)" }}>Not configured</span>
-              )}
-            </div>
-          )}
-
-          <div className="space-y-2">
-            <input
-              type="password"
-              value={voyageKey}
-              onChange={(e) => setVoyageKey(e.target.value)}
-              placeholder="voyage-..."
-              className="w-full px-3 py-2 rounded-md border border-border bg-surface text-sm min-h-[44px]"
-            />
-            <div className="flex gap-2">
-              <button
-                onClick={saveVoyageKey}
-                disabled={voyageLoading || !voyageKey}
-                className="px-4 py-2 bg-primary text-white rounded-md text-sm min-h-[44px] disabled:opacity-50"
-              >
-                {voyageLoading ? "Saving..." : "Save Key"}
-              </button>
-              {voyageStatus?.is_set && (
-                <button
-                  onClick={removeVoyageKey}
-                  disabled={voyageLoading}
-                  className="px-4 py-2 rounded-md border border-border text-sm min-h-[44px]"
-                >
-                  Remove Key
-                </button>
-              )}
-            </div>
-          </div>
-          {voyageMessage && (
-            <p
-              className="text-sm"
-              style={{
-                color: voyageMessage.includes("saved") || voyageMessage.includes("removed")
-                  ? "var(--success)"
-                  : "var(--text-secondary)",
-              }}
-            >
-              {voyageMessage}
-            </p>
-          )}
-        </section>
-      )}
 
       {/* ── NCBI API Key ── */}
       <section className="space-y-3">

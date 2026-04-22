@@ -1,0 +1,80 @@
+services:
+  iatronix-db:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    networks: [iatronix-net]
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - iatronix-pgdata:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  iatronix-redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    networks: [iatronix-net]
+    volumes:
+      - iatronix-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  iatronix-backend:
+    build: ./backend
+    restart: unless-stopped
+    networks: [iatronix-net]
+    depends_on:
+      iatronix-db:
+        condition: service_healthy
+      iatronix-redis:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      DSPY_ENABLED: "true"
+      GUNICORN_WORKERS: "6"
+    volumes:
+      - ./backend/firebase-adminsdk.json:/app/firebase-adminsdk.json:ro
+    ports:
+      - "127.0.0.1:8200:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  iatronix-frontend:
+    build: ./frontend
+    restart: unless-stopped
+    networks: [iatronix-net]
+    depends_on:
+      iatronix-backend:
+        condition: service_healthy
+    environment:
+      INTERNAL_API_URL: ${INTERNAL_API_URL}
+    ports:
+      - "127.0.0.1:3200:3000"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+networks:
+  iatronix-net:
+    name: iatronix-net
+    external: false
+
+volumes:
+  iatronix-pgdata: {}
+  iatronix-redis-data: {}

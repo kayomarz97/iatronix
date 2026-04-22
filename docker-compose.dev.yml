@@ -1,0 +1,66 @@
+services:
+  # Dev shares the same DB as prod (shared user base)
+  # but has its own Redis to prevent cache pollution
+
+  iatronix-dev-redis:
+    image: redis:7-alpine
+    container_name: iatronix-dev-redis
+    restart: unless-stopped
+    networks: [iatronix-net]
+    volumes:
+      - iatronix-dev-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  iatronix-dev-backend:
+    build: ./backend
+    container_name: iatronix-dev-backend
+    restart: unless-stopped
+    networks: [iatronix-net]
+    depends_on:
+      iatronix-dev-redis:
+        condition: service_healthy
+    env_file: .env.dev
+    environment:
+      DSPY_ENABLED: "true"
+      GUNICORN_WORKERS: "2"
+    volumes:
+      - ./backend/firebase-adminsdk.json:/app/firebase-adminsdk.json:ro
+    ports:
+      - "127.0.0.1:8201:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  iatronix-dev-frontend:
+    build: ./frontend
+    container_name: iatronix-dev-frontend
+    restart: unless-stopped
+    networks: [iatronix-net]
+    depends_on:
+      iatronix-dev-backend:
+        condition: service_healthy
+    environment:
+      INTERNAL_API_URL: "http://iatronix-dev-backend:8000"
+    ports:
+      - "127.0.0.1:3201:3000"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+networks:
+  iatronix-net:
+    name: iatronix-net
+    external: true   # shares the same network as prod (for DB access)
+
+volumes:
+  iatronix-dev-redis-data: {}

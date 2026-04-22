@@ -12,6 +12,8 @@ from app.api.v1 import health, models, query
 from app.api.v1 import auth_routes, documents, history as history_module
 from app.api.v1 import version as version_module
 from app.api.v1 import service_keys as service_keys_module
+from app.api.v1 import waves as waves_module
+from app.api.v1 import suggestions as suggestions_module
 from app.config import settings
 from app.middleware.firebase_auth import FirebaseAuthMiddleware
 from app.middleware.payload_limit import PayloadLimitMiddleware
@@ -164,3 +166,5 @@ app.include_router(documents.router, prefix="/api/v1")
 app.include_router(history_module.router, prefix="/api/v1")
 app.include_router(version_module.router, prefix="/api/v1")
 app.include_router(service_keys_module.router, prefix="/api/v1")
+app.include_router(waves_module.router, prefix="/api/v1")
+app.include_router(suggestions_module.router, prefix="/api/v1")

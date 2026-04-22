@@ -53,3 +53,7 @@ firebase-adminsdk.json
 *firebase*.json
 .gstack/
 graphify-out/
+
+# Local reference files (not for version control)
+DEPLOY_COMMANDS.md
+AGENT_ARCHITECTURE.md

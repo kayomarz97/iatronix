@@ -1378,8 +1378,25 @@ RESPOND WITH A SINGLE JSON OBJECT — no markdown fences, no prose outside the J
       "year": "4-digit year string or null",
       "url": null
     }
+  ],
+  "tables": [
+    {
+      "title": "Table title",
+      "headers": ["Column 1", "Column 2"],
+      "rows": [["Row 1 Cell 1", "Row 1 Cell 2"]]
+    }
+  ],
+  "flowcharts": [
+    {
+      "title": "Flowchart title",
+      "steps": ["Step 1: clinical action or decision", "Step 2: next action"]
+    }
   ]
-}"""
+}
+
+TABLES: Include ONLY when comparing entities, showing dosing schedules, staging criteria, diagnostic criteria, or other structured data where a table genuinely aids comprehension over prose. Use [] if not applicable.
+FLOWCHARTS: Include ONLY when a clinical decision pathway or algorithm clearly exists (e.g. PE diagnosis/treatment algorithm, sepsis bundle, ACLS, anaphylaxis management). Do NOT include for purely descriptive or epidemiological topics. Each step must be one concise clinical action or decision point. Use [] if not applicable.
+QUALITY: Tables and flowcharts are supplemental — sections must remain fully comprehensive regardless."""
 
 
 def _build_adaptive_data_block(
