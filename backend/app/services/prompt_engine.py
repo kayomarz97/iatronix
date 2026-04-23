@@ -232,7 +232,7 @@ Respond with a JSON object matching this EXACT structure:
   "pharmacokinetics": {{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}} or null,
   "special_populations": [{{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}}],
   "monitoring": [{{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}}],
-  "references": [{{"source": "string", "title": "string or null", "year": int_or_null, "url": null}}]
+  "references": [{{"source": "string", "title": "string or null", "pmid": "numeric string or null", "year": int_or_null, "url": null}}]
 }}
 
 Query: {query}"""
@@ -301,7 +301,7 @@ Respond with a JSON object matching this EXACT structure:
   }},
   "complications": [{{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}}],
   "prognosis": {{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}} or null,
-  "references": [{{"source": "string", "title": "string or null", "year": int_or_null, "url": null}}]
+  "references": [{{"source": "string", "title": "string or null", "pmid": "numeric string or null", "year": int_or_null, "url": null}}]
 }}
 
 Query: {query}"""
@@ -338,7 +338,7 @@ Respond with a JSON object matching this EXACT structure:
     }}
   ],
   "clinical_preference": {{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}} or null,
-  "references": [{{"source": "string", "title": "string or null", "year": int_or_null, "url": null}}]
+  "references": [{{"source": "string", "title": "string or null", "pmid": "numeric string or null", "year": int_or_null, "url": null}}]
 }}
 
 Query: {query}"""
@@ -366,7 +366,7 @@ Respond with a JSON object matching this EXACT structure:
   "related_drugs": ["generic_name_only"],
   "related_conditions": ["condition_name_only"],
   "confidence": "high|moderate|low",
-  "references": [{{"source": "string", "title": "string or null", "year": int_or_null, "url": null}}]
+  "references": [{{"source": "string", "title": "string or null", "pmid": "numeric string or null", "year": int_or_null, "url": null}}]
 }}
 
 Query: {query}"""
@@ -392,7 +392,7 @@ Respond with a JSON object for the procedure "{query}":
   "technique_steps": [{{"step_number": 1, "description": "string", "notes": "string or null"}}],
   "complications": [{{"value": "string describing complication", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}}],
   "guidelines": [{{"value": "recommendation text", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low", "society": "e.g. SSC, AHA/ACC, NICE, WHO, ACLS — null if unknown"}}],
-  "references": [{{"source": "string", "title": "string or null", "year": int_or_null, "url": null}}]
+  "references": [{{"source": "string", "title": "string or null", "pmid": "numeric string or null", "year": int_or_null, "url": null}}]
 }}
 
 {vector_context}
@@ -439,7 +439,7 @@ Respond with a JSON object:
   }}],
   "clinical_recommendation": {{"value": "recommendation", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}} or null,
   "guideline_status": "No formal guideline exists",
-  "references": [{{"source": "string", "title": "string or null", "year": int_or_null, "url": null}}]
+  "references": [{{"source": "string", "title": "string or null", "pmid": "numeric string or null", "year": int_or_null, "url": null}}]
 }}
 
 {vector_context}
@@ -471,7 +471,7 @@ Respond with a JSON object:
   "related_drugs": ["generic_name_only"],
   "related_conditions": ["condition_name_only"],
   "confidence": "high|moderate|low",
-  "references": [{{"source": "string", "title": "string or null", "year": int_or_null, "url": null}}]
+  "references": [{{"source": "string", "title": "string or null", "pmid": "numeric string or null", "year": int_or_null, "url": null}}]
 }}
 
 {vector_context}
@@ -554,7 +554,7 @@ Respond ONLY with a JSON object matching this EXACT structure:
   "monitoring": [{{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}}],
   "tables": [{{"title": "string", "headers": ["string"], "rows": [["string"]]}}],
   "flowcharts": [{{"title": "string", "steps": ["string"]}}],
-  "references": [{{"source": "string", "title": "string or null", "year": int_or_null, "url": null}}]
+  "references": [{{"source": "string", "title": "string or null", "pmid": "numeric string or null", "year": int_or_null, "url": null}}]
 }}
 
 Query: {query}"""
@@ -646,7 +646,7 @@ Respond ONLY with a JSON object matching this EXACT structure:
   "prognosis": {{"value": "string — include mortality rates, recurrence rates, prognostic factors", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}} or null,
   "tables": [{{"title": "string", "headers": ["string"], "rows": [["string"]]}}],
   "flowcharts": [{{"title": "string", "steps": ["string"]}}],
-  "references": [{{"source": "string", "title": "string or null", "year": int_or_null, "url": null}}]
+  "references": [{{"source": "string", "title": "string or null", "pmid": "numeric string or null", "year": int_or_null, "url": null}}]
 }}
 
 Query: {query}"""
@@ -694,7 +694,7 @@ Respond ONLY with a JSON object comparing "{entity1}" vs "{entity2}":
     }}
   ],
   "clinical_preference": {{"value": "string", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}} or null,
-  "references": [{{"source": "string", "title": "string or null", "year": int_or_null, "url": null}}]
+  "references": [{{"source": "string", "title": "string or null", "pmid": "numeric string or null", "year": int_or_null, "url": null}}]
 }}
 
 Query: {query}"""
@@ -726,7 +726,7 @@ Respond ONLY with a JSON object for the procedure "{query}":
   "technique_steps": [{{"step_number": 1, "description": "string", "notes": "string or null"}}],
   "complications": [{{"value": "string describing complication", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}}],
   "guidelines": [{{"value": "recommendation text", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low", "society": "e.g. SSC, AHA/ACC, NICE, WHO — null if unknown"}}],
-  "references": [{{"source": "string", "title": "string or null", "year": int_or_null, "url": null}}]
+  "references": [{{"source": "string", "title": "string or null", "pmid": "numeric string or null", "year": int_or_null, "url": null}}]
 }}
 
 Query: {query}"""
@@ -782,7 +782,7 @@ Respond ONLY with a JSON object:
   }}],
   "clinical_recommendation": {{"value": "recommendation", "loe": "I|II-1|II-2|II-3|III", "cor": "I|IIa|IIb|III-no-benefit|III-harm", "source": "string", "source_year": int_or_null, "confidence": "high|moderate|low"}} or null,
   "guideline_status": "No formal guideline exists",
-  "references": [{{"source": "string", "title": "string or null", "year": int_or_null, "url": null}}]
+  "references": [{{"source": "string", "title": "string or null", "pmid": "numeric string or null", "year": int_or_null, "url": null}}]
 }}
 
 Query: {query}"""
@@ -1342,8 +1342,7 @@ DEPTH: comprehensive — populate every relevant section fully; sparse responses
 SECTION GUIDANCE FOR {query_type_upper}:
 {section_guidance}
 
-{condition_context_block}{focus_instruction}
-{data_block}"""
+{condition_context_block}{focus_instruction}"""
 
 _ADAPTIVE_RESPONSE_SCHEMA = """\
 
@@ -1477,11 +1476,12 @@ def build_adaptive_messages(
     vector_results: "list[SearchResult] | None" = None,
     required_sections: "list[str] | None" = None,
     condition_context: "str | None" = None,
-) -> tuple[str, str]:
-    """Return (system_text, user_text) for the unified adaptive LLM generation call.
+) -> tuple[str, str, str]:
+    """Return (static_system, data_block, user_text) for the adaptive LLM call.
 
-    system_text is suitable for Anthropic cache_control (contains all static + data context).
-    user_text is just the query.
+    static_system contains all stable instructions and is suitable for Anthropic
+    cache_control (ephemeral). data_block contains per-query fetched data and must
+    NOT be cached. user_text is just the query.
     """
     focus_instruction = _detect_focus_instruction(query)
     if query_type == "drug":
@@ -1504,7 +1504,7 @@ def build_adaptive_messages(
     sections_str = ", ".join(required_sections) if required_sections else _SECTION_GUIDANCE.get(query_type, "")
     data_block = _build_adaptive_data_block(query_type, fetched_data, vector_results)
 
-    system_text = (
+    static_system = (
         _ADAPTIVE_SYSTEM_TEMPLATE.format(
             approved_sources=APPROVED_SOURCES,
             evidence_rules=EVIDENCE_RULES,
@@ -1515,10 +1515,9 @@ def build_adaptive_messages(
             section_guidance=_SECTION_GUIDANCE.get(query_type, ""),
             condition_context_block=condition_block,
             focus_instruction=(focus_instruction + "\n\n") if focus_instruction else "",
-            data_block=data_block,
         )
         + _ADAPTIVE_RESPONSE_SCHEMA
     )
 
     user_text = f"Query: {query}"
-    return system_text, user_text
+    return static_system, data_block, user_text
