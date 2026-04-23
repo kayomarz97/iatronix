@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense } from "react";
+import React, { Suspense } from "react";
 import { SearchBar } from "@/components/ui/SearchBar";
 import { LoadingScreen } from "@/components/LoadingScreen";
 import { SearchHistorySidebar } from "@/components/ui/SearchHistorySidebar";
@@ -11,10 +11,40 @@ import { Badge } from "@/components/ui/Badge";
 import { useQueryContext } from "@/components/providers/QueryProvider";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { formatLatency } from "@/lib/formatters";
-import type { DegradedResponse, AdaptiveResponse, TokenUsage } from "@/lib/types";
+import type { DegradedResponse, AdaptiveResponse, AdaptiveBLUF, AdaptiveSection, TokenUsage } from "@/lib/types";
+
+function StreamingProgress({ streamingText, loadingStage }: { streamingText: string; loadingStage: string }) {
+  const sectionTitles = React.useMemo(() => {
+    const matches = [...streamingText.matchAll(/"title"\s*:\s*"([^"]{3,60})"/g)];
+    return [...new Set(matches.map(m => m[1]))].slice(0, 12);
+  }, [streamingText]);
+
+  return (
+    <Card>
+      <p className="text-xs text-text-muted mb-3 font-medium tracking-wide uppercase">
+        {loadingStage === "generating" ? "Generating response…" : "Analysing query…"}
+      </p>
+      {sectionTitles.length > 0 ? (
+        <div className="flex flex-wrap gap-2">
+          {sectionTitles.map((title, i) => (
+            <span key={i} className="rounded-full bg-surface-alt border border-border px-3 py-1 text-xs text-text-secondary animate-pulse">
+              {title}
+            </span>
+          ))}
+        </div>
+      ) : (
+        <div className="flex items-center gap-2 text-sm text-text-muted">
+          <span className="inline-block w-1.5 h-1.5 rounded-full bg-accent animate-bounce" />
+          <span className="inline-block w-1.5 h-1.5 rounded-full bg-accent animate-bounce [animation-delay:0.15s]" />
+          <span className="inline-block w-1.5 h-1.5 rounded-full bg-accent animate-bounce [animation-delay:0.3s]" />
+        </div>
+      )}
+    </Card>
+  );
+}
 
 function QueryContent() {
-  const { result, streamingText, isLoading, loadingStage, error, activeModelName, submitQuery } = useQueryContext();
+  const { result, streamingText, streamingBluf, streamingSections, isLoading, loadingStage, error, activeModelName, submitQuery } = useQueryContext();
   const { user } = useAuth();
 
   return (
@@ -30,7 +60,7 @@ function QueryContent() {
         </Card>
       )}
 
-      {isLoading && !streamingText && (
+      {isLoading && !streamingText && !streamingBluf && (
         <LoadingScreen
           currentStep={
             (loadingStage as "classifying" | "fetching" | "generating" | "verifying") ||
@@ -39,17 +69,37 @@ function QueryContent() {
         />
       )}
 
-      {streamingText && isLoading && (
-        <Card>
-          <p className="text-xs text-text-muted mb-2 font-medium tracking-wide uppercase">Generating response…</p>
-          <div
-            className="text-sm text-text-primary leading-relaxed whitespace-pre-wrap font-mono"
-            style={{ maxHeight: "60vh", overflowY: "auto" }}
-          >
-            {streamingText}
-            <span className="inline-block w-1.5 h-4 bg-accent ml-0.5 animate-pulse align-middle" />
-          </div>
-        </Card>
+      {/* Single-call path: show cleaned-up progress instead of raw JSON */}
+      {streamingText && isLoading && !streamingBluf && (
+        <StreamingProgress streamingText={streamingText} loadingStage={loadingStage} />
+      )}
+
+      {/* Parallel path: progressively render BLUF + sections as they arrive */}
+      {streamingBluf && isLoading && (
+        <div className="space-y-5">
+          <AdaptiveResultRenderer
+            data={{
+              query_type: "adaptive",
+              bluf: streamingBluf,
+              sections: streamingSections.filter(s => (s.content_items?.length ?? 0) > 0 || s.content),
+              references: [],
+              response_focus: "",
+              depth: "comprehensive",
+              related_topics: [],
+              tables: [],
+              flowcharts: [],
+              images: [],
+            }}
+          />
+          <Card>
+            <div className="flex items-center gap-2 text-xs text-text-muted">
+              <span className="inline-block w-1.5 h-1.5 rounded-full bg-accent animate-bounce" />
+              <span className="inline-block w-1.5 h-1.5 rounded-full bg-accent animate-bounce [animation-delay:0.15s]" />
+              <span className="inline-block w-1.5 h-1.5 rounded-full bg-accent animate-bounce [animation-delay:0.3s]" />
+              <span className="ml-1">Generating sections…</span>
+            </div>
+          </Card>
+        </div>
       )}
 
       {result && !isLoading && (

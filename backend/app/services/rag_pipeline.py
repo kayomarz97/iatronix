@@ -57,7 +57,11 @@ from app.services.drug_linker import process_text_nodes
 from app.services.json_repair import parse_llm_json
 from app.services.llm_factory import create_llm, get_provider
 from app.services.langgraph_search import run_search_graph
-from app.services.prompt_engine import build_adaptive_messages
+from app.services.prompt_engine import (
+    build_adaptive_messages,
+    build_bluf_only_messages,
+    build_section_messages,
+)
 from app.services.query_classifier import classify_query, classify_query_llm, detect_intent
 from app.services.safety_checker import check_safety
 from app.services.url_builder import enrich_references
@@ -1274,12 +1278,157 @@ async def _analyze_query_with_dspy(
         return None
 
 
+def _dedup_references(refs: list) -> list:
+    """Deduplicate reference dicts by title+pmid key."""
+    seen: set[str] = set()
+    out = []
+    for r in refs:
+        if not isinstance(r, dict):
+            continue
+        key = f"{r.get('title', '')}|{r.get('pmid', '')}"
+        if key not in seen:
+            seen.add(key)
+            out.append(r)
+    return out
+
+
+async def _call_llm_simple(
+    llm,
+    provider: str,
+    system: str,
+    data_block: str,
+    user_text: str,
+) -> str | None:
+    """Non-streaming single LLM call. Returns raw text or None on error."""
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    try:
+        if provider == "anthropic":
+            sys_content = [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
+            if data_block:
+                sys_content.append({"type": "text", "text": data_block})
+            msgs = [SystemMessage(content=sys_content), HumanMessage(content=user_text)]
+        else:
+            combined = system + ("\n\n" + data_block if data_block else "")
+            msgs = [SystemMessage(content=combined), HumanMessage(content=user_text)]
+        result = await llm.ainvoke(msgs)
+        return result.content if isinstance(result.content, str) else None
+    except Exception as exc:
+        logger.warning("_call_llm_simple failed: %s", exc)
+        return None
+
+
+async def _run_parallel_pipeline(
+    *,
+    query: str,
+    query_type: str,
+    fetched_data,
+    vector_results,
+    effective_model: str,
+    user_llm_key,
+    user_llm_provider,
+    condition_context: str | None,
+    comparative_is_drug: bool,
+    structured_callback,
+) -> dict | None:
+    """Two-phase parallel generation. Returns parsed dict compatible with AdaptiveResponse or None."""
+    provider = user_llm_provider or get_provider(effective_model)
+
+    bluf_system, bluf_data, bluf_user = build_bluf_only_messages(
+        query=query,
+        query_type=query_type,
+        fetched_data=fetched_data,
+        vector_results=vector_results,
+        condition_context=condition_context,
+        comparative_is_drug=comparative_is_drug,
+    )
+    bluf_llm = create_llm(effective_model, max_tokens=settings.parallel_bluf_max_tokens,
+                          user_key=user_llm_key, user_provider=user_llm_provider)
+    bluf_raw = await _call_llm_simple(bluf_llm, provider, bluf_system, bluf_data, bluf_user)
+    bluf_parsed = parse_llm_json(bluf_raw) if bluf_raw else None
+    if not bluf_parsed:
+        logger.warning("parallel_pipeline: BLUF call failed or unparseable")
+        return None
+
+    section_titles: list[str] = bluf_parsed.get("section_titles", [])
+    if not section_titles:
+        logger.warning("parallel_pipeline: no section_titles returned")
+        return None
+
+    if structured_callback:
+        try:
+            await structured_callback("bluf", bluf_parsed.get("bluf", {}))
+        except Exception:
+            pass
+
+    bluf_text: str = (
+        bluf_parsed.get("bluf", {}).get("body", "")
+        or bluf_parsed.get("bluf", {}).get("headline", "")
+        or query
+    )
+
+    async def _gen_one_section(title: str) -> dict | None:
+        sec_system, sec_data, sec_user = build_section_messages(
+            section_title=title,
+            all_section_titles=section_titles,
+            bluf_text=bluf_text,
+            query=query,
+            query_type=query_type,
+            fetched_data=fetched_data,
+            vector_results=vector_results,
+        )
+        sec_llm = create_llm(effective_model, max_tokens=settings.parallel_sections_max_tokens,
+                             user_key=user_llm_key, user_provider=user_llm_provider)
+        raw = await _call_llm_simple(sec_llm, provider, sec_system, sec_data, sec_user)
+        return parse_llm_json(raw) if raw else None
+
+    raw_sections = await asyncio.gather(
+        *[_gen_one_section(t) for t in section_titles],
+        return_exceptions=True,
+    )
+
+    all_sections: list[dict] = []
+    all_refs: list[dict] = list(bluf_parsed.get("references", []))
+
+    for idx, (title, sec) in enumerate(zip(section_titles, raw_sections)):
+        if isinstance(sec, Exception) or sec is None:
+            logger.warning("parallel_pipeline: section '%s' failed: %s", title, sec)
+            continue
+        section_dict = {
+            "title": sec.get("title", title),
+            "content_items": sec.get("content_items", []),
+        }
+        all_sections.append(section_dict)
+        all_refs.extend(r for r in sec.get("references", []) if isinstance(r, dict))
+
+        if structured_callback:
+            try:
+                await structured_callback("section_complete", {**section_dict, "index": idx})
+            except Exception:
+                pass
+
+    if not all_sections:
+        logger.warning("parallel_pipeline: all section calls failed")
+        return None
+
+    return {
+        "bluf": bluf_parsed.get("bluf", {}),
+        "sections": all_sections,
+        "references": _dedup_references(all_refs),
+        "tables": [],
+        "flowcharts": [],
+        "response_focus": bluf_parsed.get("response_focus", query_type),
+        "related_topics": bluf_parsed.get("related_topics", []),
+    }
+
+
 async def process_query(
     request: QueryRequest,
     redis_client=None,
     user_key_id: str | None = None,
     user=None,
     token_callback: Callable[[str], Awaitable[None]] | None = None,
+    structured_callback: Callable[[str, object], Awaitable[None]] | None = None,
 ) -> QueryResponse:
     """Main RAG pipeline orchestrator."""
     start_time = time.time()
@@ -1661,6 +1810,12 @@ async def process_query(
         list(query_analysis.get("required_sections", [])) if query_analysis else []
     )
 
+    comparative_is_drug = (
+        query_type == "comparative"
+        and fetched_data is not None
+        and len(fetched_data.comparative_drug_data or []) >= 2
+    )
+
     system_text, data_block, user_text = build_adaptive_messages(
         rewritten_query,
         query_type,
@@ -1668,143 +1823,183 @@ async def process_query(
         vector_results=vector_results,
         required_sections=required_sections or None,
         condition_context=condition_context,
+        comparative_is_drug=comparative_is_drug,
     )
 
-    _llm_t0 = time.perf_counter()
+    # Initialise variables shared by both pipeline paths
+    parsed: dict | None = None
     raw_response: str | None = None
     _gen_usage: dict = {}
-    try:
-        _gen_llm = create_llm(
-            effective_model,
-            max_tokens=max_tokens,
-            user_key=user_llm_key,
-            user_provider=user_llm_provider,
+    _llm_t0 = time.perf_counter()
+
+    # ── Parallel section agents (when enabled) ────────────────────────────────
+    if settings.parallel_sections_enabled and structured_callback is not None:
+        _llm_t0 = time.perf_counter()
+        parallel_parsed = await _run_parallel_pipeline(
+            query=rewritten_query,
+            query_type=query_type,
+            fetched_data=fetched_data,
+            vector_results=vector_results,
+            effective_model=effective_model,
+            user_llm_key=user_llm_key,
+            user_llm_provider=user_llm_provider,
+            condition_context=condition_context,
+            comparative_is_drug=comparative_is_drug,
+            structured_callback=structured_callback,
         )
+        if parallel_parsed is not None:
+            parsed = parallel_parsed
+            logger.info(
+                "pipeline.parallel_sections",
+                extra={
+                    "stage": "parallel_sections",
+                    "query_type": query_type,
+                    "sections": len(parsed.get("sections", [])),
+                    "duration_ms": round((time.perf_counter() - _llm_t0) * 1000),
+                },
+            )
+            # Jump straight to AdaptiveResponse construction below
+            _gen_usage = {}
+            raw_response = "__parallel__"  # sentinel — skip single-call block
+        else:
+            logger.warning("parallel_pipeline failed; falling back to single call")
+            raw_response = None
+            parsed = None
+
+    _single_call_needed = raw_response != "__parallel__"
+    if _single_call_needed:
+        _llm_t0 = time.perf_counter()
+        raw_response = None
+        _gen_usage = {}
+        _gen_llm = None
         _gen_provider = user_llm_provider or get_provider(effective_model)
         _gen_breaker = get_breaker(_gen_provider)
+        try:
+            _gen_llm = create_llm(
+                effective_model,
+                max_tokens=max_tokens,
+                user_key=user_llm_key,
+                user_provider=user_llm_provider,
+            )
 
-        @_gen_breaker
-        async def _invoke_adaptive():
-            nonlocal _gen_usage
-            if _gen_provider == "anthropic":
-                # Static instructions are cached; per-query data_block is sent uncached.
-                # This allows Anthropic prompt cache to hit on the large static prefix.
-                _sys_content = [
-                    {"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}},
-                ]
-                if data_block:
-                    _sys_content.append({"type": "text", "text": data_block})
-                _msgs = [
-                    SystemMessage(content=_sys_content),
-                    HumanMessage(content=user_text),
-                ]
-            else:
-                combined = system_text + ("\n\n" + data_block if data_block else "")
-                _msgs = [SystemMessage(content=combined), HumanMessage(content=user_text)]
+            @_gen_breaker
+            async def _invoke_adaptive():
+                nonlocal _gen_usage
+                if _gen_provider == "anthropic":
+                    _sys_content = [
+                        {"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}},
+                    ]
+                    if data_block:
+                        _sys_content.append({"type": "text", "text": data_block})
+                    _msgs = [
+                        SystemMessage(content=_sys_content),
+                        HumanMessage(content=user_text),
+                    ]
+                else:
+                    combined = system_text + ("\n\n" + data_block if data_block else "")
+                    _msgs = [SystemMessage(content=combined), HumanMessage(content=user_text)]
 
-            if token_callback is not None:
-                # Streaming path: yield tokens to caller, collect full text
-                _chunks = []
-                _last_chunk = None
-                async for _chunk in _gen_llm.astream(_msgs):
-                    _text = _chunk.content if isinstance(_chunk.content, str) else ""
-                    if _text:
-                        _chunks.append(_text)
-                        await token_callback(_text)
-                    _last_chunk = _chunk
-                _usage = getattr(_last_chunk, "usage_metadata", None) or {} if _last_chunk else {}
+                if token_callback is not None:
+                    _chunks = []
+                    _last_chunk = None
+                    async for _chunk in _gen_llm.astream(_msgs):
+                        _text = _chunk.content if isinstance(_chunk.content, str) else ""
+                        if _text:
+                            _chunks.append(_text)
+                            await token_callback(_text)
+                        _last_chunk = _chunk
+                    _usage = getattr(_last_chunk, "usage_metadata", None) or {} if _last_chunk else {}
+                    _gen_usage = {
+                        "input_tokens": _usage.get("input_tokens", _usage.get("prompt_tokens", 0)) or 0,
+                        "output_tokens": _usage.get("output_tokens", _usage.get("completion_tokens", 0)) or 0,
+                    }
+                    return "".join(_chunks)
+
+                _llm_msg = await _gen_llm.ainvoke(_msgs)
+                _usage = getattr(_llm_msg, "usage_metadata", None) or {}
                 _gen_usage = {
                     "input_tokens": _usage.get("input_tokens", _usage.get("prompt_tokens", 0)) or 0,
                     "output_tokens": _usage.get("output_tokens", _usage.get("completion_tokens", 0)) or 0,
                 }
-                return "".join(_chunks)
+                return _llm_msg.content
 
-            # Non-streaming path (default)
-            _llm_msg = await _gen_llm.ainvoke(_msgs)
-            _usage = getattr(_llm_msg, "usage_metadata", None) or {}
-            _gen_usage = {
-                "input_tokens": _usage.get("input_tokens", _usage.get("prompt_tokens", 0)) or 0,
-                "output_tokens": _usage.get("output_tokens", _usage.get("completion_tokens", 0)) or 0,
-            }
-            return _llm_msg.content
-
-        raw_response = await _invoke_adaptive()
-    except pybreaker.CircuitBreakerError:
-        raise HTTPException(
-            status_code=503,
-            detail="LLM service temporarily unavailable — please try again in a few seconds.",
-        )
-    except HTTPException as e:
-        if e.status_code in (401, 429):
-            latency_ms = int((time.time() - start_time) * 1000)
-            return QueryResponse(
-                query_type=query_type,
-                model_used=effective_model,
-                response=DegradedResponse(
-                    message=e.detail,
-                    suggestion=(
-                        "Wait a few seconds and retry."
-                        if e.status_code == 429
-                        else "Go to Settings → LLM API Key and re-enter your key."
-                    ),
-                ),
-                disclaimer=DISCLAIMER,
-                latency_ms=latency_ms,
-            )
-        if e.status_code == 402:
-            latency_ms = int((time.time() - start_time) * 1000)
-            no_key = isinstance(e.detail, dict) and e.detail.get("error") == "no_api_key"
-            if no_key:
-                deg_msg = "AI formatting is unavailable — no API key configured. Please add your API key in Settings."
-                deg_sug = "Add your Anthropic, OpenAI, or OpenRouter API key in Settings to enable AI-formatted responses."
-            else:
-                deg_msg = e.detail if isinstance(e.detail, str) else "Billing error — the LLM provider rejected the request."
-                deg_sug = "Check your account billing at console.anthropic.com → Plans & Billing, then retry."
-            if user and user.id:
-                asyncio.create_task(_log_search_history(user.id, request.query, query_type, {}))
-            latency_ms = int((time.time() - start_time) * 1000)
-            return QueryResponse(
-                query_type=query_type,
-                model_used=effective_model,
-                response=DegradedResponse(message=deg_msg, suggestion=deg_sug),
-                disclaimer=DISCLAIMER,
-                latency_ms=latency_ms,
-            )
-        raise
-    except openai.RateLimitError:
-        raise HTTPException(
-            status_code=429,
-            detail="Rate limit exceeded — wait a few seconds and retry.",
-        )
-    except (openai.AuthenticationError, openai.PermissionDeniedError):
-        raise HTTPException(
-            status_code=401,
-            detail="LLM API key rejected — please verify your key in Settings.",
-        )
-    except anthropic.RateLimitError:
-        raise HTTPException(
-            status_code=429,
-            detail="Anthropic rate limit exceeded — wait a moment and retry.",
-        )
-    except (anthropic.AuthenticationError, anthropic.PermissionDeniedError):
-        raise HTTPException(
-            status_code=401,
-            detail="Anthropic API key rejected — please verify your key in Settings.",
-        )
-    except anthropic.BadRequestError as _e:
-        _msg = str(_e)
-        if "credit balance is too low" in _msg or "billing" in _msg.lower():
+            raw_response = await _invoke_adaptive()
+        except pybreaker.CircuitBreakerError:
             raise HTTPException(
-                status_code=402,
-                detail="Your Anthropic account has insufficient credits.",
+                status_code=503,
+                detail="LLM service temporarily unavailable — please try again in a few seconds.",
             )
-        raise HTTPException(status_code=400, detail=f"Anthropic rejected the request: {_msg}")
+        except HTTPException as e:
+            if e.status_code in (401, 429):
+                latency_ms = int((time.time() - start_time) * 1000)
+                return QueryResponse(
+                    query_type=query_type,
+                    model_used=effective_model,
+                    response=DegradedResponse(
+                        message=e.detail,
+                        suggestion=(
+                            "Wait a few seconds and retry."
+                            if e.status_code == 429
+                            else "Go to Settings → LLM API Key and re-enter your key."
+                        ),
+                    ),
+                    disclaimer=DISCLAIMER,
+                    latency_ms=latency_ms,
+                )
+            if e.status_code == 402:
+                latency_ms = int((time.time() - start_time) * 1000)
+                no_key = isinstance(e.detail, dict) and e.detail.get("error") == "no_api_key"
+                if no_key:
+                    deg_msg = "AI formatting is unavailable — no API key configured. Please add your API key in Settings."
+                    deg_sug = "Add your Anthropic, OpenAI, or OpenRouter API key in Settings to enable AI-formatted responses."
+                else:
+                    deg_msg = e.detail if isinstance(e.detail, str) else "Billing error — the LLM provider rejected the request."
+                    deg_sug = "Check your account billing at console.anthropic.com → Plans & Billing, then retry."
+                if user and user.id:
+                    asyncio.create_task(_log_search_history(user.id, request.query, query_type, {}))
+                latency_ms = int((time.time() - start_time) * 1000)
+                return QueryResponse(
+                    query_type=query_type,
+                    model_used=effective_model,
+                    response=DegradedResponse(message=deg_msg, suggestion=deg_sug),
+                    disclaimer=DISCLAIMER,
+                    latency_ms=latency_ms,
+                )
+            raise
+        except openai.RateLimitError:
+            raise HTTPException(
+                status_code=429,
+                detail="Rate limit exceeded — wait a few seconds and retry.",
+            )
+        except (openai.AuthenticationError, openai.PermissionDeniedError):
+            raise HTTPException(
+                status_code=401,
+                detail="LLM API key rejected — please verify your key in Settings.",
+            )
+        except anthropic.RateLimitError:
+            raise HTTPException(
+                status_code=429,
+                detail="Anthropic rate limit exceeded — wait a moment and retry.",
+            )
+        except (anthropic.AuthenticationError, anthropic.PermissionDeniedError):
+            raise HTTPException(
+                status_code=401,
+                detail="Anthropic API key rejected — please verify your key in Settings.",
+            )
+        except anthropic.BadRequestError as _e:
+            _msg = str(_e)
+            if "credit balance is too low" in _msg or "billing" in _msg.lower():
+                raise HTTPException(
+                    status_code=402,
+                    detail="Your Anthropic account has insufficient credits.",
+                )
+            raise HTTPException(status_code=400, detail=f"Anthropic rejected the request: {_msg}")
 
-    # Parse the adaptive JSON
-    parsed = parse_llm_json(raw_response) if raw_response else None
+        # Parse the adaptive JSON (single-call path only)
+        parsed = parse_llm_json(raw_response) if raw_response else None
 
-    # Retry once with a stricter suffix if parse failed
-    if parsed is None:
+    # Retry once (single-call path only) with a stricter suffix if parse failed
+    if _single_call_needed and parsed is None and _gen_llm is not None:
         logger.info("Adaptive LLM call failed or unparseable, retrying...")
         await asyncio.sleep(settings.llm_retry_backoff_seconds)
         retry_static = (
@@ -1839,7 +2034,7 @@ async def process_query(
     logger.info(
         "pipeline.llm_call",
         extra={
-            "stage": "llm_call",
+            "stage": "parallel" if not _single_call_needed else "llm_call",
             "query_type": query_type,
             "model": effective_model,
             "prompt_mode": prompt_mode,
@@ -1887,14 +2082,22 @@ async def process_query(
             for s in parsed.get("sections", [])
         ]
 
+        _response_focus = (
+            parsed.get("response_focus")
+            or str((query_analysis or {}).get("response_focus", query_type))
+        )
+        _related_topics = (
+            parsed.get("related_topics")
+            or list((query_analysis or {}).get("related_topics", []))
+        )
         adaptive_response = AdaptiveResponse(
             query_type=query_type,
             bluf=_bluf,
             sections=_sections,
             references=_references,
-            response_focus=str((query_analysis or {}).get("response_focus", query_type)),
+            response_focus=_response_focus,
             depth="comprehensive",
-            related_topics=list((query_analysis or {}).get("related_topics", [])),
+            related_topics=_related_topics,
             tables=parsed.get("tables", []),
             flowcharts=parsed.get("flowcharts", []),
             images=getattr(fetched_data, "images", []) if fetched_data else [],

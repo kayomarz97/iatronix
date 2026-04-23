@@ -320,9 +320,11 @@ export function AdaptiveResultRenderer({ data, fetchSources }: Props) {
         }
       />
 
-      {data.sections.map((section, i) => (
-        <SectionCard key={i} section={section} />
-      ))}
+      {data.sections
+        .filter(s => (s.content_items?.length ?? 0) > 0 || s.content)
+        .map((section, i) => (
+          <SectionCard key={i} section={section} />
+        ))}
 
       <TableRenderer tables={data.tables} />
       <FlowchartRenderer flowcharts={data.flowcharts} />
