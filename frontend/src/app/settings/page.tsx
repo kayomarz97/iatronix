@@ -1,19 +1,11 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Monitor, Moon, Sun, Edit2, Check, X, Brain, FileText } from "lucide-react";
+import { Monitor, Moon, Sun, Edit2, Check, X } from "lucide-react";
 import { API_KEY_STORAGE_KEY, LLM_PROVIDER_STORAGE_KEY } from "@/lib/constants";
 import { useTheme } from "@/hooks/useTheme";
-import { SOURCE_MODE_KEY } from "@/components/providers/QueryProvider";
 import { saveServiceKey, deleteServiceKey, listServiceKeys } from "@/lib/api";
 // Voyage AI hidden — reserved for future re-enable
-
-type SourceMode = "ai" | "pdfs";
-
-const SOURCE_MODES: { id: SourceMode; icon: React.ReactNode; title: string; desc: string }[] = [
-  { id: "ai", icon: <Brain size={16} />, title: "AI Mode", desc: "Live API data + LLM formatting. Best for comprehensive, structured answers." },
-  { id: "pdfs", icon: <FileText size={16} />, title: "Personal PDFs", desc: "Search only your uploaded documents via vector search." },
-];
 
 const POSITIONS = [
   "Medical Student", "Intern", "Junior Resident", "Senior Resident",
@@ -53,8 +45,6 @@ export default function SettingsPage() {
   const [editForm, setEditForm] = useState<typeof profile>({});
   const [profileMsg, setProfileMsg] = useState<string | null>(null);
 
-  const [sourceMode, setSourceMode] = useState<SourceMode>("ai");
-
   const { theme, toggle, resetToSystem } = useTheme();
   const [themeMode, setThemeMode] = useState<"system" | "dark" | "light">(
     typeof window !== "undefined" && localStorage.getItem("theme")
@@ -64,17 +54,10 @@ export default function SettingsPage() {
 
   useEffect(() => {
     setEmail(localStorage.getItem("iatronix_email") || "");
-    const stored = localStorage.getItem(SOURCE_MODE_KEY) as SourceMode | null;
-    if (stored && ["ai", "pdfs"].includes(stored)) setSourceMode(stored);
     fetchProfile();
     fetchLlmStatus();
     fetchNcbiStatus();
   }, []);
-
-  const applySourceMode = (mode: SourceMode) => {
-    setSourceMode(mode);
-    localStorage.setItem(SOURCE_MODE_KEY, mode);
-  };
 
   const getApiKey = () => localStorage.getItem(API_KEY_STORAGE_KEY) || "";
   const authHeader = () => ({ "Authorization": `Bearer ${getApiKey()}` });
@@ -350,42 +333,6 @@ export default function SettingsPage() {
         <button onClick={logout} className="px-4 py-2 text-sm rounded-md border border-danger text-danger hover:bg-danger-bg min-h-[44px]">
           Sign Out
         </button>
-      </section>
-
-      {/* ── Search Mode ── */}
-      <section className="space-y-3">
-        <h2 className="text-lg font-semibold">Search Mode</h2>
-        <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
-          Controls how Iatronix sources answers. Applied to all queries.
-        </p>
-        <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
-          {SOURCE_MODES.map((m) => {
-            const active = sourceMode === m.id;
-            return (
-              <button
-                key={m.id}
-                onClick={() => applySourceMode(m.id)}
-                style={{
-                  display: "flex", alignItems: "flex-start", gap: "0.75rem",
-                  padding: "0.75rem 1rem", textAlign: "left",
-                  background: active ? "var(--accent-glow)" : "var(--bg-elevated)",
-                  border: `1px solid ${active ? "var(--accent)" : "var(--border)"}`,
-                  borderRadius: "var(--radius-md)", cursor: "pointer",
-                  transition: "all var(--transition)",
-                }}
-              >
-                <span style={{ color: active ? "var(--accent)" : "var(--text-muted)", marginTop: 2, flexShrink: 0 }}>{m.icon}</span>
-                <div>
-                  <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", marginBottom: "0.15rem" }}>
-                    <span style={{ fontWeight: 600, fontSize: "0.875rem", color: active ? "var(--accent)" : "var(--text-primary)" }}>{m.title}</span>
-                    {active && <span style={{ fontSize: "0.7rem", color: "var(--accent)", fontWeight: 600 }}>● Active</span>}
-                  </div>
-                  <span style={{ fontSize: "0.8rem", color: "var(--text-secondary)" }}>{m.desc}</span>
-                </div>
-              </button>
-            );
-          })}
-        </div>
       </section>
 
       {/* ── Appearance ── */}
