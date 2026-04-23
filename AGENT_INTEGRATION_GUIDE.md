@@ -103,16 +103,19 @@ Redis key format: `v{prompt_version}:{model_id}:{query_type}:{md5(normalized_que
 | MedIndia | Indian drug info (fallback) |
 
 ### 4.5 LLM Call
-Two modes controlled by `source_mode` and `DSPY_ENABLED`:
+Three modes depending on feature flags:
 
-- **Format mode**: Feed raw API data + schema into a prompt; LLM structures it
-- **Generate mode**: LLM uses its training knowledge (fallback when fetch returns nothing)
-- **DSPy mode**: Two-stage — `MedicalQueryAnalysis` determines required sections, `MedicalResponseGeneration` fills them
+- **Parallel agent mode** (`PARALLEL_SECTIONS_ENABLED=true`): Two-phase pipeline:
+  - Phase 1 — `build_bluf_only_messages()` → fast call (1024 tokens) → returns BLUF + section titles → emits `bluf` SSE event
+  - Phase 2 — `asyncio.gather()` of N `build_section_messages()` calls (1200 tokens each) → emits `section_complete` per section
+- **Single-call mode** (`PARALLEL_SECTIONS_ENABLED=false`): One large call with `build_adaptive_messages()`, tokens streamed live via `token_callback`
+- **Generate mode**: Fallback when no API data retrieved; LLM uses training knowledge
 
-Token budgets per type:
+Token budgets (single-call path):
 - Drug: 2048 tokens (Haiku)
 - Disease: 6144 tokens (Sonnet)
 - Generate fallback: 4096 tokens
+- Parallel BLUF: 1024 tokens / section: 1200 tokens
 
 ### 4.6 Post-Processing
 1. JSON repair (LLM output is often malformed)
@@ -153,15 +156,16 @@ Top-level response:
 
 These gates control which pipeline steps are active. Toggle in `.env` without code changes.
 
-| Flag | Current Default | Effect When Enabled |
-|------|----------------|---------------------|
-| `API_FETCH_ENABLED` | `true` | Live medical API retrieval |
-| `DSPY_ENABLED` | `true` | DSPy adaptive two-pass pipeline |
-| `ADAPTIVE_SECOND_PASS_ENABLED` | `true` | Retry with relaxed constraints on sparse output |
-| `MODEL_ROUTING_ENABLED` | `true` | Auto-select Haiku vs Sonnet |
-| `VECTOR_SEARCH_ENABLED` | `false` | pgvector similarity search from uploaded PDFs |
-| `SEMANTIC_CACHE_ENABLED` | `false` | Cache similar (not just identical) queries |
-| `FAIL_CLOSED_EVIDENCE_ONLY` | `true` | Reject responses without evidence citations |
+| Flag | Dev Default | Prod Default | Effect When Enabled |
+|------|------------|-------------|---------------------|
+| `API_FETCH_ENABLED` | `true` | `true` | Live medical API retrieval |
+| `DSPY_ENABLED` | `true` | `true` | DSPy adaptive two-pass pipeline |
+| `ADAPTIVE_SECOND_PASS_ENABLED` | `true` | `true` | Retry with relaxed constraints on sparse output |
+| `MODEL_ROUTING_ENABLED` | `true` | `true` | Auto-select Haiku vs Sonnet based on query type |
+| `PARALLEL_SECTIONS_ENABLED` | `true` | `false` | Phase-1 BLUF + parallel per-section LLM agents; progressive SSE display |
+| `VECTOR_SEARCH_ENABLED` | `false` | `false` | pgvector similarity search from uploaded PDFs |
+| `SEMANTIC_CACHE_ENABLED` | `false` | `false` | Cache similar (not just identical) queries |
+| `FAIL_CLOSED_EVIDENCE_ONLY` | `true` | `true` | Reject responses without evidence citations |
 
 ---
 
@@ -202,29 +206,37 @@ In `llm_factory.py`, add a new branch to the provider switch. The factory return
 
 ### 6.4 Add a Specialist Sub-Agent (Multi-Agent Pattern)
 
-The current pipeline is single-agent (one LLM call per query). To add a specialist sub-agent (e.g., a drug-interaction checker, a triage classifier, or a dosing calculator):
+The pipeline now supports **parallel section agents** (live, enabled by `PARALLEL_SECTIONS_ENABLED`). The pattern:
 
-**Recommended approach — sequential agent handoff:**
 ```
-rag_pipeline.process_query()
-  ├─ [existing] Data fetch + format LLM
-  └─ [new] specialist_agent.run(fetched_data, llm_output)
-       └─ Returns enrichment dict merged into final response
+process_query()
+  │
+  ├─ Phase 1: BLUF agent → returns headline + section titles
+  │    └─ Emits: bluf SSE event (frontend renders ResultHero immediately)
+  │
+  └─ Phase 2: asyncio.gather — one agent per section title
+       ├─ Each agent: build_section_messages() → LLM call → section dict
+       └─ Results merged → AdaptiveResponse → done SSE event
 ```
 
-Create `backend/app/services/agents/` and add:
-- `base_agent.py` — Abstract interface: `async def run(context: dict) -> dict`
-- `<name>_agent.py` — Concrete implementation
-- Register in `rag_pipeline.py` as a post-processing step
+**To add a new section type:**
+1. Add the section title to `_SECTION_GUIDANCE[query_type]` in `prompt_engine.py`
+2. The BLUF phase will automatically include it in `section_titles`
+3. Phase 2 generates it in parallel alongside all other sections
 
-**Recommended approach — parallel agent fan-out:**
+**To add a post-generation specialist agent** (e.g., drug interaction enricher):
 ```python
-results = await asyncio.gather(
-    existing_rag_call(query),
-    drug_interaction_agent(entities),
-    dosing_calculator_agent(entities),
-)
-merged = merge_agent_results(results)
+# In rag_pipeline.py, after _run_parallel_pipeline() returns:
+specialist_result = await my_specialist_agent(parsed, fetched_data)
+parsed["sections"].append(specialist_result)
+```
+
+**Sequential agent handoff (alternative):**
+```
+process_query()
+  ├─ [existing] parallel section pipeline
+  └─ [new] post_processor.run(adaptive_response, fetched_data)
+       └─ Returns enrichment merged into final response
 ```
 
 ### 6.5 Add a DSPy Module
@@ -246,18 +258,16 @@ Then wire it into `dspy_modules.py` as a chain step.
 
 ## 7. Improvement Areas & Known Gaps
 
-These are explicitly documented as incomplete or disabled:
-
 | Area | Status | Notes |
 |------|--------|-------|
+| Parallel section agents | **Live** (`PARALLEL_SECTIONS_ENABLED=true` on dev) | Phase-1 BLUF + Phase-2 parallel sections; progressive SSE display |
+| Drug interactions in comparative | **Live** | Auto-injected when comparing ≥2 drugs |
+| Progressive SSE streaming | **Live** | `bluf` + `section_complete` events; frontend renders progressively |
 | Vector search (pgvector) | Disabled (`VECTOR_SEARCH_ENABLED=false`) | Infrastructure exists; embeddings stored; needs activation and tuning |
 | Semantic cache | Disabled (`SEMANTIC_CACHE_ENABLED=false`) | Would cache similar (not just identical) queries using cosine similarity |
 | PDF document pipeline | Partial | Upload works, vectors stored, but RAG retrieval not integrated into main query path |
 | Local LLM | Not implemented | Config stubs exist; needs llama.cpp or Ollama integration |
-| Incomplete LLM output | Ongoing (`plans/incomplete-output-remediation-plan.md`) | DSPy second-pass is the current mitigation |
 | Multi-turn conversations | Not implemented | Each query is stateless; no session context carried between queries |
-| Specialist agents | Not implemented | Single LLM call per query; no sub-agent decomposition |
-| Streaming responses | Not implemented | Frontend shows a spinner; could stream token-by-token |
 
 ---
 
