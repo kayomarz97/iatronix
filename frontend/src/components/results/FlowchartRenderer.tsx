@@ -15,6 +15,8 @@ function stepsToMermaid(steps: string[]): string {
 
   const lines: string[] = [];
   const sanitize = (s: string) => s.replace(/"/g, "'").replace(/[[\]{}]/g, "");
+  // Track nodes whose outgoing edges were already written by a decision branch
+  const alreadyConnected = new Set<number>();
 
   let i = 0;
   while (i < steps.length) {
@@ -24,23 +26,22 @@ function stepsToMermaid(steps: string[]): string {
 
     if (isDecision) {
       lines.push(`  ${nodeId}{{"${step}"}}`);
-      // Next two steps become yes/no branches if they exist
       const yesStep = steps[i + 1] ? sanitize(steps[i + 1]) : null;
       const noStep = steps[i + 2] ? sanitize(steps[i + 2]) : null;
-      if (yesStep) {
-        lines.push(`  ${nodeId} -- Yes --> S${i + 1}["${yesStep}"]`);
-      }
-      if (noStep) {
-        lines.push(`  ${nodeId} -- No --> S${i + 2}["${noStep}"]`);
-      }
-      // Skip the two branch steps since we've already added them inline
+      if (yesStep) lines.push(`  ${nodeId} -- Yes --> S${i + 1}["${yesStep}"]`);
+      if (noStep) lines.push(`  ${nodeId} -- No --> S${i + 2}["${noStep}"]`);
+
       if (yesStep && noStep) {
+        const yesIdx = i + 1;
+        const noIdx = i + 2;
         i += 3;
-        // Connect both branches to the next step if it exists
         if (steps[i]) {
           const nextId = `S${i}`;
-          lines.push(`  S${i - 2} --> ${nextId}`);
-          lines.push(`  S${i - 1} --> ${nextId}`);
+          lines.push(`  S${yesIdx} --> ${nextId}`);
+          lines.push(`  S${noIdx} --> ${nextId}`);
+          // Mark these branch targets as already connected to the next node
+          alreadyConnected.add(yesIdx);
+          alreadyConnected.add(noIdx);
         }
         continue;
       }
@@ -50,11 +51,8 @@ function stepsToMermaid(steps: string[]): string {
 
     lines.push(`  ${nodeId}["${step}"]`);
     if (i > 0) {
-      // Find the previous node that isn't already a branch target
       const prevIdx = i - 1;
-      // Only add edge if previous step wasn't already connected via decision branch
-      const prevWasDecision = DECISION_RE.test(sanitize(steps[prevIdx] ?? ""));
-      if (!prevWasDecision) {
+      if (!alreadyConnected.has(prevIdx)) {
         lines.push(`  S${prevIdx} --> ${nodeId}`);
       }
     }

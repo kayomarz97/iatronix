@@ -14,7 +14,7 @@ import { formatLatency } from "@/lib/formatters";
 import type { DegradedResponse, AdaptiveResponse, TokenUsage } from "@/lib/types";
 
 function QueryContent() {
-  const { result, isLoading, loadingStage, error, activeModelName, submitQuery } = useQueryContext();
+  const { result, streamingText, isLoading, loadingStage, error, activeModelName, submitQuery } = useQueryContext();
   const { user } = useAuth();
 
   return (
@@ -30,13 +30,26 @@ function QueryContent() {
         </Card>
       )}
 
-      {isLoading && (
+      {isLoading && !streamingText && (
         <LoadingScreen
           currentStep={
             (loadingStage as "classifying" | "fetching" | "generating" | "verifying") ||
             "classifying"
           }
         />
+      )}
+
+      {streamingText && isLoading && (
+        <Card>
+          <p className="text-xs text-text-muted mb-2 font-medium tracking-wide uppercase">Generating response…</p>
+          <div
+            className="text-sm text-text-primary leading-relaxed whitespace-pre-wrap font-mono"
+            style={{ maxHeight: "60vh", overflowY: "auto" }}
+          >
+            {streamingText}
+            <span className="inline-block w-1.5 h-4 bg-accent ml-0.5 animate-pulse align-middle" />
+          </div>
+        </Card>
       )}
 
       {result && !isLoading && (

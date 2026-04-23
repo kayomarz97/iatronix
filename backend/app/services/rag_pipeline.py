@@ -3,6 +3,7 @@ import json
 import logging
 import re
 import time
+from collections.abc import Callable, Awaitable
 
 import anthropic
 import openai
@@ -1278,6 +1279,7 @@ async def process_query(
     redis_client=None,
     user_key_id: str | None = None,
     user=None,
+    token_callback: Callable[[str], Awaitable[None]] | None = None,
 ) -> QueryResponse:
     """Main RAG pipeline orchestrator."""
     start_time = time.time()
@@ -1699,6 +1701,25 @@ async def process_query(
             else:
                 combined = system_text + ("\n\n" + data_block if data_block else "")
                 _msgs = [SystemMessage(content=combined), HumanMessage(content=user_text)]
+
+            if token_callback is not None:
+                # Streaming path: yield tokens to caller, collect full text
+                _chunks = []
+                _last_chunk = None
+                async for _chunk in _gen_llm.astream(_msgs):
+                    _text = _chunk.content if isinstance(_chunk.content, str) else ""
+                    if _text:
+                        _chunks.append(_text)
+                        await token_callback(_text)
+                    _last_chunk = _chunk
+                _usage = getattr(_last_chunk, "usage_metadata", None) or {} if _last_chunk else {}
+                _gen_usage = {
+                    "input_tokens": _usage.get("input_tokens", _usage.get("prompt_tokens", 0)) or 0,
+                    "output_tokens": _usage.get("output_tokens", _usage.get("completion_tokens", 0)) or 0,
+                }
+                return "".join(_chunks)
+
+            # Non-streaming path (default)
             _llm_msg = await _gen_llm.ainvoke(_msgs)
             _usage = getattr(_llm_msg, "usage_metadata", None) or {}
             _gen_usage = {

@@ -38,11 +38,9 @@ export function MermaidClient({ chart }: { chart: string }) {
         const { svg } = await mermaid.render(id, chart);
         if (containerRef.current) {
           containerRef.current.innerHTML = svg;
-          // Make SVG responsive: remove fixed width/height so it fills container
           const svgEl = containerRef.current.querySelector("svg");
           if (svgEl) {
-            svgEl.removeAttribute("width");
-            svgEl.style.maxWidth = "100%";
+            svgEl.style.width = "100%";
             svgEl.style.height = "auto";
           }
         }

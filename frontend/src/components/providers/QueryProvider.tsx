@@ -9,9 +9,9 @@ import {
   useMemo,
   type ReactNode,
 } from "react";
-import { submitQuery as apiSubmitQuery } from "@/lib/api";
+import { submitQueryStream } from "@/lib/api";
 import { useAuth } from "@/components/providers/AuthProvider";
-import { API_KEY_STORAGE_KEY, DEFAULT_MODEL, LLM_PROVIDER_STORAGE_KEY } from "@/lib/constants";
+import { API_KEY_STORAGE_KEY, LLM_PROVIDER_STORAGE_KEY } from "@/lib/constants";
 import type { QueryResponse } from "@/lib/types";
 import { usePostHog } from "posthog-js/react";
 
@@ -29,8 +29,6 @@ const PROVIDER_DEFAULT_MODEL_NAMES: Record<LLMProvider, string> = {
   openrouter: "Llama 3.3 70B",
 };
 
-export const SOURCE_MODE_KEY = "iatronix_source_mode";
-
 function getProviderModel(provider: string): { id: string; name: string } {
   const p = (provider as LLMProvider) in PROVIDER_DEFAULT_MODELS
     ? (provider as LLMProvider)
@@ -40,6 +38,7 @@ function getProviderModel(provider: string): { id: string; name: string } {
 
 interface QueryContextType {
   result: QueryResponse | null;
+  streamingText: string;
   isLoading: boolean;
   loadingStage: string;
   error: string | null;
@@ -54,6 +53,7 @@ export function QueryProvider({ children }: { children: ReactNode }) {
   const { getIdToken } = useAuth();
   const posthog = usePostHog();
   const [result, setResult] = useState<QueryResponse | null>(null);
+  const [streamingText, setStreamingText] = useState<string>("");
   const [isLoading, setIsLoading] = useState(false);
   const [loadingStage, setLoadingStage] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
@@ -72,47 +72,54 @@ export function QueryProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    const sourceMode = localStorage.getItem(SOURCE_MODE_KEY) || "ai";
     const provider = localStorage.getItem(LLM_PROVIDER_STORAGE_KEY) || "anthropic";
     const { id: modelId, name: modelName } = getProviderModel(provider);
     setActiveModelName(modelName);
 
     setIsLoading(true);
     setLoadingStage("classifying");
+    setStreamingText("");
     setError(null);
+    setResult(null);
 
-    const t1 = setTimeout(() => setLoadingStage("fetching"), 1000);
-    const t2 = setTimeout(() => setLoadingStage("generating"), 5000);
     const queryStart = Date.now();
 
+    const runStream = async (key: string) => {
+      for await (const event of submitQueryStream(query, modelId, key)) {
+        if (event.type === "stage") {
+          setLoadingStage(event.payload.stage);
+        } else if (event.type === "token") {
+          setStreamingText((prev) => prev + event.payload.text);
+          // Switch to generating stage on first token
+          setLoadingStage("generating");
+        } else if (event.type === "done") {
+          const response = event.payload.result;
+          setStreamingText("");
+          setResult(response);
+          posthog?.capture("query_submitted", {
+            query_type: response.query_type,
+            cached: response.cached,
+            model_id: modelId,
+            response_time_ms: Date.now() - queryStart,
+          });
+        } else if (event.type === "error") {
+          throw new Error(event.payload.detail);
+        }
+      }
+    };
+
     try {
-      const response = await apiSubmitQuery(query, modelId, apiKey, undefined, sourceMode, false);
-      setLoadingStage("verifying");
-      await new Promise((r) => setTimeout(r, 400));
-      setResult(response);
-      posthog?.capture("query_submitted", {
-        query_type: response.query_type,
-        cached: response.cached,
-        model_id: modelId,
-        response_time_ms: Date.now() - queryStart,
-      });
+      await runStream(apiKey);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "An error occurred";
       if (msg.includes("401")) {
+        // Retry once with a fresh token
         let retryApiKey = await getIdToken();
         if (!retryApiKey) retryApiKey = localStorage.getItem(API_KEY_STORAGE_KEY);
         if (retryApiKey && retryApiKey !== apiKey) {
           try {
-            const response = await apiSubmitQuery(query, modelId, retryApiKey, undefined, sourceMode, false);
-            setLoadingStage("verifying");
-            await new Promise((r) => setTimeout(r, 400));
-            setResult(response);
-            posthog?.capture("query_submitted", {
-              query_type: response.query_type,
-              cached: response.cached,
-              model_id: modelId,
-              response_time_ms: Date.now() - queryStart,
-            });
+            setStreamingText("");
+            await runStream(retryApiKey);
             return;
           } catch {
             posthog?.capture("query_error", { error_type: "auth", model_id: modelId });
@@ -130,10 +137,9 @@ export function QueryProvider({ children }: { children: ReactNode }) {
         setError(msg);
       }
     } finally {
-      clearTimeout(t1);
-      clearTimeout(t2);
       setIsLoading(false);
       setLoadingStage("");
+      setStreamingText("");
     }
   }, []);
 
@@ -143,8 +149,8 @@ export function QueryProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ result, isLoading, loadingStage, error, activeModelName, submitQuery, clearResult }),
-    [result, isLoading, loadingStage, error, activeModelName, submitQuery, clearResult]
+    () => ({ result, streamingText, isLoading, loadingStage, error, activeModelName, submitQuery, clearResult }),
+    [result, streamingText, isLoading, loadingStage, error, activeModelName, submitQuery, clearResult]
   );
 
   return <QueryContext.Provider value={value}>{children}</QueryContext.Provider>;

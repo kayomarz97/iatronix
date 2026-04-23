@@ -1,14 +1,6 @@
 "use client";
 
-import { ExternalLink, Brain } from "lucide-react";
-
-const SEARCH_MODES = [
-  {
-    icon: <Brain size={18} />,
-    title: "AI Mode",
-    desc: "Fetches live data from OpenFDA, PubMed, RxNorm, DailyMed and uses your LLM key to format it into a structured, evidence-graded response. Best for comprehensive clinical queries.",
-  },
-];
+import { ExternalLink } from "lucide-react";
 
 const PIPELINE_STEPS = [
   {
@@ -256,26 +248,6 @@ export default function AboutPage() {
                   {src.label}
                   <ExternalLink size={12} />
                 </a>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* Search modes */}
-      <section>
-        <h2 style={sectionHeading}>Search modes</h2>
-        <p style={{ margin: "0 0 1rem", fontSize: "0.875rem", color: "var(--text-secondary)" }}>
-          Choose your active mode in{" "}
-          <a href="/settings" style={{ color: "var(--accent)" }}>Settings → Search Mode</a>.
-        </p>
-        <div style={{ display: "flex", flexDirection: "column", gap: "0.625rem" }}>
-          {SEARCH_MODES.map((m) => (
-            <div key={m.title} style={{ display: "flex", alignItems: "flex-start", gap: "1rem", padding: "0.875rem 1rem", background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)" }}>
-              <span style={{ color: "var(--accent)", flexShrink: 0, marginTop: 2 }}>{m.icon}</span>
-              <div>
-                <p style={{ margin: "0 0 0.2rem", fontWeight: 600, fontSize: "0.9rem", color: "var(--text-primary)" }}>{m.title}</p>
-                <p style={{ margin: 0, fontSize: "0.825rem", color: "var(--text-secondary)", lineHeight: 1.55 }}>{m.desc}</p>
               </div>
             </div>
           ))}
