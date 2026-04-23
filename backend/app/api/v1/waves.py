@@ -58,7 +58,7 @@ async def interpret_spirometry(request: Request, file: UploadFile = File(...)):
         from app.services.spirometry_ai import apply_diagnostic_logic, extract_data_with_claude
 
         try:
-            data = extract_data_with_claude(tmp_path, api_key)
+            data, model_id, input_tokens, output_tokens = extract_data_with_claude(tmp_path, api_key)
         except Exception as e:
             logger.warning("Spirometry extraction failed: %s", e)
             # Claude API auth errors
@@ -71,7 +71,12 @@ async def interpret_spirometry(request: Request, file: UploadFile = File(...)):
         if not interpretation:
             raise HTTPException(422, "No interpretable data found in this report")
 
-        return {"status": "success", "interpretation": interpretation}
+        return {
+            "status": "success",
+            "interpretation": interpretation,
+            "model_used": model_id,
+            "token_usage": {"input_tokens": input_tokens, "output_tokens": output_tokens},
+        }
 
     finally:
         if tmp_path and os.path.exists(tmp_path):

@@ -39,8 +39,14 @@ def _clean_json(text: str) -> str:
     return text.strip()
 
 
-def extract_data_with_claude(image_path: str, api_key: str) -> Dict[str, Any]:
-    """Extract spirometry values from an image using Claude vision."""
+MODEL_ID = "claude-sonnet-4-6"
+
+
+def extract_data_with_claude(image_path: str, api_key: str) -> tuple[Dict[str, Any], str, int, int]:
+    """Extract spirometry values from an image using Claude vision.
+
+    Returns (extracted_data, model_id, input_tokens, output_tokens).
+    """
     import anthropic
 
     path = Path(image_path)
@@ -54,7 +60,7 @@ def extract_data_with_claude(image_path: str, api_key: str) -> Dict[str, Any]:
 
     client = anthropic.Anthropic(api_key=api_key)
     response = client.messages.create(
-        model="claude-sonnet-4-6",
+        model=MODEL_ID,
         max_tokens=1024,
         messages=[{
             "role": "user",
@@ -65,7 +71,10 @@ def extract_data_with_claude(image_path: str, api_key: str) -> Dict[str, Any]:
         }],
     )
     content = response.content[0].text
-    return json.loads(_clean_json(content))
+    usage = response.usage
+    input_tokens = getattr(usage, "input_tokens", 0) or 0
+    output_tokens = getattr(usage, "output_tokens", 0) or 0
+    return json.loads(_clean_json(content)), MODEL_ID, input_tokens, output_tokens
 
 
 def apply_diagnostic_logic(data: Dict[str, Any]) -> List[Dict[str, str]]:

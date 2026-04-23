@@ -55,12 +55,12 @@ from app.services.semantic_cache import (
 from app.services.drug_linker import process_text_nodes
 from app.services.json_repair import parse_llm_json
 from app.services.llm_factory import create_llm, get_provider
+from app.services.langgraph_search import run_search_graph
 from app.services.prompt_engine import build_adaptive_messages
 from app.services.query_classifier import classify_query, classify_query_llm, detect_intent
 from app.services.safety_checker import check_safety
 from app.services.url_builder import enrich_references
 from app.services.source_router import route_query
-from app.services.vector_search import search as vector_search
 
 # PMID/DOI hyperlinking patterns
 
@@ -1478,7 +1478,6 @@ async def process_query(
     routing = None
     retrieval_notes: list[str] = []
 
-    tasks = {}
     if use_api_fetch:
         routing = route_query(
             rewritten_query,
@@ -1489,51 +1488,24 @@ async def process_query(
             model_explicit=request.model_explicit,
             condition_context=condition_context,
         )
-        if routing.fetch_enabled:
-            tasks["api"] = asyncio.wait_for(
-                fetch_data_for_query(
-                    query_type,
-                    routing.entities,
-                    condition_context=routing.condition_context,
-                    user_email=user_email,
-                    ncbi_api_key=user_ncbi_key,
-                ),
-                timeout=settings.api_fetch_timeout_seconds + 1.0,
-            )
 
-    if use_vector:
-        tasks["vector"] = vector_search(
-            rewritten_query,
-            user_key=user_llm_key,
-            user_provider=user_llm_provider,
-            voyage_api_key=user_voyage_key,
-        )
-
-    # Semantic cache check runs in parallel with API fetch and vector search
-    tasks["sem"] = semantic_cache_get(request.query, query_type, normalized_request_model)
-
+    # Parallel fetch: data API + vector search + semantic cache via LangGraph
     _fetch_t0 = time.perf_counter()
-    results = await asyncio.gather(*tasks.values(), return_exceptions=True)
-    _sem_result = None
-    for key, result in zip(tasks.keys(), results):
-        if key == "api":
-            if isinstance(result, asyncio.TimeoutError):
-                logger.warning("API fetch timed out — using generate mode")
-                fetched_data = FetchedData(
-                    query_type=query_type, fallback_to_llm=True
-                )
-            elif isinstance(result, Exception):
-                logger.warning("API fetch error: %s", result)
-            else:
-                fetched_data = result
-        elif key == "vector":
-            if isinstance(result, Exception):
-                logger.warning("Vector search error: %s", result)
-            else:
-                vector_results = result
-        elif key == "sem":
-            if not isinstance(result, Exception):
-                _sem_result = result
+    fetched_data, vector_results, _sem_result = await run_search_graph(
+        query=rewritten_query,
+        original_query=request.query,
+        query_type=query_type,
+        routing=routing,
+        normalized_model=normalized_request_model,
+        api_fetch_timeout=settings.api_fetch_timeout_seconds + 1.0,
+        use_api_fetch=use_api_fetch,
+        use_vector=use_vector,
+        user_llm_key=user_llm_key,
+        user_llm_provider=user_llm_provider,
+        user_voyage_key=user_voyage_key,
+        user_email=user_email,
+        user_ncbi_key=user_ncbi_key,
+    )
     logger.info(
         "pipeline.data_fetch",
         extra={
@@ -1687,7 +1659,7 @@ async def process_query(
         list(query_analysis.get("required_sections", [])) if query_analysis else []
     )
 
-    system_text, user_text = build_adaptive_messages(
+    system_text, data_block, user_text = build_adaptive_messages(
         rewritten_query,
         query_type,
         fetched_data=fetched_data,
@@ -1713,12 +1685,20 @@ async def process_query(
         async def _invoke_adaptive():
             nonlocal _gen_usage
             if _gen_provider == "anthropic":
+                # Static instructions are cached; per-query data_block is sent uncached.
+                # This allows Anthropic prompt cache to hit on the large static prefix.
+                _sys_content = [
+                    {"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}},
+                ]
+                if data_block:
+                    _sys_content.append({"type": "text", "text": data_block})
                 _msgs = [
-                    SystemMessage(content=[{"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}}]),
+                    SystemMessage(content=_sys_content),
                     HumanMessage(content=user_text),
                 ]
             else:
-                _msgs = [SystemMessage(content=system_text), HumanMessage(content=user_text)]
+                combined = system_text + ("\n\n" + data_block if data_block else "")
+                _msgs = [SystemMessage(content=combined), HumanMessage(content=user_text)]
             _llm_msg = await _gen_llm.ainvoke(_msgs)
             _usage = getattr(_llm_msg, "usage_metadata", None) or {}
             _gen_usage = {
@@ -1806,7 +1786,7 @@ async def process_query(
     if parsed is None:
         logger.info("Adaptive LLM call failed or unparseable, retrying...")
         await asyncio.sleep(settings.llm_retry_backoff_seconds)
-        retry_system = (
+        retry_static = (
             system_text
             + "\n\nCRITICAL: Return ONLY the JSON object described above. "
             "No markdown fences, no prose, no preamble."
@@ -1815,12 +1795,18 @@ async def process_query(
             @_gen_breaker
             async def _retry_adaptive():
                 if _gen_provider == "anthropic":
+                    _sys_content = [
+                        {"type": "text", "text": retry_static, "cache_control": {"type": "ephemeral"}},
+                    ]
+                    if data_block:
+                        _sys_content.append({"type": "text", "text": data_block})
                     _msgs = [
-                        SystemMessage(content=[{"type": "text", "text": retry_system, "cache_control": {"type": "ephemeral"}}]),
+                        SystemMessage(content=_sys_content),
                         HumanMessage(content=user_text),
                     ]
                 else:
-                    _msgs = [SystemMessage(content=retry_system), HumanMessage(content=user_text)]
+                    combined = retry_static + ("\n\n" + data_block if data_block else "")
+                    _msgs = [SystemMessage(content=combined), HumanMessage(content=user_text)]
                 return (await _gen_llm.ainvoke(_msgs)).content
 
             raw_retry = await _retry_adaptive()

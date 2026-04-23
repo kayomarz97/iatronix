@@ -10,9 +10,16 @@ interface InterpRow {
   "Diagnostic Interpretation": string;
 }
 
+interface TokenUsage {
+  input_tokens: number;
+  output_tokens: number;
+}
+
 interface SpirometryResult {
   status: string;
   interpretation: InterpRow[];
+  model_used?: string;
+  token_usage?: TokenUsage;
 }
 
 export function SpirometryUploader() {
@@ -154,6 +161,20 @@ export function SpirometryUploader() {
         <p style={{ margin: 0, fontSize: "0.75rem", color: "var(--text-muted)" }}>
           Based on ATS/ERS spirometry guidelines. For clinical decision support only — always verify with the full report and clinical context.
         </p>
+        {(result.model_used || result.token_usage) && (
+          <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" }}>
+            {result.model_used && (
+              <span style={{ display: "inline-flex", alignItems: "center", gap: "0.3rem", padding: "3px 8px", background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", fontSize: "0.72rem", color: "var(--text-secondary)" }}>
+                Model: {result.model_used}
+              </span>
+            )}
+            {result.token_usage && (
+              <span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
+                {result.token_usage.input_tokens.toLocaleString()} in / {result.token_usage.output_tokens.toLocaleString()} out tokens
+              </span>
+            )}
+          </div>
+        )}
       </div>
     );
   }
