@@ -31,17 +31,18 @@ async def stream_query(
     async def token_callback(text: str) -> None:
         await queue.put(("token", text))
 
+    async def structured_callback(event_type: str, data: object) -> None:
+        await queue.put((event_type, data))
+
     async def run() -> None:
         try:
-            # Emit stage events at pipeline checkpoints via a side-channel:
-            # We can't easily hook into every stage, so we emit "generating" just before
-            # process_query starts (the caller emits classifying/fetching beforehand).
             result = await process_query(
                 request,
                 redis_client=redis_client,
                 user_key_id=user_key_id,
                 user=user,
                 token_callback=token_callback,
+                structured_callback=structured_callback,
             )
             await queue.put(("done", result))
         except Exception as exc:
@@ -54,8 +55,6 @@ async def stream_query(
 
     pipeline_task = asyncio.create_task(run())
 
-    # After a short delay, emit the fetching stage (the pipeline spends the first
-    # 1-2s on classification/rewrite before the LangGraph data fetch).
     async def _emit_fetching():
         await asyncio.sleep(1.2)
         await queue.put(("stage", "fetching"))
@@ -73,6 +72,10 @@ async def stream_query(
                 yield f"event: stage\ndata: {json.dumps({'stage': payload})}\n\n"
             elif kind == "token":
                 yield f"event: token\ndata: {json.dumps({'text': payload})}\n\n"
+            elif kind == "bluf":
+                yield f"event: bluf\ndata: {json.dumps(payload)}\n\n"
+            elif kind == "section_complete":
+                yield f"event: section_complete\ndata: {json.dumps(payload)}\n\n"
             elif kind == "done":
                 yield f"event: done\ndata: {json.dumps({'result': payload.model_dump()})}\n\n"
                 break

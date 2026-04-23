@@ -12,7 +12,7 @@ import {
 import { submitQueryStream } from "@/lib/api";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { API_KEY_STORAGE_KEY, LLM_PROVIDER_STORAGE_KEY } from "@/lib/constants";
-import type { QueryResponse } from "@/lib/types";
+import type { QueryResponse, AdaptiveBLUF, AdaptiveSection } from "@/lib/types";
 import { usePostHog } from "posthog-js/react";
 
 type LLMProvider = "anthropic" | "openai" | "openrouter";
@@ -39,6 +39,8 @@ function getProviderModel(provider: string): { id: string; name: string } {
 interface QueryContextType {
   result: QueryResponse | null;
   streamingText: string;
+  streamingBluf: AdaptiveBLUF | null;
+  streamingSections: AdaptiveSection[];
   isLoading: boolean;
   loadingStage: string;
   error: string | null;
@@ -54,6 +56,8 @@ export function QueryProvider({ children }: { children: ReactNode }) {
   const posthog = usePostHog();
   const [result, setResult] = useState<QueryResponse | null>(null);
   const [streamingText, setStreamingText] = useState<string>("");
+  const [streamingBluf, setStreamingBluf] = useState<AdaptiveBLUF | null>(null);
+  const [streamingSections, setStreamingSections] = useState<AdaptiveSection[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [loadingStage, setLoadingStage] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
@@ -79,6 +83,8 @@ export function QueryProvider({ children }: { children: ReactNode }) {
     setIsLoading(true);
     setLoadingStage("classifying");
     setStreamingText("");
+    setStreamingBluf(null);
+    setStreamingSections([]);
     setError(null);
     setResult(null);
 
@@ -90,11 +96,17 @@ export function QueryProvider({ children }: { children: ReactNode }) {
           setLoadingStage(event.payload.stage);
         } else if (event.type === "token") {
           setStreamingText((prev) => prev + event.payload.text);
-          // Switch to generating stage on first token
           setLoadingStage("generating");
+        } else if (event.type === "bluf") {
+          setStreamingBluf(event.payload);
+          setLoadingStage("generating");
+        } else if (event.type === "section_complete") {
+          setStreamingSections((prev) => [...prev, event.payload]);
         } else if (event.type === "done") {
           const response = event.payload.result;
           setStreamingText("");
+          setStreamingBluf(null);
+          setStreamingSections([]);
           setResult(response);
           posthog?.capture("query_submitted", {
             query_type: response.query_type,
@@ -140,6 +152,8 @@ export function QueryProvider({ children }: { children: ReactNode }) {
       setIsLoading(false);
       setLoadingStage("");
       setStreamingText("");
+      setStreamingBluf(null);
+      setStreamingSections([]);
     }
   }, []);
 
@@ -149,8 +163,8 @@ export function QueryProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ result, streamingText, isLoading, loadingStage, error, activeModelName, submitQuery, clearResult }),
-    [result, streamingText, isLoading, loadingStage, error, activeModelName, submitQuery, clearResult]
+    () => ({ result, streamingText, streamingBluf, streamingSections, isLoading, loadingStage, error, activeModelName, submitQuery, clearResult }),
+    [result, streamingText, streamingBluf, streamingSections, isLoading, loadingStage, error, activeModelName, submitQuery, clearResult]
   );
 
   return <QueryContext.Provider value={value}>{children}</QueryContext.Provider>;

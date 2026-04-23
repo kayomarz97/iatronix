@@ -1318,6 +1318,13 @@ _SECTION_GUIDANCE: dict[str, str] = {
         "Summary · [One dedicated section per entity being compared] · "
         "Head-to-Head Comparison · Clinical Preference & Guideline Positioning"
     ),
+    "comparative_drug": (
+        "Summary · [One dedicated section per drug being compared] · "
+        "Head-to-Head Comparison · Clinical Preference & Guideline Positioning · "
+        "Drug Interactions Between Compared Agents (list every clinically significant "
+        "interaction between any two agents in the comparison — severity: major/moderate/minor, "
+        "mechanism, clinical consequences, and management)"
+    ),
     "procedure": (
         "Overview & Indications · Contraindications · Step-by-Step Technique · "
         "Complications & Incidence · Post-procedure Care · Guideline Recommendations"
@@ -1476,6 +1483,7 @@ def build_adaptive_messages(
     vector_results: "list[SearchResult] | None" = None,
     required_sections: "list[str] | None" = None,
     condition_context: "str | None" = None,
+    comparative_is_drug: bool = False,
 ) -> tuple[str, str, str]:
     """Return (static_system, data_block, user_text) for the adaptive LLM call.
 
@@ -1501,7 +1509,9 @@ def build_adaptive_messages(
             f"monitoring, and guideline positioning for this condition.\n\n"
         )
 
-    sections_str = ", ".join(required_sections) if required_sections else _SECTION_GUIDANCE.get(query_type, "")
+    guidance_key = "comparative_drug" if (query_type == "comparative" and comparative_is_drug) else query_type
+    base_guidance = _SECTION_GUIDANCE.get(guidance_key, _SECTION_GUIDANCE.get(query_type, ""))
+    sections_str = ", ".join(required_sections) if required_sections else base_guidance
     data_block = _build_adaptive_data_block(query_type, fetched_data, vector_results)
 
     static_system = (
@@ -1512,7 +1522,7 @@ def build_adaptive_messages(
             query_type=query_type,
             query_type_upper=query_type.upper(),
             required_sections=sections_str,
-            section_guidance=_SECTION_GUIDANCE.get(query_type, ""),
+            section_guidance=base_guidance,
             condition_context_block=condition_block,
             focus_instruction=(focus_instruction + "\n\n") if focus_instruction else "",
         )
@@ -1521,3 +1531,122 @@ def build_adaptive_messages(
 
     user_text = f"Query: {query}"
     return static_system, data_block, user_text
+
+
+# ──────────────────────────────────────────────
+# Parallel section agent prompts
+# ──────────────────────────────────────────────
+
+_BLUF_ONLY_SCHEMA = """\
+
+RESPOND WITH A SINGLE JSON OBJECT — no markdown fences, no prose outside the JSON:
+{
+  "bluf": {
+    "headline": "One sentence directly answering the query",
+    "body": "2-4 sentence elaboration with the key clinical bottom line",
+    "key_points": ["Actionable bullet 1", "Actionable bullet 2", "Actionable bullet 3"],
+    "caveats": ["Safety or evidence caveat 1"]
+  },
+  "section_titles": [
+    "Section heading 1",
+    "Section heading 2"
+  ],
+  "response_focus": "Brief description of what this response focuses on",
+  "related_topics": ["Related query 1", "Related query 2"]
+}
+
+Generate 5-10 section_titles that cover the REQUIRED SECTIONS for this query type.
+Each title must be a short, clear heading (3-6 words).
+Do NOT generate section content — section_titles are plain strings only."""
+
+
+def build_bluf_only_messages(
+    query: str,
+    query_type: str,
+    fetched_data: "FetchedData | None" = None,
+    vector_results: "list[SearchResult] | None" = None,
+    condition_context: "str | None" = None,
+    comparative_is_drug: bool = False,
+) -> tuple[str, str, str]:
+    """Return (system, data_block, user_text) for the Phase-1 BLUF+titles call."""
+    guidance_key = "comparative_drug" if (query_type == "comparative" and comparative_is_drug) else query_type
+    section_guidance = _SECTION_GUIDANCE.get(guidance_key, _SECTION_GUIDANCE.get(query_type, ""))
+
+    condition_block = ""
+    if condition_context:
+        condition_block = (
+            f"CONDITION CONTEXT: This is a drug-in-disease query for "
+            f'"{condition_context}".\n\n'
+        )
+
+    system = (
+        f"You are a clinical reference assistant.\n"
+        f"{APPROVED_SOURCES}\n"
+        f"{EVIDENCE_RULES}\n\n"
+        f"QUERY TYPE: {query_type}\n"
+        f"REQUIRED SECTION AREAS: {section_guidance}\n"
+        f"{condition_block}"
+        f"Generate a concise BLUF (bottom-line up front) and a list of section titles "
+        f"that a comprehensive answer to this query should contain."
+        + _BLUF_ONLY_SCHEMA
+    )
+    data_block = _build_adaptive_data_block(query_type, fetched_data, vector_results)
+    user_text = f"Query: {query}"
+    return system, data_block, user_text
+
+
+_SECTION_AGENT_SCHEMA = """\
+
+RESPOND WITH A SINGLE JSON OBJECT — no markdown fences, no prose outside the JSON:
+{{
+  "title": "{section_title}",
+  "content_items": [
+    {{
+      "text": "Evidence-based claim in GFM markdown. Use **bold** for key terms, tables for structured data, bullets for multi-part claims.",
+      "loe": "I | II | III | null",
+      "cor": "I | IIa | IIb | III-no-benefit | III-harm | null",
+      "source": "Source label e.g. 'AHA/ACC 2022', 'FDA label', 'PubMed PMID:38293847'"
+    }}
+  ],
+  "references": [
+    {{
+      "title": "Article or guideline title",
+      "source": "FDA | PubMed | NICE | AHA | WHO | etc.",
+      "pmid": "numeric string or null",
+      "year": "4-digit year string or null",
+      "url": null
+    }}
+  ]
+}}
+
+QUALITY: Populate content_items with 3-8 comprehensive, evidence-backed claims.
+Sparse content_items (fewer than 2 items) are rejected — generate substantive content."""
+
+
+def build_section_messages(
+    section_title: str,
+    all_section_titles: "list[str]",
+    bluf_text: str,
+    query: str,
+    query_type: str,
+    fetched_data: "FetchedData | None" = None,
+    vector_results: "list[SearchResult] | None" = None,
+) -> tuple[str, str, str]:
+    """Return (system, data_block, user_text) for one Phase-2 section agent call."""
+    other_titles = [t for t in all_section_titles if t != section_title]
+    other_str = ", ".join(f'"{t}"' for t in other_titles) if other_titles else "none"
+
+    system = (
+        f"You are a clinical reference assistant generating one section of a structured medical response.\n"
+        f"{APPROVED_SOURCES}\n"
+        f"{EVIDENCE_RULES}\n\n"
+        f"QUERY TYPE: {query_type}\n"
+        f"SECTION TO GENERATE: \"{section_title}\"\n"
+        f"OTHER SECTIONS IN THIS RESPONSE (do NOT duplicate their content): {other_str}\n"
+        f"ALIGNMENT — keep content consistent with this clinical summary: {bluf_text}\n\n"
+        f"Generate ONLY the content for the section \"{section_title}\"."
+        + _SECTION_AGENT_SCHEMA.format(section_title=section_title)
+    )
+    data_block = _build_adaptive_data_block(query_type, fetched_data, vector_results)
+    user_text = f"Query: {query}\nSection to generate: {section_title}"
+    return system, data_block, user_text
