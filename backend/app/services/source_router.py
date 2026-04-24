@@ -119,17 +119,14 @@ def route_query(
         "evidence",
     } and bool(entities)
 
-    requested_model = requested_model or settings.model_sonnet
+    requested_model = requested_model or settings.model_generate
     preferred = requested_model
     fallback = requested_model
 
     if user_provider == "anthropic" and not model_explicit:
-        if query_type in {"drug", "procedure"} and not condition_context:
-            preferred = settings.model_haiku
-            fallback = settings.model_sonnet
-        else:
-            preferred = settings.model_sonnet
-            fallback = settings.model_sonnet
+        # Haiku is the primary model for all query types; Sonnet is the last-resort fallback
+        preferred = settings.model_generate
+        fallback = settings.model_sonnet
 
     return RoutingDecision(
         query_type=query_type,

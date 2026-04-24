@@ -1394,14 +1394,35 @@ RESPOND WITH A SINGLE JSON OBJECT — no markdown fences, no prose outside the J
   ],
   "flowcharts": [
     {
-      "title": "Flowchart title",
-      "steps": ["Step 1: clinical action or decision", "Step 2: next action"]
+      "title": "PE Diagnostic Algorithm",
+      "steps": [
+        { "text": "Obtain history, assess symptoms", "label": "Presentation" },
+        {
+          "text": "Calculate Wells Score",
+          "label": "Pre-test Probability",
+          "is_decision": true,
+          "branches": [
+            { "condition": "Score ≤ 4 (Low/Moderate)", "outcome": "Order D-Dimer" },
+            { "condition": "Score > 4 (High)", "outcome": "CT Pulmonary Angiography" },
+            { "condition": "Hemodynamically unstable", "outcome": "Empiric anticoagulation + urgent imaging" }
+          ]
+        },
+        {
+          "text": "D-Dimer result",
+          "label": "Lab Evaluation",
+          "is_decision": true,
+          "branches": [
+            { "condition": "Negative (< 500 μg/L)", "outcome": "PE excluded — discharge with follow-up" },
+            { "condition": "Positive (≥ 500 μg/L)", "outcome": "CT Pulmonary Angiography" }
+          ]
+        }
+      ]
     }
   ]
 }
 
 TABLES: Include ONLY when comparing entities, showing dosing schedules, staging criteria, diagnostic criteria, or other structured data where a table genuinely aids comprehension over prose. Use [] if not applicable.
-FLOWCHARTS: Include ONLY when a clinical decision pathway or algorithm clearly exists (e.g. PE diagnosis/treatment algorithm, sepsis bundle, ACLS, anaphylaxis management). Do NOT include for purely descriptive or epidemiological topics. Each step must be one concise clinical action or decision point. Use [] if not applicable.
+FLOWCHARTS: Include ONLY for clinical decision algorithms (e.g. PE workup, sepsis, ACLS, anaphylaxis). Build full decision trees — decision nodes (is_decision: true) must list all clinically distinct branches (2–4 per node), not just binary YES/NO. Label every node with a short clinical label. Include ≥6 steps for applicable pathways. Never produce a purely linear list unless the pathway genuinely has zero decision points. Use [] when no pathway applies.
 QUALITY: Tables and flowcharts are supplemental — sections must remain fully comprehensive regardless."""
 
 
@@ -1557,8 +1578,16 @@ RESPOND WITH A SINGLE JSON OBJECT — no markdown fences, no prose outside the J
     {
       "title": "Clinical pathway title",
       "steps": [
-        "Normal step text",
-        "Condition text → Outcome text"
+        { "text": "Action step text", "label": "Phase label" },
+        {
+          "text": "Decision question?",
+          "label": "Decision label",
+          "is_decision": true,
+          "branches": [
+            { "condition": "Branch condition A", "outcome": "Resulting action A" },
+            { "condition": "Branch condition B", "outcome": "Resulting action B" }
+          ]
+        }
       ]
     }
   ],
@@ -1575,7 +1604,7 @@ Generate 5-10 section_titles that cover the REQUIRED SECTIONS for this query typ
 Each title must be a short, clear heading (3-6 words).
 Do NOT generate section content — section_titles are plain strings only.
 
-FLOWCHARTS: Include ONLY when a clear clinical decision pathway exists (e.g. PE workup, sepsis bundle, HF escalation, ACLS). Use "steps": [] if no pathway applies. Branch steps use the format "Condition → Outcome" — the → character triggers branch rendering.
+FLOWCHARTS: Include ONLY for clinical decision algorithms (e.g. PE workup, sepsis, ACLS, anaphylaxis, HF escalation). Build rich decision trees — decision nodes (is_decision: true) must list all clinically distinct branches (2–4 per node). Label every node. Include ≥6 steps for applicable pathways. Never produce a purely linear list when decision points exist. Use "steps": [] when no pathway applies.
 TABLES: Include ONLY for structured comparisons, diagnostic scoring, or drug dosing tables. Use "tables": [] if none apply."""
 
 
