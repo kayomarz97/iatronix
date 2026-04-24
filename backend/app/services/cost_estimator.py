@@ -37,10 +37,10 @@ def estimate_query_cost(query_type: str, fetched_data_chars: int = 8000) -> dict
         output_rate = settings.cost_haiku_output_per_m
         max_out = settings.llm_max_tokens_format
     else:
-        model_name = "Sonnet"
-        model_id = settings.model_sonnet
-        input_rate = settings.cost_sonnet_input_per_m
-        output_rate = settings.cost_sonnet_output_per_m
+        model_name = "Haiku"
+        model_id = settings.model_haiku
+        input_rate = settings.cost_haiku_input_per_m
+        output_rate = settings.cost_haiku_output_per_m
         max_out = settings.llm_max_tokens_format_disease
 
     est_input = (
