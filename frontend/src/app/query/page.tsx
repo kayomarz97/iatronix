@@ -1,6 +1,7 @@
 "use client";
 
-import React, { Suspense } from "react";
+import React, { Suspense, useEffect, useRef } from "react";
+import { useSearchParams } from "next/navigation";
 import { SearchBar } from "@/components/ui/SearchBar";
 import { LoadingScreen } from "@/components/LoadingScreen";
 import { SearchHistorySidebar } from "@/components/ui/SearchHistorySidebar";
@@ -43,9 +44,74 @@ function StreamingProgress({ streamingText, loadingStage }: { streamingText: str
   );
 }
 
+function scrollTo(id: string) {
+  document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function SidebarNav({ data }: { data: AdaptiveResponse }) {
+  const sections = data.sections.filter(s => (s.content_items?.length ?? 0) > 0 || s.content);
+  const flowcharts = data.flowcharts ?? [];
+  const tables = data.tables ?? [];
+  const refCount = data.references?.length ?? 0;
+
+  return (
+    <div className="hidden md:flex w-[210px] shrink-0 sticky top-[66px] flex-col gap-0.5 max-h-[calc(100vh-80px)] overflow-y-auto pr-1">
+      <p className="text-[0.65rem] font-bold tracking-[0.12em] uppercase text-[var(--text-muted)] mb-1.5 pl-2">
+        Sections
+      </p>
+      {sections.map((sec, i) => (
+        <button key={i} onClick={() => scrollTo(`sec-${i}`)}
+          className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-left hover:bg-[var(--bg-elevated)] transition-colors group">
+          <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: "#3b82f6" }} />
+          <span className="text-[0.78rem] text-[var(--text-secondary)] group-hover:text-[var(--text-primary)] leading-snug line-clamp-2">
+            {sec.title}
+          </span>
+        </button>
+      ))}
+      {flowcharts.map((fc, i) => (
+        <button key={`fc-${i}`} onClick={() => scrollTo(`fc-${i}`)}
+          className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-left hover:bg-[var(--bg-elevated)] transition-colors group">
+          <span className="w-1.5 h-1.5 rounded-sm shrink-0" style={{ background: "#818CF8" }} />
+          <span className="text-[0.78rem] text-[var(--text-secondary)] group-hover:text-[var(--text-primary)] leading-snug line-clamp-2">
+            {fc.title || "Pathway"}
+          </span>
+        </button>
+      ))}
+      {tables.map((tbl, i) => (
+        <button key={`tbl-${i}`} onClick={() => scrollTo(`tbl-${i}`)}
+          className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-left hover:bg-[var(--bg-elevated)] transition-colors group">
+          <span className="w-1.5 h-1.5 rounded-sm shrink-0" style={{ background: "#22D3EE" }} />
+          <span className="text-[0.78rem] text-[var(--text-secondary)] group-hover:text-[var(--text-primary)] leading-snug line-clamp-2">
+            {tbl.title || "Table"}
+          </span>
+        </button>
+      ))}
+      {refCount > 0 && (
+        <button onClick={() => scrollTo("references")}
+          className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-left hover:bg-[var(--bg-elevated)] transition-colors group mt-1">
+          <span className="w-1.5 h-1.5 rounded-full shrink-0 bg-[var(--text-muted)]" />
+          <span className="text-[0.78rem] text-[var(--text-muted)] group-hover:text-[var(--text-secondary)]">
+            References ({refCount})
+          </span>
+        </button>
+      )}
+    </div>
+  );
+}
+
 function QueryContent() {
-  const { result, streamingText, streamingBluf, streamingSections, isLoading, loadingStage, error, activeModelName, submitQuery } = useQueryContext();
+  const { result, streamingText, streamingBluf, streamingSections, streamingSectionTitles, streamingFlowcharts, streamingTables, isLoading, loadingStage, error, activeModelName, submitQuery } = useQueryContext();
   const { user } = useAuth();
+  const searchParams = useSearchParams();
+  const lastAutoSubmit = useRef<string | null>(null);
+
+  useEffect(() => {
+    const q = searchParams.get("q");
+    if (q && q !== lastAutoSubmit.current) {
+      lastAutoSubmit.current = q;
+      submitQuery(q);
+    }
+  }, [searchParams, submitQuery]);
 
   return (
     <div className="space-y-6 pl-6">
@@ -86,17 +152,28 @@ function QueryContent() {
               response_focus: "",
               depth: "comprehensive",
               related_topics: [],
-              tables: [],
-              flowcharts: [],
+              tables: streamingTables,
+              flowcharts: streamingFlowcharts,
               images: [],
             }}
           />
           <Card>
-            <div className="flex items-center gap-2 text-xs text-text-muted">
-              <span className="inline-block w-1.5 h-1.5 rounded-full bg-accent animate-bounce" />
-              <span className="inline-block w-1.5 h-1.5 rounded-full bg-accent animate-bounce [animation-delay:0.15s]" />
-              <span className="inline-block w-1.5 h-1.5 rounded-full bg-accent animate-bounce [animation-delay:0.3s]" />
-              <span className="ml-1">Generating sections…</span>
+            <div className="flex items-center gap-3 text-sm text-text-muted">
+              <span className="inline-flex gap-1">
+                {[0, 150, 300].map(delay => (
+                  <span key={delay}
+                    className="w-1.5 h-1.5 rounded-full bg-accent animate-bounce"
+                    style={{ animationDelay: `${delay}ms` }} />
+                ))}
+              </span>
+              <span>
+                Generating detailed sections…
+                {streamingSections.length > 0 && streamingSectionTitles.length > 0 && (
+                  <span className="ml-1.5 font-mono text-xs text-accent">
+                    {streamingSections.length} of {streamingSectionTitles.length} complete
+                  </span>
+                )}
+              </span>
             </div>
           </Card>
         </div>
@@ -135,9 +212,14 @@ function QueryContent() {
             </Card>
           )}
 
-          {/* Adaptive result — always rendered for non-degraded responses */}
+          {/* Adaptive result — two-column layout with sticky sidebar on desktop */}
           {"sections" in result.response && (
-            <AdaptiveResultRenderer data={result.response as AdaptiveResponse} fetchSources={result.fetch_sources} />
+            <div className="flex gap-5 items-start">
+              <SidebarNav data={result.response as AdaptiveResponse} />
+              <div className="flex-1 min-w-0">
+                <AdaptiveResultRenderer data={result.response as AdaptiveResponse} fetchSources={result.fetch_sources} />
+              </div>
+            </div>
           )}
 
           {/* Token usage breakdown */}

@@ -1,3 +1,4 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=DM+Mono:wght@400;500&display=swap');
 @import "tailwindcss";
 
 /* ── Tailwind theme tokens (static — no runtime var() here) ────────────── */
@@ -25,16 +26,16 @@
 
 /* ── CSS Custom Properties (Design Tokens) — runtime switchable ─────────── */
 :root {
-  /* Dark theme (default) */
-  --bg-base:        #0f172a;
-  --bg-surface:     #1e293b;
-  --bg-elevated:    #263348;
-  --bg-hover:       #2d3f58;
-  --border:         #334155;
+  /* Dark theme (default) — deeper navy palette */
+  --bg-base:        #07101e;
+  --bg-surface:     #0f1c2e;
+  --bg-elevated:    #162236;
+  --bg-hover:       #1e2f44;
+  --border:         #1e3048;
   --border-focus:   #3b82f6;
-  --text-primary:   #f8fafc;
-  --text-secondary: #94a3b8;
-  --text-muted:     #64748b;
+  --text-primary:   #f0f6ff;
+  --text-secondary: #8ba3be;
+  --text-muted:     #4d6a84;
   --accent:         #3b82f6;
   --accent-hover:   #2563eb;
   --accent-glow:    rgba(59, 130, 246, 0.15);
@@ -44,10 +45,13 @@
   --radius-sm:      6px;
   --radius-md:      10px;
   --radius-lg:      16px;
+  --radius-xl:      24px;
   --shadow-sm:      0 1px 3px rgba(0,0,0,0.4);
   --shadow-md:      0 4px 16px rgba(0,0,0,0.5);
   --shadow-lg:      0 8px 32px rgba(0,0,0,0.6);
   --transition:     200ms ease-in-out;
+  --font-sans:      'DM Sans', system-ui, sans-serif;
+  --font-mono:      'DM Mono', ui-monospace, monospace;
 }
 
 /* System-level light mode fallback (before JS hydrates data-theme) */
@@ -89,17 +93,17 @@
 
 /* Light theme overrides */
 [data-theme="light"] {
-  --bg-base:        #f8fafc;
+  --bg-base:        #f4f7fb;
   --bg-surface:     #ffffff;
-  --bg-elevated:    #f1f5f9;
+  --bg-elevated:    #eef2f7;
   --bg-hover:       #e2e8f0;
-  --border:         #e2e8f0;
+  --border:         #dce3ed;
   --border-focus:   #3b82f6;
-  --text-primary:   #0f172a;
-  --text-secondary: #475569;
-  --text-muted:     #94a3b8;
-  --accent:         #3b82f6;
-  --accent-hover:   #2563eb;
+  --text-primary:   #0d1b2a;
+  --text-secondary: #4a637a;
+  --text-muted:     #8ba3be;
+  --accent:         #2563eb;
+  --accent-hover:   #1d4ed8;
   --accent-glow:    rgba(59, 130, 246, 0.1);
   --success:        #059669;
   --warning:        #d97706;
@@ -137,7 +141,7 @@ body {
   margin: 0;
   background-color: var(--bg-base);
   color: var(--text-primary);
-  font-family: system-ui, -apple-system, "Inter", sans-serif;
+  font-family: var(--font-sans);
   line-height: 1.6;
   transition: background-color var(--transition), color var(--transition);
   min-height: 100vh;

@@ -1552,12 +1552,31 @@ RESPOND WITH A SINGLE JSON OBJECT — no markdown fences, no prose outside the J
     "Section heading 2"
   ],
   "response_focus": "Brief description of what this response focuses on",
-  "related_topics": ["Related query 1", "Related query 2"]
+  "related_topics": ["Related query 1", "Related query 2"],
+  "flowcharts": [
+    {
+      "title": "Clinical pathway title",
+      "steps": [
+        "Normal step text",
+        "Condition text → Outcome text"
+      ]
+    }
+  ],
+  "tables": [
+    {
+      "title": "Table title",
+      "headers": ["Col A", "Col B", "LOE", "COR"],
+      "rows": [["val", "val", "I", "I"]]
+    }
+  ]
 }
 
 Generate 5-10 section_titles that cover the REQUIRED SECTIONS for this query type.
 Each title must be a short, clear heading (3-6 words).
-Do NOT generate section content — section_titles are plain strings only."""
+Do NOT generate section content — section_titles are plain strings only.
+
+FLOWCHARTS: Include ONLY when a clear clinical decision pathway exists (e.g. PE workup, sepsis bundle, HF escalation, ACLS). Use "steps": [] if no pathway applies. Branch steps use the format "Condition → Outcome" — the → character triggers branch rendering.
+TABLES: Include ONLY for structured comparisons, diagnostic scoring, or drug dosing tables. Use "tables": [] if none apply."""
 
 
 def build_bluf_only_messages(
@@ -1605,7 +1624,9 @@ RESPOND WITH A SINGLE JSON OBJECT — no markdown fences, no prose outside the J
       "text": "Evidence-based claim in GFM markdown. Use **bold** for key terms, tables for structured data, bullets for multi-part claims.",
       "loe": "I | II | III | null",
       "cor": "I | IIa | IIb | III-no-benefit | III-harm | null",
-      "source": "Source label e.g. 'AHA/ACC 2022', 'FDA label', 'PubMed PMID:38293847'"
+      "source": "REQUIRED — source label e.g. 'ADA 2024', 'PubMed 31234567', 'FDA Label', 'ESC 2021'",
+      "pmid": "PubMed ID if applicable (digits only, no prefix) — or null",
+      "url": "Direct URL if available from fetched data — or null"
     }}
   ],
   "references": [
@@ -1620,7 +1641,8 @@ RESPOND WITH A SINGLE JSON OBJECT — no markdown fences, no prose outside the J
 }}
 
 QUALITY: Populate content_items with 3-8 comprehensive, evidence-backed claims.
-Sparse content_items (fewer than 2 items) are rejected — generate substantive content."""
+Sparse content_items (fewer than 2 items) are rejected — generate substantive content.
+SOURCE REQUIREMENT: Every content_item MUST have a non-empty source field. If citing a guideline, name it (e.g. 'ADA 2024', 'NICE NG106'). If citing a study, include the PMID in the pmid field. If you have a direct URL from fetched data, include it in the url field."""
 
 
 def build_section_messages(

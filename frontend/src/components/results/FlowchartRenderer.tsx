@@ -2,64 +2,75 @@
 
 import React from "react";
 import { ResultSection } from "./ResultChrome";
-import { MermaidRenderer } from "./MermaidRenderer";
 
 interface FlowchartRendererProps {
   flowcharts?: { title: string; steps: string[] }[];
 }
 
-const DECISION_RE = /\?$|^(?:if|is|are|does|do|can|should|has|have|check|assess|consider)\b/i;
+function isBranchStep(step: string): boolean {
+  return step.includes("→");
+}
 
-function stepsToMermaid(steps: string[]): string {
-  if (steps.length === 0) return "flowchart TD\n  A[No steps]";
+function StepCircle({ index, type }: { index: number; type: "first" | "last" | "branch" | "normal" }) {
+  const colors = {
+    first: "#818CF8",
+    last: "#22D3EE",
+    branch: "#f59e0b",
+    normal: "#3b82f6",
+  };
+  const color = colors[type];
+  return (
+    <div
+      className="flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold text-white z-10"
+      style={{ background: color, boxShadow: `0 0 0 3px ${color}33` }}
+    >
+      {index + 1}
+    </div>
+  );
+}
 
-  const lines: string[] = [];
-  const sanitize = (s: string) => s.replace(/"/g, "'").replace(/[[\]{}]/g, "");
-  // Track nodes whose outgoing edges were already written by a decision branch
-  const alreadyConnected = new Set<number>();
+function FlowStep({ step, index, total }: { step: string; index: number; total: number }) {
+  const isFirst = index === 0;
+  const isLast = index === total - 1;
+  const isBranch = isBranchStep(step);
+  const type = isFirst ? "first" : isLast ? "last" : isBranch ? "branch" : "normal";
 
-  let i = 0;
-  while (i < steps.length) {
-    const step = sanitize(steps[i]);
-    const isDecision = DECISION_RE.test(step);
-    const nodeId = `S${i}`;
+  const parts = isBranch ? step.split("→").map(p => p.trim()) : null;
 
-    if (isDecision) {
-      lines.push(`  ${nodeId}{{"${step}"}}`);
-      const yesStep = steps[i + 1] ? sanitize(steps[i + 1]) : null;
-      const noStep = steps[i + 2] ? sanitize(steps[i + 2]) : null;
-      if (yesStep) lines.push(`  ${nodeId} -- Yes --> S${i + 1}["${yesStep}"]`);
-      if (noStep) lines.push(`  ${nodeId} -- No --> S${i + 2}["${noStep}"]`);
-
-      if (yesStep && noStep) {
-        const yesIdx = i + 1;
-        const noIdx = i + 2;
-        i += 3;
-        if (steps[i]) {
-          const nextId = `S${i}`;
-          lines.push(`  S${yesIdx} --> ${nextId}`);
-          lines.push(`  S${noIdx} --> ${nextId}`);
-          // Mark these branch targets as already connected to the next node
-          alreadyConnected.add(yesIdx);
-          alreadyConnected.add(noIdx);
-        }
-        continue;
-      }
-      i++;
-      continue;
-    }
-
-    lines.push(`  ${nodeId}["${step}"]`);
-    if (i > 0) {
-      const prevIdx = i - 1;
-      if (!alreadyConnected.has(prevIdx)) {
-        lines.push(`  S${prevIdx} --> ${nodeId}`);
-      }
-    }
-    i++;
-  }
-
-  return `flowchart TD\n${lines.join("\n")}`;
+  return (
+    <div className="relative flex gap-3 items-start">
+      {/* Connector line */}
+      {!isLast && (
+        <div
+          className="absolute left-3.5 top-7 bottom-0 w-[1.5px]"
+          style={{
+            background: "linear-gradient(to bottom, #3b82f680, transparent)",
+            transform: "translateX(-50%)",
+          }}
+        />
+      )}
+      <StepCircle index={index} type={type} />
+      <div
+        className="flex-1 mb-3 rounded-xl px-3.5 py-2.5 text-sm border"
+        style={{
+          background: "var(--bg-elevated)",
+          borderColor: type === "branch" ? "#f59e0b40" : "var(--border)",
+        }}
+      >
+        {isBranch && parts ? (
+          <div>
+            <span className="font-medium" style={{ color: "#f59e0b" }}>{parts[0]}</span>
+            <div className="mt-1 flex items-center gap-1.5 text-[var(--text-secondary)]">
+              <span className="text-xs font-mono" style={{ color: "#f59e0b" }}>→</span>
+              <span>{parts[1]}</span>
+            </div>
+          </div>
+        ) : (
+          <span className="text-[var(--text-primary)]">{step}</span>
+        )}
+      </div>
+    </div>
+  );
 }
 
 export function FlowchartRenderer({ flowcharts }: FlowchartRendererProps) {
@@ -69,13 +80,18 @@ export function FlowchartRenderer({ flowcharts }: FlowchartRendererProps) {
     <ResultSection title="Clinical Pathways" eyebrow="Flowchart">
       <div className="flex flex-col gap-8">
         {flowcharts.map((flowchart, fIdx) => (
-          <div key={fIdx} className="flex flex-col items-center">
+          <div key={fIdx} id={`fc-${fIdx}`}>
             {flowchart.title && (
-              <h4 className="mb-4 text-center font-semibold text-text-secondary">
-                {flowchart.title}
-              </h4>
+              <div className="flex items-center gap-2 mb-4">
+                <div className="w-2 h-2 rounded-sm flex-shrink-0" style={{ background: "#818CF8" }} />
+                <h4 className="font-semibold text-[var(--text-primary)]">{flowchart.title}</h4>
+              </div>
             )}
-            <MermaidRenderer chart={stepsToMermaid(flowchart.steps)} />
+            <div className="pl-1">
+              {flowchart.steps.map((step, sIdx) => (
+                <FlowStep key={sIdx} step={step} index={sIdx} total={flowchart.steps.length} />
+              ))}
+            </div>
           </div>
         ))}
       </div>

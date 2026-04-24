@@ -12,7 +12,7 @@ import {
 import { submitQueryStream } from "@/lib/api";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { API_KEY_STORAGE_KEY, LLM_PROVIDER_STORAGE_KEY } from "@/lib/constants";
-import type { QueryResponse, AdaptiveBLUF, AdaptiveSection } from "@/lib/types";
+import type { QueryResponse, AdaptiveBLUF, AdaptiveSection, AdaptiveFlowchart, AdaptiveTable } from "@/lib/types";
 import { usePostHog } from "posthog-js/react";
 
 type LLMProvider = "anthropic" | "openai" | "openrouter";
@@ -41,6 +41,9 @@ interface QueryContextType {
   streamingText: string;
   streamingBluf: AdaptiveBLUF | null;
   streamingSections: AdaptiveSection[];
+  streamingSectionTitles: string[];
+  streamingFlowcharts: AdaptiveFlowchart[];
+  streamingTables: AdaptiveTable[];
   isLoading: boolean;
   loadingStage: string;
   error: string | null;
@@ -58,6 +61,9 @@ export function QueryProvider({ children }: { children: ReactNode }) {
   const [streamingText, setStreamingText] = useState<string>("");
   const [streamingBluf, setStreamingBluf] = useState<AdaptiveBLUF | null>(null);
   const [streamingSections, setStreamingSections] = useState<AdaptiveSection[]>([]);
+  const [streamingSectionTitles, setStreamingSectionTitles] = useState<string[]>([]);
+  const [streamingFlowcharts, setStreamingFlowcharts] = useState<AdaptiveFlowchart[]>([]);
+  const [streamingTables, setStreamingTables] = useState<AdaptiveTable[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [loadingStage, setLoadingStage] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
@@ -85,6 +91,9 @@ export function QueryProvider({ children }: { children: ReactNode }) {
     setStreamingText("");
     setStreamingBluf(null);
     setStreamingSections([]);
+    setStreamingSectionTitles([]);
+    setStreamingFlowcharts([]);
+    setStreamingTables([]);
     setError(null);
     setResult(null);
 
@@ -98,7 +107,11 @@ export function QueryProvider({ children }: { children: ReactNode }) {
           setStreamingText((prev) => prev + event.payload.text);
           setLoadingStage("generating");
         } else if (event.type === "bluf") {
-          setStreamingBluf(event.payload);
+          const { section_titles, flowcharts, tables, ...blufData } = event.payload;
+          setStreamingBluf(blufData);
+          if (section_titles) setStreamingSectionTitles(section_titles);
+          if (flowcharts) setStreamingFlowcharts(flowcharts);
+          if (tables) setStreamingTables(tables);
           setLoadingStage("generating");
         } else if (event.type === "section_complete") {
           setStreamingSections((prev) => [...prev, event.payload]);
@@ -107,6 +120,9 @@ export function QueryProvider({ children }: { children: ReactNode }) {
           setStreamingText("");
           setStreamingBluf(null);
           setStreamingSections([]);
+          setStreamingSectionTitles([]);
+          setStreamingFlowcharts([]);
+          setStreamingTables([]);
           setResult(response);
           posthog?.capture("query_submitted", {
             query_type: response.query_type,
@@ -154,6 +170,9 @@ export function QueryProvider({ children }: { children: ReactNode }) {
       setStreamingText("");
       setStreamingBluf(null);
       setStreamingSections([]);
+      setStreamingSectionTitles([]);
+      setStreamingFlowcharts([]);
+      setStreamingTables([]);
     }
   }, []);
 
@@ -163,8 +182,8 @@ export function QueryProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ result, streamingText, streamingBluf, streamingSections, isLoading, loadingStage, error, activeModelName, submitQuery, clearResult }),
-    [result, streamingText, streamingBluf, streamingSections, isLoading, loadingStage, error, activeModelName, submitQuery, clearResult]
+    () => ({ result, streamingText, streamingBluf, streamingSections, streamingSectionTitles, streamingFlowcharts, streamingTables, isLoading, loadingStage, error, activeModelName, submitQuery, clearResult }),
+    [result, streamingText, streamingBluf, streamingSections, streamingSectionTitles, streamingFlowcharts, streamingTables, isLoading, loadingStage, error, activeModelName, submitQuery, clearResult]
   );
 
   return <QueryContext.Provider value={value}>{children}</QueryContext.Provider>;
