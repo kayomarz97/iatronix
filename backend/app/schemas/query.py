@@ -249,7 +249,7 @@ class QueryRequest(BaseModel):
     query_type: Optional[
         Literal["drug", "disease", "comparative", "procedure", "evidence"]
     ] = None
-    model_id: str = "claude-sonnet-4-20250514"
+    model_id: str = "claude-haiku-4-5-20251001"
     model_explicit: bool = (
         False  # True when user explicitly chose a model (not just default)
     )

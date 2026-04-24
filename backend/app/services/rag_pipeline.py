@@ -1194,7 +1194,7 @@ def _default_model_for_provider(provider: str | None) -> str:
         return settings.openrouter_default_model
     if provider == "openai":
         return settings.openai_default_model
-    return settings.model_sonnet
+    return settings.model_haiku
 
 
 def _normalize_model_for_provider(
@@ -1207,10 +1207,10 @@ def _normalize_model_for_provider(
     if provider == "openai":
         return model_id if "/" not in model_id else settings.openai_default_model
     if provider == "anthropic":
-        return model_id if "/" not in model_id else settings.model_sonnet
+        return model_id if "/" not in model_id else settings.model_haiku
     if model_explicit:
         return model_id
-    return model_id or settings.model_sonnet
+    return model_id or settings.model_haiku
 
 
 def _sanitize_entities(entities: list[str] | None) -> list[str]:
@@ -1298,8 +1298,8 @@ async def _call_llm_simple(
     system: str,
     data_block: str,
     user_text: str,
-) -> str | None:
-    """Non-streaming single LLM call. Returns raw text or None on error."""
+) -> tuple[str | None, dict]:
+    """Non-streaming single LLM call. Returns (raw text or None, usage dict)."""
     from langchain_core.messages import HumanMessage, SystemMessage
 
     try:
@@ -1312,10 +1312,14 @@ async def _call_llm_simple(
             combined = system + ("\n\n" + data_block if data_block else "")
             msgs = [SystemMessage(content=combined), HumanMessage(content=user_text)]
         result = await llm.ainvoke(msgs)
-        return result.content if isinstance(result.content, str) else None
+        usage = getattr(result, "usage_metadata", None) or {}
+        return (
+            result.content if isinstance(result.content, str) else None,
+            {"input_tokens": usage.get("input_tokens", 0), "output_tokens": usage.get("output_tokens", 0)},
+        )
     except Exception as exc:
         logger.warning("_call_llm_simple failed: %s", exc)
-        return None
+        return None, {}
 
 
 async def _run_parallel_pipeline(
@@ -1344,7 +1348,7 @@ async def _run_parallel_pipeline(
     )
     bluf_llm = create_llm(effective_model, max_tokens=settings.parallel_bluf_max_tokens,
                           user_key=user_llm_key, user_provider=user_llm_provider)
-    bluf_raw = await _call_llm_simple(bluf_llm, provider, bluf_system, bluf_data, bluf_user)
+    bluf_raw, bluf_usage = await _call_llm_simple(bluf_llm, provider, bluf_system, bluf_data, bluf_user)
     bluf_parsed = parse_llm_json(bluf_raw) if bluf_raw else None
     if not bluf_parsed:
         logger.warning("parallel_pipeline: BLUF call failed or unparseable")
@@ -1372,7 +1376,7 @@ async def _run_parallel_pipeline(
         or query
     )
 
-    async def _gen_one_section(title: str) -> dict | None:
+    async def _gen_one_section(title: str) -> tuple[dict | None, dict]:
         sec_system, sec_data, sec_user = build_section_messages(
             section_title=title,
             all_section_titles=section_titles,
@@ -1384,8 +1388,8 @@ async def _run_parallel_pipeline(
         )
         sec_llm = create_llm(effective_model, max_tokens=settings.parallel_sections_max_tokens,
                              user_key=user_llm_key, user_provider=user_llm_provider)
-        raw = await _call_llm_simple(sec_llm, provider, sec_system, sec_data, sec_user)
-        return parse_llm_json(raw) if raw else None
+        raw, usage = await _call_llm_simple(sec_llm, provider, sec_system, sec_data, sec_user)
+        return (parse_llm_json(raw) if raw else None), usage
 
     raw_sections = await asyncio.gather(
         *[_gen_one_section(t) for t in section_titles],
@@ -1394,11 +1398,19 @@ async def _run_parallel_pipeline(
 
     all_sections: list[dict] = []
     all_refs: list[dict] = list(bluf_parsed.get("references", []))
+    total_in = bluf_usage.get("input_tokens", 0)
+    total_out = bluf_usage.get("output_tokens", 0)
 
-    for idx, (title, sec) in enumerate(zip(section_titles, raw_sections)):
-        if isinstance(sec, Exception) or sec is None:
-            logger.warning("parallel_pipeline: section '%s' failed: %s", title, sec)
+    for idx, (title, result) in enumerate(zip(section_titles, raw_sections)):
+        if isinstance(result, Exception):
+            logger.warning("parallel_pipeline: section '%s' failed: %s", title, result)
             continue
+        sec, sec_usage = result
+        if sec is None:
+            logger.warning("parallel_pipeline: section '%s' returned None", title)
+            continue
+        total_in += sec_usage.get("input_tokens", 0)
+        total_out += sec_usage.get("output_tokens", 0)
         section_dict = {
             "title": sec.get("title", title),
             "content_items": sec.get("content_items", []),
@@ -1417,6 +1429,7 @@ async def _run_parallel_pipeline(
         return None
 
     return {
+        "_parallel_usage": {"input_tokens": total_in, "output_tokens": total_out},
         "bluf": bluf_parsed.get("bluf", {}),
         "sections": all_sections,
         "references": _dedup_references(all_refs),
@@ -1853,6 +1866,7 @@ async def process_query(
             structured_callback=structured_callback,
         )
         if parallel_parsed is not None:
+            _gen_usage = parallel_parsed.pop("_parallel_usage", {})
             parsed = parallel_parsed
             logger.info(
                 "pipeline.parallel_sections",
@@ -1863,8 +1877,6 @@ async def process_query(
                     "duration_ms": round((time.perf_counter() - _llm_t0) * 1000),
                 },
             )
-            # Jump straight to AdaptiveResponse construction below
-            _gen_usage = {}
             raw_response = "__parallel__"  # sentinel — skip single-call block
         else:
             logger.warning("parallel_pipeline failed; falling back to single call")
