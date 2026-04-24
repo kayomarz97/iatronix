@@ -1357,7 +1357,12 @@ async def _run_parallel_pipeline(
 
     if structured_callback:
         try:
-            await structured_callback("bluf", bluf_parsed.get("bluf", {}))
+            await structured_callback("bluf", {
+                **bluf_parsed.get("bluf", {}),
+                "section_titles": section_titles,
+                "flowcharts": bluf_parsed.get("flowcharts", []),
+                "tables": bluf_parsed.get("tables", []),
+            })
         except Exception:
             pass
 
@@ -1415,8 +1420,8 @@ async def _run_parallel_pipeline(
         "bluf": bluf_parsed.get("bluf", {}),
         "sections": all_sections,
         "references": _dedup_references(all_refs),
-        "tables": [],
-        "flowcharts": [],
+        "tables": bluf_parsed.get("tables", []),
+        "flowcharts": bluf_parsed.get("flowcharts", []),
         "response_focus": bluf_parsed.get("response_focus", query_type),
         "related_topics": bluf_parsed.get("related_topics", []),
     }

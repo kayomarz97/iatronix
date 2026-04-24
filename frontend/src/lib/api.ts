@@ -1,9 +1,9 @@
-import type { QueryResponse, ModelInfo, AdaptiveBLUF, AdaptiveSection } from "./types";
+import type { QueryResponse, ModelInfo, AdaptiveBLUF, AdaptiveSection, AdaptiveFlowchart, AdaptiveTable } from "./types";
 
 export type StreamEvent =
   | { type: "stage"; payload: { stage: string } }
   | { type: "token"; payload: { text: string } }
-  | { type: "bluf"; payload: AdaptiveBLUF }
+  | { type: "bluf"; payload: AdaptiveBLUF & { section_titles?: string[]; flowcharts?: AdaptiveFlowchart[]; tables?: AdaptiveTable[] } }
   | { type: "section_complete"; payload: AdaptiveSection & { index: number } }
   | { type: "done"; payload: { result: QueryResponse } }
   | { type: "error"; payload: { detail: string } };

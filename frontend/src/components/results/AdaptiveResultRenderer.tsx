@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useRouter } from "next/navigation";
+import { Search, ChevronRight } from "lucide-react";
 import type {
   AdaptiveResponse,
   AdaptiveSection,
@@ -22,20 +23,27 @@ interface Props {
 }
 
 // ── LOE / COR colour maps ────────────────────────────────────────────────────
-const LOE_STYLE: Record<string, string> = {
-  I: "bg-emerald-100 dark:bg-emerald-900 text-emerald-700 dark:text-emerald-300",
-  II: "bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300",
-  III: "bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300",
+const LOE_CLR: Record<string, string> = {
+  I: "#10b981",
+  II: "#3b82f6",
+  III: "#64748b",
 };
 
-const COR_STYLE: Record<string, string> = {
-  I: "bg-emerald-100 dark:bg-emerald-900 text-emerald-700 dark:text-emerald-300",
-  IIa: "bg-teal-100 dark:bg-teal-900 text-teal-700 dark:text-teal-300",
-  IIb: "bg-amber-100 dark:bg-amber-900 text-amber-700 dark:text-amber-300",
-  "III-no-benefit":
-    "bg-orange-100 dark:bg-orange-900 text-orange-700 dark:text-orange-300",
-  "III-harm": "bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-300",
+const COR_CLR: Record<string, string> = {
+  I: "#10b981",
+  IIa: "#06b6d4",
+  IIb: "#f59e0b",
+  "III-no-benefit": "#f97316",
+  "III-harm": "#ef4444",
 };
+
+function badgeStyle(color: string) {
+  return {
+    backgroundColor: color + "2e",
+    border: `1px solid ${color}59`,
+    color,
+  };
+}
 
 function EvidenceBadge({
   loe,
@@ -47,12 +55,15 @@ function EvidenceBadge({
   compact?: boolean;
 }) {
   if (!loe && !cor) return null;
-  const size = compact ? "text-[10px] px-1 py-0" : "text-xs px-1.5 py-0.5";
+  const cls = compact
+    ? "font-mono text-[10px] px-[5px] py-[1px] rounded-[4px]"
+    : "font-mono text-xs px-1.5 py-0.5 rounded-[4px]";
   return (
     <span className="inline-flex items-center gap-1 shrink-0">
       {loe && (
         <span
-          className={`${size} rounded font-medium ${LOE_STYLE[loe] ?? "bg-muted text-muted-foreground"}`}
+          className={cls}
+          style={badgeStyle(LOE_CLR[loe] ?? "#64748b")}
           title="Level of Evidence"
         >
           LoE&nbsp;{loe}
@@ -60,7 +71,8 @@ function EvidenceBadge({
       )}
       {cor && (
         <span
-          className={`${size} rounded font-medium ${COR_STYLE[cor] ?? "bg-muted text-muted-foreground"}`}
+          className={cls}
+          style={badgeStyle(COR_CLR[cor] ?? "#64748b")}
           title="Class of Recommendation"
         >
           Class&nbsp;{cor}
@@ -72,6 +84,9 @@ function EvidenceBadge({
 
 // ── Single claim row ─────────────────────────────────────────────────────────
 function ClaimRow({ item }: { item: AdaptiveContentItem }) {
+  const sourceHref = item.url
+    ?? (item.pmid ? `https://pubmed.ncbi.nlm.nih.gov/${item.pmid}/` : null);
+
   return (
     <div className="flex gap-2 items-start py-1.5 border-b border-border/40 last:border-0">
       <div className="flex-1 text-sm text-foreground prose prose-sm dark:prose-invert max-w-none prose-p:my-1 prose-ul:my-1 prose-li:my-0.5 prose-table:text-xs">
@@ -80,22 +95,64 @@ function ClaimRow({ item }: { item: AdaptiveContentItem }) {
       <div className="flex flex-col items-end gap-1 shrink-0 pt-0.5">
         <EvidenceBadge loe={item.loe ?? undefined} cor={item.cor ?? undefined} compact />
         {item.source && (
-          <span className="text-[10px] text-muted-foreground max-w-[120px] text-right leading-tight">
-            {item.source}
-          </span>
+          sourceHref ? (
+            <a href={sourceHref} target="_blank" rel="noopener noreferrer"
+               className="text-[10px] text-blue-400 hover:underline max-w-[120px] text-right leading-tight">
+              {item.source}
+            </a>
+          ) : (
+            <span className="text-[10px] text-muted-foreground max-w-[120px] text-right leading-tight">
+              {item.source}
+            </span>
+          )
         )}
       </div>
     </div>
   );
 }
 
+// ── Evidence quality bar ─────────────────────────────────────────────────────
+function EvidenceQualityBar({ sections }: { sections: AdaptiveSection[] }) {
+  const counts = { I: 0, II: 0, III: 0 };
+  for (const sec of sections) {
+    for (const item of sec.content_items ?? []) {
+      if (item.loe === "I") counts.I++;
+      else if (item.loe === "II") counts.II++;
+      else if (item.loe === "III") counts.III++;
+    }
+  }
+  const total = counts.I + counts.II + counts.III;
+  if (total === 0) return null;
+
+  return (
+    <div className="flex items-center gap-3 px-4 py-2 rounded-xl border border-border/50 bg-surface/60">
+      <div className="flex-1 h-[5px] rounded-full overflow-hidden flex">
+        {counts.I > 0 && (
+          <div style={{ width: `${(counts.I / total) * 100}%`, background: "#10b981" }} />
+        )}
+        {counts.II > 0 && (
+          <div style={{ width: `${(counts.II / total) * 100}%`, background: "#3b82f6" }} />
+        )}
+        {counts.III > 0 && (
+          <div style={{ width: `${(counts.III / total) * 100}%`, background: "#64748b" }} />
+        )}
+      </div>
+      <div className="flex gap-3 shrink-0 font-mono text-[10px]">
+        {counts.I > 0 && <span style={{ color: "#10b981" }}>{counts.I} High</span>}
+        {counts.II > 0 && <span style={{ color: "#3b82f6" }}>{counts.II} Mod</span>}
+        {counts.III > 0 && <span style={{ color: "#64748b" }}>{counts.III} Low</span>}
+      </div>
+    </div>
+  );
+}
+
 // ── Section card ─────────────────────────────────────────────────────────────
-function SectionCard({ section }: { section: AdaptiveSection }) {
+function SectionCard({ section, index }: { section: AdaptiveSection; index: number }) {
   const hasItems =
     Array.isArray(section.content_items) && section.content_items.length > 0;
 
   return (
-    <ResultSection title={section.title} className="mb-4">
+    <ResultSection title={section.title} id={`sec-${index}`} className="mb-4">
       <div className="mb-4 flex items-center justify-between gap-2 border-b border-border/70 pb-3">
         <EvidenceBadge loe={section.loe ?? undefined} cor={section.cor ?? undefined} />
       </div>
@@ -320,10 +377,12 @@ export function AdaptiveResultRenderer({ data, fetchSources }: Props) {
         }
       />
 
+      <EvidenceQualityBar sections={data.sections} />
+
       {data.sections
         .filter(s => (s.content_items?.length ?? 0) > 0 || s.content)
         .map((section, i) => (
-          <SectionCard key={i} section={section} />
+          <SectionCard key={i} section={section} index={i} />
         ))}
 
       <TableRenderer tables={data.tables} />
@@ -333,7 +392,7 @@ export function AdaptiveResultRenderer({ data, fetchSources }: Props) {
       <DataSourceBadges sources={fetchSources} />
 
       {data.references.length > 0 && (
-        <ResultSection title="References" eyebrow="Sources">
+        <ResultSection title="References" eyebrow="Sources" id="references">
           <ul className="space-y-2">
             {data.references.map((ref, i) => (
               <ReferenceRow key={i} ref={ref} index={i} />
@@ -343,17 +402,19 @@ export function AdaptiveResultRenderer({ data, fetchSources }: Props) {
       )}
 
       {data.related_topics && data.related_topics.length > 0 && (
-        <ResultSection title="Explore Related Topics" eyebrow="Follow-up queries">
-          <div className="flex flex-wrap gap-2">
+        <ResultSection title="Explore Related Queries" eyebrow="Follow-up queries">
+          <div className="flex flex-col gap-0.5">
             {data.related_topics.map((topic, i) => (
               <button
                 key={i}
-                onClick={() =>
-                  router.push(`/query?q=${encodeURIComponent(topic)}`)
-                }
-                className="rounded-full border border-border bg-background px-3 py-1.5 text-xs text-foreground transition-colors hover:bg-muted"
+                onClick={() => router.push(`/query?q=${encodeURIComponent(topic)}`)}
+                className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-[10px] text-left hover:bg-[var(--bg-elevated)] transition-colors"
               >
-                {topic}
+                <Search size={13} className="text-[var(--accent)] shrink-0" />
+                <span className="flex-1 text-[0.85rem] text-[var(--accent)] underline decoration-blue-500/35 underline-offset-[3px] leading-snug">
+                  {topic}
+                </span>
+                <ChevronRight size={11} className="text-[var(--text-muted)] shrink-0" />
               </button>
             ))}
           </div>

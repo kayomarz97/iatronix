@@ -32,6 +32,8 @@ export interface AdaptiveContentItem {
   loe?: string;
   cor?: string;
   source?: string;
+  pmid?: string;
+  url?: string;
 }
 
 export interface AdaptiveReference {
@@ -55,6 +57,9 @@ export interface AdaptiveBLUF {
   body?: string | null;
   key_points: string[];
   caveats: string[];
+  section_titles?: string[];
+  flowcharts?: AdaptiveFlowchart[];
+  tables?: AdaptiveTable[];
 }
 
 export interface AdaptiveTable {

@@ -197,6 +197,8 @@ class AdaptiveContentItem(BaseModel):
     loe: Optional[str] = None
     cor: Optional[str] = None
     source: Optional[str] = None
+    pmid: Optional[str] = None
+    url: Optional[str] = None
 
 
 class AdaptiveReference(BaseModel):
