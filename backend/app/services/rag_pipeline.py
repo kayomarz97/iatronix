@@ -965,7 +965,7 @@ _PRICING = {
 
 def _model_cost(model_id: str, inp: int, out: int) -> ModelCost:
     key = next((k for k in _PRICING if k in model_id), None)
-    rates = _PRICING.get(key, {"in": 3.00, "out": 15.00})
+    rates = _PRICING.get(key, {"in": 0.80, "out": 4.00})
     in_cost = round(inp / 1_000_000 * rates["in"], 6)
     out_cost = round(out / 1_000_000 * rates["out"], 6)
     return ModelCost(

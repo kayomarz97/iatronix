@@ -88,8 +88,8 @@ function ClaimRow({ item }: { item: AdaptiveContentItem }) {
     ?? (item.pmid ? `https://pubmed.ncbi.nlm.nih.gov/${item.pmid}/` : null);
 
   return (
-    <div className="flex gap-2 items-start py-1.5 border-b border-border/40 last:border-0">
-      <div className="flex-1 text-sm text-foreground prose prose-sm dark:prose-invert max-w-none prose-p:my-1 prose-ul:my-1 prose-li:my-0.5 prose-table:text-xs">
+    <div className="flex gap-2 items-start py-3 border-b border-border/40 last:border-0">
+      <div className="flex-1 text-sm prose prose-sm max-w-none prose-p:my-2 prose-ul:my-2 prose-ul:list-disc prose-ul:pl-5 prose-li:block prose-li:my-1.5 prose-table:text-xs prose-strong:font-bold prose-em:italic" style={{ color: "var(--text-primary)" }}>
         <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.text}</ReactMarkdown>
       </div>
       <div className="flex flex-col items-end gap-1 shrink-0 pt-0.5">
@@ -165,13 +165,13 @@ function SectionCard({ section, index }: { section: AdaptiveSection; index: numb
         </div>
       ) : section.content ? (
         Array.isArray(section.content) ? (
-          <ul className="list-disc list-inside space-y-1 text-sm text-muted-foreground">
+          <ul className="list-disc list-outside pl-4 space-y-3 text-sm" style={{ color: "var(--text-primary)" }}>
             {(section.content as string[]).map((item, i) => (
               <li key={i}>{item}</li>
             ))}
           </ul>
         ) : (
-          <div className="prose prose-sm max-w-none text-sm text-foreground dark:prose-invert prose-p:my-1 prose-ul:my-1 prose-table:text-xs">
+          <div className="prose prose-sm max-w-none text-sm prose-p:my-2 prose-ul:my-2 prose-ul:list-disc prose-ul:pl-5 prose-li:block prose-li:my-1.5 prose-table:text-xs prose-strong:font-bold prose-em:italic" style={{ color: "var(--text-primary)" }}>
             <ReactMarkdown remarkPlugins={[remarkGfm]}>
               {String(section.content)}
             </ReactMarkdown>

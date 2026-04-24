@@ -68,9 +68,21 @@ export interface AdaptiveTable {
   rows: string[][];
 }
 
+export interface FlowchartBranch {
+  condition: string;
+  outcome: string;
+}
+
+export interface FlowchartStep {
+  text: string;
+  label?: string;
+  is_decision?: boolean;
+  branches?: FlowchartBranch[];
+}
+
 export interface AdaptiveFlowchart {
   title: string;
-  steps: string[];
+  steps: FlowchartStep[];
 }
 
 export interface AdaptiveImage {
