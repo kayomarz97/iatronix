@@ -39,7 +39,11 @@ services:
       start_period: 30s
 
   iatronix-dev-frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_POSTHOG_KEY: phc_tKE3N3RCaLBSaGeGNV948Fkc567YacgPAUXP3VM8EP2m
+        NEXT_PUBLIC_POSTHOG_HOST: https://eu.i.posthog.com
     container_name: iatronix-dev-frontend
     restart: unless-stopped
     networks: [iatronix-net]
