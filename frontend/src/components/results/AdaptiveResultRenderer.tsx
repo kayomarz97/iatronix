@@ -377,13 +377,13 @@ export function AdaptiveResultRenderer({ data, fetchSources }: Props) {
         }
       />
 
-      <EvidenceQualityBar sections={data.sections} />
-
       {data.sections
         .filter(s => (s.content_items?.length ?? 0) > 0 || s.content)
         .map((section, i) => (
           <SectionCard key={i} section={section} index={i} />
         ))}
+
+      <EvidenceQualityBar sections={data.sections} />
 
       <TableRenderer tables={data.tables} />
       <FlowchartRenderer flowcharts={data.flowcharts} />
