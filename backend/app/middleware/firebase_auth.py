@@ -29,6 +29,8 @@ except ValueError:
 EXEMPT_PATHS = {
     "/api/v1/health",
     "/api/v1/health/",
+    "/api/v1/auth/openrouter/login",
+    "/api/v1/auth/openrouter/callback",
 }
 
 _USER_CACHE_TTL = 300  # seconds

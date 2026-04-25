@@ -28,6 +28,11 @@ export default function SettingsPage() {
   const [ncbiMessage, setNcbiMessage] = useState<string | null>(null);
   const [ncbiLoading, setNcbiLoading] = useState(false);
 
+  const [openrouterConnected, setOpenrouterConnected] = useState<boolean | null>(null);
+  const [openrouterMessage, setOpenrouterMessage] = useState<string | null>(null);
+  const [openrouterLoading, setOpenrouterLoading] = useState(false);
+  const [enginePref, setEnginePref] = useState<"anthropic" | "openrouter">("anthropic");
+
   const [profile, setProfile] = useState<{
     full_name?: string;
     username?: string;
@@ -54,9 +59,12 @@ export default function SettingsPage() {
 
   useEffect(() => {
     setEmail(localStorage.getItem("iatronix_email") || "");
+    const savedEngine = localStorage.getItem("iatronix_engine_pref") as "anthropic" | "openrouter" | null;
+    if (savedEngine) setEnginePref(savedEngine);
     fetchProfile();
     fetchLlmStatus();
     fetchNcbiStatus();
+    fetchOpenrouterStatus();
   }, []);
 
   const getApiKey = () => localStorage.getItem(API_KEY_STORAGE_KEY) || "";
@@ -229,6 +237,53 @@ export default function SettingsPage() {
     } finally {
       setNcbiLoading(false);
     }
+  };
+
+  const fetchOpenrouterStatus = async () => {
+    const apiKey = getApiKey();
+    if (!apiKey) return;
+    try {
+      const res = await fetch("/api/v1/auth/openrouter/status", { headers: authHeader() });
+      if (res.ok) {
+        const data = await res.json();
+        setOpenrouterConnected(data.connected);
+      }
+    } catch {}
+  };
+
+  const disconnectOpenrouter = async () => {
+    setOpenrouterLoading(true);
+    setOpenrouterMessage(null);
+    try {
+      const res = await fetch("/api/v1/auth/openrouter/key", {
+        method: "DELETE",
+        headers: authHeader(),
+      });
+      if (res.ok) {
+        setOpenrouterConnected(false);
+        setOpenrouterMessage("OpenRouter disconnected");
+        if (enginePref === "openrouter") {
+          setEnginePref("anthropic");
+          localStorage.setItem("iatronix_engine_pref", "anthropic");
+        }
+      } else {
+        setOpenrouterMessage("Failed to disconnect");
+      }
+    } catch {
+      setOpenrouterMessage("Network error");
+    } finally {
+      setOpenrouterLoading(false);
+    }
+  };
+
+  const handleEngineToggle = (pref: "anthropic" | "openrouter") => {
+    setEnginePref(pref);
+    localStorage.setItem("iatronix_engine_pref", pref);
+    fetch("/api/v1/auth/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeader() },
+      body: JSON.stringify({ preferences: { engine_pref: pref } }),
+    }).catch(() => {});
   };
 
   const logout = () => {
@@ -408,6 +463,89 @@ export default function SettingsPage() {
           </div>
         </div>
         {message && <p className="text-sm" style={{ color: message.includes("saved") || message.includes("removed") ? "var(--success)" : "var(--text-secondary)" }}>{message}</p>}
+      </section>
+
+      {/* ── OpenRouter OAuth ── */}
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold">OpenRouter (Gemma 4)</h2>
+        <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
+          Connect your OpenRouter account to use Gemma 4 as the AI engine. Your credits are used directly — no server-side key stored in plaintext.
+        </p>
+
+        <div className="p-3 rounded-md text-sm" style={{ background: "var(--bg-elevated)", border: "1px solid var(--border)" }}>
+          <span className="font-medium">Status: </span>
+          {openrouterConnected === null ? (
+            <span style={{ color: "var(--text-muted)" }}>Loading…</span>
+          ) : openrouterConnected ? (
+            <span style={{ color: "var(--success)" }}>Connected</span>
+          ) : (
+            <span style={{ color: "var(--danger)" }}>Not connected</span>
+          )}
+        </div>
+
+        <div className="flex gap-2">
+          {!openrouterConnected && (
+            <a
+              href="/api/v1/auth/openrouter/login"
+              className="px-4 py-2 bg-primary text-white rounded-md text-sm min-h-[44px] inline-flex items-center"
+            >
+              Connect OpenRouter →
+            </a>
+          )}
+          {openrouterConnected && (
+            <button
+              onClick={disconnectOpenrouter}
+              disabled={openrouterLoading}
+              className="px-4 py-2 rounded-md border border-border text-sm min-h-[44px] disabled:opacity-50"
+            >
+              {openrouterLoading ? "Disconnecting…" : "Disconnect"}
+            </button>
+          )}
+        </div>
+        {openrouterMessage && (
+          <p className="text-sm" style={{ color: openrouterMessage.includes("disconnected") ? "var(--success)" : "var(--danger)" }}>
+            {openrouterMessage}
+          </p>
+        )}
+      </section>
+
+      {/* ── Engine Toggle ── */}
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold">Search Engine</h2>
+        <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
+          Choose which AI model powers your medical queries.
+        </p>
+        <div className="flex gap-2">
+          <button
+            onClick={() => handleEngineToggle("anthropic")}
+            className="flex-1 px-4 py-3 rounded-md border text-sm min-h-[44px]"
+            style={{
+              background: enginePref === "anthropic" ? "var(--primary)" : "var(--bg-elevated)",
+              borderColor: enginePref === "anthropic" ? "var(--primary)" : "var(--border)",
+              color: enginePref === "anthropic" ? "#fff" : "var(--text-primary)",
+            }}
+          >
+            <div className="font-medium">Claude Haiku</div>
+            <div className="text-xs opacity-70 mt-0.5">Your Anthropic key</div>
+          </button>
+          <button
+            onClick={() => handleEngineToggle("openrouter")}
+            className="flex-1 px-4 py-3 rounded-md border text-sm min-h-[44px]"
+            style={{
+              background: enginePref === "openrouter" ? "var(--primary)" : "var(--bg-elevated)",
+              borderColor: enginePref === "openrouter" ? "var(--primary)" : "var(--border)",
+              color: enginePref === "openrouter" ? "#fff" : "var(--text-primary)",
+            }}
+          >
+            <div className="font-medium">Gemma 4</div>
+            <div className="text-xs opacity-70 mt-0.5">Your OpenRouter credits</div>
+          </button>
+        </div>
+        {enginePref === "openrouter" && !openrouterConnected && (
+          <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+            Connect OpenRouter above to enable Gemma 4.
+          </p>
+        )}
       </section>
 
       {/* ── NCBI API Key ── */}

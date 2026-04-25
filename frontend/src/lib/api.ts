@@ -13,6 +13,7 @@ export type StreamEvent =
   | { type: "bluf"; payload: AdaptiveBLUF & { section_titles?: string[]; flowcharts?: AdaptiveFlowchart[]; tables?: AdaptiveTable[] } }
   | { type: "section_complete"; payload: AdaptiveSection & { index: number } }
   | { type: "fetch_articles"; payload: { titles: FetchedArticle[] } }
+  | { type: "model_info"; payload: { is_fallback: boolean; model: string } }
   | { type: "done"; payload: { result: QueryResponse } }
   | { type: "error"; payload: { detail: string; error_type?: string } };
 

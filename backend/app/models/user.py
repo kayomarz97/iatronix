@@ -51,6 +51,7 @@ class User(TimestampMixin, Base):
     openai_api_key: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     gemini_api_key: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     anthropic_api_key: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    openrouter_key: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
     # Profile (for personalisation and future monetisation analytics)
     username: Mapped[Optional[str]] = mapped_column(
