@@ -1415,6 +1415,8 @@ async def _run_parallel_pipeline(
         or query
     )
 
+    _section_sem = asyncio.Semaphore(settings.parallel_sections_max_concurrent)
+
     async def _gen_one_section(title: str, idx: int) -> tuple[dict | None, dict]:
         sec_system, sec_data, sec_user = build_section_messages(
             section_title=title,
@@ -1427,7 +1429,10 @@ async def _run_parallel_pipeline(
         )
         sec_llm = create_llm(effective_model, max_tokens=settings.parallel_sections_max_tokens,
                              user_key=user_llm_key, user_provider=user_llm_provider)
-        raw, usage = await _call_llm_simple(sec_llm, provider, sec_system, sec_data, sec_user)
+        # Semaphore limits concurrent LLM calls to stay under token-per-minute limits.
+        # Quality is unaffected — each section still gets its full prompt and token budget.
+        async with _section_sem:
+            raw, usage = await _call_llm_simple(sec_llm, provider, sec_system, sec_data, sec_user)
         sec = parse_llm_json(raw) if raw else None
         # Emit as soon as this section is ready — don't wait for all sections to finish
         if sec is not None and structured_callback:

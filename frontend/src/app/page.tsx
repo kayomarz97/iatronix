@@ -228,22 +228,6 @@ export default function HomePage() {
         </div>
       )}
 
-      {/* Category cards */}
-      <div
-        className="animate-in"
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(170px, 1fr))",
-          gap: "0.625rem",
-          width: "100%",
-          maxWidth: 620,
-          animationDelay: "100ms",
-        }}
-      >
-        {CATEGORIES.map((cat) => (
-          <CategoryCard key={cat.label} icon={cat.icon} label={cat.label} onClick={() => runSearch(cat.seed)} />
-        ))}
-      </div>
 
       <p
         style={{
