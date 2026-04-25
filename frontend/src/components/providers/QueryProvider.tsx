@@ -163,7 +163,7 @@ export function QueryProvider({ children }: { children: ReactNode }) {
         setError("Session expired. Please sign in again.");
       } else if (errType === "rate_limit" || msg.includes("429") || msg.toLowerCase().includes("rate limit")) {
         posthog?.capture("query_error", { error_type: "rate_limit", model_id: modelId });
-        setError("Service temporarily busy. Partial results shown below — please try again.");
+        setError("Service temporarily busy. Please try again.");
       } else {
         posthog?.capture("query_error", { error_type: errType ?? "other", model_id: modelId });
         setError(msg);
