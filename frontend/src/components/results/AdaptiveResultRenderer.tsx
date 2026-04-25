@@ -20,6 +20,7 @@ import { TableRenderer } from "./TableRenderer";
 interface Props {
   data: AdaptiveResponse;
   fetchSources?: string[];
+  hideEvidenceBar?: boolean;
 }
 
 // ── LOE / COR colour maps ────────────────────────────────────────────────────
@@ -337,7 +338,7 @@ function MedicalImageRenderer({ images }: { images?: AdaptiveImage[] }) {
 }
 
 // ── Main renderer ────────────────────────────────────────────────────────────
-export function AdaptiveResultRenderer({ data, fetchSources }: Props) {
+export function AdaptiveResultRenderer({ data, fetchSources, hideEvidenceBar }: Props) {
   const router = useRouter();
 
   return (
@@ -383,7 +384,7 @@ export function AdaptiveResultRenderer({ data, fetchSources }: Props) {
           <SectionCard key={i} section={section} index={i} />
         ))}
 
-      <EvidenceQualityBar sections={data.sections} />
+      {!hideEvidenceBar && <EvidenceQualityBar sections={data.sections} />}
 
       <TableRenderer tables={data.tables} />
       <FlowchartRenderer flowcharts={data.flowcharts} />

@@ -11,16 +11,15 @@ interface PipelineStage {
 }
 
 const PIPELINE_STAGES: PipelineStage[] = [
-  { label: "Query rewriting",     description: "Normalising clinical terminology",        group: "classifying" },
-  { label: "Classification",      description: "Identifying query type and intent",        group: "classifying" },
-  { label: "Cache lookup",        description: "Checking semantic cache",                  group: "classifying" },
-  { label: "Parallel data fetch", description: "Querying medical databases in parallel",  group: "fetching"    },
-  { label: "Evidence scoring",    description: "Ranking and deduplicating sources",        group: "fetching"    },
-  { label: "LLM generation",      description: "Generating structured clinical response",  group: "generating"  },
-  { label: "Validation & cache",  description: "Verifying citations and caching result",   group: "verifying"   },
+  { label: "Query rewriting",     description: "Normalising clinical terminology",       group: "classifying" },
+  { label: "Classification",      description: "Identifying query type and intent",       group: "classifying" },
+  { label: "Cache lookup",        description: "Checking semantic cache",                 group: "classifying" },
+  { label: "Parallel data fetch", description: "Querying medical databases in parallel", group: "fetching"    },
+  { label: "Evidence scoring",    description: "Ranking and deduplicating sources",       group: "fetching"    },
+  { label: "LLM generation",      description: "Generating structured clinical response", group: "generating"  },
+  { label: "Validation & cache",  description: "Verifying citations and caching result",  group: "verifying"   },
 ];
 
-// Real sources the backend actually queries
 const REAL_SOURCES = [
   "PubMed",
   "FDA / OpenFDA",
@@ -43,7 +42,7 @@ function getStageStatus(stageIdx: number, currentGroup: StageGroup): "done" | "a
   return "pending";
 }
 
-// Ticks sources in one by one
+// Ticks a count up from 0 to max over tickMs intervals
 function useCyclingCount(max: number, tickMs = 950): number {
   const [count, setCount] = useState(0);
   useEffect(() => {
@@ -59,23 +58,29 @@ function useCyclingCount(max: number, tickMs = 950): number {
 function ArticleTicker({ articles }: { articles: FetchedArticle[] }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState<FetchedArticle[]>([]);
+  const [totalSeen, setTotalSeen] = useState(0);
   const indexRef = useRef(0);
+  const loopRef = useRef(false);
 
-  // Feed articles in one at a time, keep last 6 visible, auto-scroll
   useEffect(() => {
     if (articles.length === 0) return;
     indexRef.current = 0;
+    loopRef.current = false;
     setVisible([]);
+    setTotalSeen(0);
 
     const id = setInterval(() => {
-      if (indexRef.current >= articles.length) {
-        clearInterval(id);
-        return;
-      }
-      const article = articles[indexRef.current];
+      const article = articles[indexRef.current % articles.length];
       indexRef.current += 1;
-      setVisible(prev => [...prev.slice(-5), article]);
-    }, 600);
+
+      // Track total unique articles on first pass
+      if (!loopRef.current) {
+        setTotalSeen(indexRef.current);
+        if (indexRef.current >= articles.length) loopRef.current = true;
+      }
+
+      setVisible(prev => [...prev.slice(-4), article]);
+    }, 1400);
 
     return () => clearInterval(id);
   }, [articles]);
@@ -89,23 +94,31 @@ function ArticleTicker({ articles }: { articles: FetchedArticle[] }) {
   if (visible.length === 0) return null;
 
   return (
-    <div className="mt-3 ml-8">
-      <p className="text-[10px] uppercase tracking-widest font-semibold mb-1.5" style={{ color: "var(--text-muted)" }}>
-        Articles retrieved
-      </p>
+    <div className="mt-3">
+      {/* Live article count badge */}
+      <div className="flex items-center gap-2 mb-2">
+        <span
+          className="inline-block w-1.5 h-1.5 rounded-full"
+          style={{ background: "#3b82f6", animation: "pulse 1s ease-in-out infinite" }}
+        />
+        <span className="text-[10px] uppercase tracking-widest font-semibold" style={{ color: "var(--text-muted)" }}>
+          {loopRef.current ? `${articles.length} articles retrieved` : `Retrieving articles… (${totalSeen} found)`}
+        </span>
+      </div>
+
       <div
         ref={containerRef}
         className="space-y-1.5 overflow-hidden"
-        style={{ maxHeight: 180 }}
+        style={{ maxHeight: 210 }}
       >
         {visible.map((a, i) => (
           <div
-            key={`${a.pmid}-${i}`}
+            key={`${a.pmid ?? a.title}-${i}`}
             className="rounded-lg px-3 py-2 text-[11px] border"
             style={{
               background: "var(--bg-elevated)",
               borderColor: "var(--border)",
-              animation: "fadeSlideIn 0.35s ease-out both",
+              animation: "fadeSlideIn 0.4s ease-out both",
             }}
           >
             <p className="font-medium leading-snug" style={{ color: "var(--text-primary)" }}>
@@ -129,21 +142,35 @@ function ArticleTicker({ articles }: { articles: FetchedArticle[] }) {
 // ── Source tick-in list ───────────────────────────────────────────────────────
 function FetchingDetail({ articles }: { articles: FetchedArticle[] }) {
   const visibleCount = useCyclingCount(REAL_SOURCES.length, 950);
+  const allDone = visibleCount >= REAL_SOURCES.length;
 
   return (
     <div className="mt-2 ml-8 space-y-1">
       {REAL_SOURCES.slice(0, visibleCount).map(name => (
-        <div key={name} className="flex items-center gap-2 text-[11px]" style={{ animation: "fadeSlideIn 0.3s ease-out both" }}>
+        <div
+          key={name}
+          className="flex items-center gap-2 text-[11px]"
+          style={{ animation: "fadeSlideIn 0.3s ease-out both" }}
+        >
           <span style={{ color: "#10b981", fontWeight: 700 }}>✓</span>
           <span style={{ color: "var(--text-secondary)" }}>{name}</span>
         </div>
       ))}
-      {visibleCount < REAL_SOURCES.length && (
+
+      {/* Next source pulsing — or cross-ref loop once all done */}
+      {!allDone && (
         <div className="flex items-center gap-2 text-[11px]">
           <span style={{ display: "inline-block", width: 7, height: 7, borderRadius: "50%", background: "#3b82f6", animation: "pulse 1s ease-in-out infinite" }} />
           <span style={{ color: "var(--text-muted)" }}>{REAL_SOURCES[visibleCount]}…</span>
         </div>
       )}
+      {allDone && (
+        <div className="flex items-center gap-2 text-[11px] mt-1">
+          <span style={{ display: "inline-block", width: 7, height: 7, borderRadius: "50%", background: "#f59e0b", animation: "pulse 1.4s ease-in-out infinite" }} />
+          <span style={{ color: "var(--text-muted)" }}>Cross-referencing results…</span>
+        </div>
+      )}
+
       <ArticleTicker articles={articles} />
     </div>
   );
@@ -156,34 +183,54 @@ interface LoadingScreenProps {
 
 export const LoadingScreen: React.FC<LoadingScreenProps> = ({ currentStep, fetchedArticles = [] }) => {
   const doneCount = PIPELINE_STAGES.filter((_, i) => getStageStatus(i, currentStep) === "done").length;
-  const progress = Math.round((doneCount / PIPELINE_STAGES.length) * 100);
+  const progress = Math.max(Math.round((doneCount / PIPELINE_STAGES.length) * 100), 8);
 
   return (
     <div className="mx-auto max-w-lg px-4 py-6 space-y-4">
       <style>{`
         @keyframes fadeSlideIn {
           from { opacity: 0; transform: translateY(-5px); }
-          to   { opacity: 1; transform: translateY(0); }
+          to   { opacity: 1; transform: translateY(0);    }
+        }
+        @keyframes shimmer {
+          0%   { background-position: -200% center; }
+          100% { background-position: 200% center;  }
+        }
+        @keyframes rowGlow {
+          0%, 100% { box-shadow: none; }
+          50%       { box-shadow: inset 3px 0 0 #3b82f6, 0 0 8px rgba(59,130,246,0.15); }
         }
       `}</style>
 
-      <div className="h-[3px] rounded-full overflow-hidden" style={{ background: "var(--bg-elevated)" }}>
+      {/* Shimmer progress bar */}
+      <div className="h-[4px] rounded-full overflow-hidden" style={{ background: "var(--bg-elevated)" }}>
         <div
-          className="h-full rounded-full transition-all duration-500"
-          style={{ width: `${Math.max(progress, 8)}%`, background: "linear-gradient(90deg, var(--accent), #10b981)" }}
+          className="h-full rounded-full"
+          style={{
+            width: `${progress}%`,
+            transition: "width 600ms ease-in-out",
+            background: "linear-gradient(90deg, #2563eb, #10b981, #60a5fa, #10b981, #2563eb)",
+            backgroundSize: "300% 100%",
+            animation: "shimmer 2.2s linear infinite",
+          }}
         />
       </div>
 
       <div className="space-y-1">
         {PIPELINE_STAGES.map((stage, i) => {
           const status = getStageStatus(i, currentStep);
-          const isFetchStep = status === "active" && stage.group === "fetching" && stage.label === "Parallel data fetch";
+          const isFetchStep = status === "active" && stage.label === "Parallel data fetch";
 
           return (
             <div key={i}>
               <div
-                className="flex items-center gap-3 px-3 py-2 rounded-xl transition-colors"
-                style={{ background: status === "active" ? "var(--bg-elevated)" : "transparent", opacity: status === "pending" ? 0.35 : 1 }}
+                className="flex items-center gap-3 px-3 py-2 rounded-xl"
+                style={{
+                  background: status === "active" ? "var(--bg-elevated)" : "transparent",
+                  opacity: status === "pending" ? 0.35 : 1,
+                  transition: "background 300ms, opacity 300ms",
+                  animation: status === "active" ? "rowGlow 1.6s ease-in-out infinite" : undefined,
+                }}
               >
                 <div
                   className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 text-[11px] font-bold"
@@ -200,11 +247,19 @@ export const LoadingScreen: React.FC<LoadingScreenProps> = ({ currentStep, fetch
                   ) : i + 1}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <span className="text-sm" style={{ color: status === "done" ? "#10b981" : status === "active" ? "var(--text-primary)" : "var(--text-muted)", fontWeight: status === "active" ? 600 : 400 }}>
+                  <span
+                    className="text-sm"
+                    style={{
+                      color: status === "done" ? "#10b981" : status === "active" ? "var(--text-primary)" : "var(--text-muted)",
+                      fontWeight: status === "active" ? 600 : 400,
+                    }}
+                  >
                     {stage.label}
                   </span>
                   {status === "active" && (
-                    <p className="text-[11px] leading-tight" style={{ color: "var(--text-muted)" }}>{stage.description}</p>
+                    <p className="text-[11px] leading-tight" style={{ color: "var(--text-muted)" }}>
+                      {stage.description}
+                    </p>
                   )}
                 </div>
               </div>

@@ -174,6 +174,7 @@ function QueryContent() {
       {streamingBluf && (isLoading || error) && !result && (
         <div className="space-y-5">
           <AdaptiveResultRenderer
+            hideEvidenceBar
             data={{
               query_type: "adaptive",
               bluf: streamingBluf,
