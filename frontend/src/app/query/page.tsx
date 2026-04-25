@@ -150,7 +150,8 @@ function QueryContent() {
         <SearchBar onSubmit={submitQuery} isLoading={isLoading} />
       </div>
 
-      {visibleError && (
+      {/* Only show the full error banner when there's no partial BLUF to show */}
+      {visibleError && !streamingBluf && (
         <ErrorBanner message={visibleError} onDismiss={handleDismissError} />
       )}
 
@@ -205,6 +206,10 @@ function QueryContent() {
                 </span>
               </div>
             </Card>
+          )}
+          {/* Error note shown beneath partial results — only when BLUF already rendered */}
+          {visibleError && !isLoading && (
+            <ErrorBanner message={visibleError} onDismiss={handleDismissError} />
           )}
         </div>
       )}
