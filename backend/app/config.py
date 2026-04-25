@@ -59,11 +59,18 @@ class Settings(BaseSettings):
     max_request_body_bytes: int = 65536  # 64KB
     max_query_length: int = 2000
 
-    # Rate limiting
+    # Rate limiting — path-aware buckets
     rate_limit_ip_per_minute: int = 100
-    rate_limit_key_per_minute: int = 10
-    rate_limit_free_key_per_minute: int = 20
+    rate_limit_key_per_minute: int = 10  # kept for backward-compat; unused in path-aware logic
+    # General bucket (auth writes, documents, etc.)
+    rate_limit_free_key_per_minute: int = 30   # raised from 20; queries/suggestions now in own buckets
     rate_limit_premium_key_per_minute: int = 60
+    # Query bucket — /api/v1/query/* (LLM calls — the expensive resource to protect)
+    rate_limit_query_free_per_minute: int = 10
+    rate_limit_query_premium_per_minute: int = 30
+    # Suggestions bucket — /api/v1/suggestions* (keystroke-driven autocomplete, never blocks queries)
+    rate_limit_suggest_free_per_minute: int = 60
+    rate_limit_suggest_premium_per_minute: int = 120
 
     # LLM
     llm_timeout_seconds: int = 90  # disease format at 6144 tokens needs ~55s on Sonnet

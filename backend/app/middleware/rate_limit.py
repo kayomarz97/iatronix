@@ -71,7 +71,7 @@ class PreAuthRateLimitMiddleware(BaseHTTPMiddleware):
         cf_ip = request.headers.get("cf-connecting-ip")
         forwarded = request.headers.get("x-forwarded-for")
         real_ip = request.headers.get("x-real-ip")
-        
+
         if cf_ip:
             client_ip = cf_ip
         elif forwarded:
@@ -111,22 +111,83 @@ class PreAuthRateLimitMiddleware(BaseHTTPMiddleware):
         return response
 
 
-async def check_per_key_rate_limit(request: Request, key_id: str) -> bool:
-    """Post-auth per-key rate limit check using tier-aware limits."""
-    key = f"rate:key:{key_id}"
-    user = getattr(request.state, "user", None)
-    user_tier = getattr(user, "tier", "free") if user else "free"
+# ---------------------------------------------------------------------------
+# Per-key (post-auth) rate limiting — path-aware tiered buckets
+# ---------------------------------------------------------------------------
+
+# GET-only endpoints that the UI polls constantly — never count against any bucket.
+# These are idempotent reads; charging them would make the settings page unusable.
+_EXEMPT_PATHS: frozenset[str] = frozenset({
+    "/api/v1/auth/me",
+    "/api/v1/auth/llm-key",
+    "/api/v1/auth/openrouter/status",
+    "/api/v1/service-keys",
+})
+
+
+def _is_exempt(method: str, path: str) -> bool:
+    if method != "GET":
+        return False
+    return path in _EXEMPT_PATHS or path.startswith("/api/v1/history")
+
+
+def _resolve_bucket(path: str, uid: str, is_premium: bool) -> tuple[str, int]:
+    """Return (redis_key, limit) for the appropriate rate-limit bucket."""
+    if path.startswith("/api/v1/query"):
+        limit = (
+            settings.rate_limit_query_premium_per_minute
+            if is_premium
+            else settings.rate_limit_query_free_per_minute
+        )
+        return f"rate:query:{uid}", limit
+
+    if path.startswith("/api/v1/suggestions"):
+        limit = (
+            settings.rate_limit_suggest_premium_per_minute
+            if is_premium
+            else settings.rate_limit_suggest_free_per_minute
+        )
+        return f"rate:suggest:{uid}", limit
+
+    # General bucket — everything else (auth writes, document uploads, etc.)
     limit = (
         settings.rate_limit_premium_key_per_minute
-        if user_tier == "premium"
+        if is_premium
         else settings.rate_limit_free_key_per_minute
     )
+    return f"rate:key:{uid}", limit
+
+
+async def check_per_key_rate_limit(
+    request: Request,
+    key_id: str,
+    user=None,
+) -> bool:
+    """Post-auth per-key rate limit check.
+
+    Routes each request into one of three independent Redis buckets (query /
+    suggestions / general) based on path, with per-bucket per-tier limits.
+    Idempotent GET reads used by the UI are exempt entirely.
+
+    `user` must be passed by the caller — request.state.user is not yet set
+    when this function runs inside FirebaseAuthMiddleware.
+    """
+    path = request.url.path
+
+    if _is_exempt(request.method, path):
+        return False
+
+    is_premium = getattr(user, "tier", "free") == "premium"
+    redis_key, limit = _resolve_bucket(path, key_id, is_premium)
+
     redis_client = getattr(request.app.state, "redis", None)
     if redis_client:
-        limited, remaining, reset_ts = await _check_redis_rate_limit(redis_client, key, limit)
-        # Attach headers to response via request.state for downstream middleware
+        limited, remaining, reset_ts = await _check_redis_rate_limit(
+            redis_client, redis_key, limit
+        )
         request.state.ratelimit_limit = limit
         request.state.ratelimit_remaining = remaining
         request.state.ratelimit_reset = reset_ts
         return limited
-    return _fallback_limiter.is_rate_limited(key, limit)
+
+    return _fallback_limiter.is_rate_limited(redis_key, limit)
