@@ -29,7 +29,7 @@ except ValueError:
 EXEMPT_PATHS = {
     "/api/v1/health",
     "/api/v1/health/",
-    "/api/v1/auth/openrouter/login",
+    # /login is now authenticated (POST with Bearer token) — only callback stays exempt
     "/api/v1/auth/openrouter/callback",
 }
 

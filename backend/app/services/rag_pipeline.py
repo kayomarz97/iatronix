@@ -1538,7 +1538,23 @@ async def process_query(
     # Resolve user's BYOK key (only user-supplied key is used — no server .env fallback)
     user_llm_key: str | None = None
     user_llm_provider: str | None = None
-    if user and user.encrypted_llm_key:
+
+    # Determine intent from the requested model — a "/" in the model ID means OpenRouter.
+    # This lets users with both a BYOK key and an OAuth OpenRouter key pick either engine.
+    _wants_openrouter = bool(request.model_id and "/" in request.model_id)
+
+    # If request targets an OpenRouter model AND the user has an OAuth key, prefer it.
+    use_chat_service = False
+    if _wants_openrouter and user and getattr(user, "openrouter_key", None):
+        from app.services.byok import decrypt_key as _decrypt_or_key
+        _or_key = _decrypt_or_key(user.openrouter_key)
+        if _or_key:
+            user_llm_key = _or_key
+            user_llm_provider = "openrouter"
+            use_chat_service = True
+
+    # Fall back to manual BYOK key (Anthropic / OpenAI / manual OpenRouter key)
+    if user_llm_key is None and user and user.encrypted_llm_key:
         from app.services.byok import decrypt_key
 
         user_llm_key = decrypt_key(user.encrypted_llm_key)
@@ -1557,9 +1573,8 @@ async def process_query(
                 latency_ms=latency_ms,
             )
 
-    # If user has an OAuth-linked OpenRouter key and no manual BYOK key,
-    # use the OAuth key with Gemma 4 primary model.
-    use_chat_service = False
+    # If no BYOK key either, check for OAuth OpenRouter key as a final fallback
+    # (handles case where user only has OAuth key and didn't send an OpenRouter model_id)
     if user_llm_key is None and user and getattr(user, "openrouter_key", None):
         from app.services.byok import decrypt_key as _decrypt_or_key
         _or_key = _decrypt_or_key(user.openrouter_key)

@@ -1,8 +1,8 @@
 """OpenRouter OAuth PKCE flow.
 
 Routes:
-  GET  /auth/openrouter/login     — initiate PKCE; redirect to OpenRouter
-  GET  /auth/openrouter/callback  — receive code; exchange for key; save encrypted
+  POST /auth/openrouter/login     — authenticated; stores uid+verifier in Redis; returns {redirect_url}
+  GET  /auth/openrouter/callback  — unauthenticated browser redirect; exchanges code; saves key
   DELETE /auth/openrouter/key     — disconnect (authenticated)
   GET  /auth/openrouter/status    — check connection status (authenticated)
 """
@@ -16,7 +16,7 @@ from urllib.parse import urlencode
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -45,9 +45,15 @@ def _get_authenticated_user(request: Request) -> User:
     return user
 
 
-@router.get("/login")
+@router.post("/login")
 async def openrouter_login(request: Request):
-    """Start PKCE flow — redirect to OpenRouter auth page."""
+    """Start PKCE flow — authenticated endpoint.
+
+    Stores {uid, code_verifier} in Redis keyed by state, then returns
+    {redirect_url} for the frontend to navigate to.
+    """
+    user = _get_authenticated_user(request)
+
     redis = getattr(request.app.state, "redis", None)
     if redis is None:
         raise HTTPException(503, "Redis unavailable — cannot initiate OAuth flow")
@@ -56,7 +62,9 @@ async def openrouter_login(request: Request):
     state = secrets.token_urlsafe(32)
     code_challenge = _code_challenge(code_verifier)
 
-    await redis.setex(f"pkce:{state}", _PKCE_TTL, code_verifier)
+    # Store both uid and code_verifier so the unauthenticated callback can identify the user
+    pkce_payload = json.dumps({"uid": user.firebase_uid, "verifier": code_verifier})
+    await redis.setex(f"pkce:{state}", _PKCE_TTL, pkce_payload)
 
     callback_base = settings.openrouter_callback_base.rstrip("/")
     callback_url = f"{callback_base}/api/v1/auth/openrouter/callback?state={state}"
@@ -67,7 +75,7 @@ async def openrouter_login(request: Request):
         "code_challenge_method": "S256",
     })
     redirect_to = f"{settings.openrouter_oauth_url}?{params}"
-    return RedirectResponse(url=redirect_to, status_code=302)
+    return JSONResponse({"redirect_url": redirect_to})
 
 
 @router.get("/callback")
@@ -79,21 +87,30 @@ async def openrouter_callback(
 ):
     """OpenRouter redirects here after user authorizes.
 
-    Validates state, exchanges code for key, encrypts and saves it.
+    Unauthenticated browser redirect — user identity is recovered from Redis state payload.
     """
     redis = getattr(request.app.state, "redis", None)
     if redis is None:
         raise HTTPException(503, "Redis unavailable")
 
-    # Validate state (CSRF check)
     if not state or not code:
         raise HTTPException(400, "Missing state or code parameters")
 
-    code_verifier = await redis.get(f"pkce:{state}")
-    if not code_verifier:
-        raise HTTPException(400, "Invalid or expired state parameter")
+    raw_payload = await redis.get(f"pkce:{state}")
+    if not raw_payload:
+        logger.warning("OpenRouter callback: invalid or expired state %s", state[:8])
+        callback_base = settings.openrouter_callback_base.rstrip("/")
+        return RedirectResponse(url=f"{callback_base}/settings?openrouter=expired", status_code=302)
 
     await redis.delete(f"pkce:{state}")
+
+    try:
+        payload = json.loads(raw_payload)
+        firebase_uid = payload["uid"]
+        code_verifier = payload["verifier"]
+    except (json.JSONDecodeError, KeyError) as exc:
+        logger.error("OpenRouter callback: malformed PKCE payload: %s", exc)
+        raise HTTPException(400, "Malformed state payload") from exc
 
     # Exchange code for OpenRouter key
     try:
@@ -120,24 +137,18 @@ async def openrouter_callback(
     if not raw_key:
         raise HTTPException(502, "OpenRouter did not return a key")
 
-    # The callback is unauthenticated (browser redirect), so we must identify
-    # the user by firebase_uid embedded in the state payload.
-    # Since we only store code_verifier in Redis (not uid), we rely on the
-    # user being logged in via cookie / Firebase auth middleware.
-    user = getattr(request.state, "user", None)
-    if user is None:
-        # Cannot save key without knowing who the user is — redirect to login
-        return RedirectResponse(
-            url="/settings?openrouter=auth_required", status_code=302
-        )
+    # Look up user by Firebase UID (recovered from Redis, no auth header needed)
+    result = await session.execute(select(User).where(User.firebase_uid == firebase_uid))
+    db_user = result.scalar_one_or_none()
+    if db_user is None:
+        logger.error("OpenRouter callback: no user found for uid %s", firebase_uid[:8])
+        callback_base = settings.openrouter_callback_base.rstrip("/")
+        return RedirectResponse(url=f"{callback_base}/settings?openrouter=user_not_found", status_code=302)
 
     encrypted = encrypt_key(raw_key)
-
-    result = await session.execute(select(User).where(User.id == user.id))
-    db_user = result.scalar_one()
     db_user.openrouter_key = encrypted
     await session.commit()
-    invalidate_user_cache(user.firebase_uid)
+    invalidate_user_cache(firebase_uid)
 
     callback_base = settings.openrouter_callback_base.rstrip("/")
     return RedirectResponse(
