@@ -127,6 +127,7 @@ class Settings(BaseSettings):
     parallel_sections_enabled: bool = True
     parallel_sections_max_tokens: int = 8192  # per-section token budget
     parallel_bluf_max_tokens: int = 6144  # BLUF+titles+flowcharts+tables phase token budget
+    parallel_sections_max_concurrent: int = 3  # max simultaneous LLM calls — keeps token/min under Anthropic limits
 
     # External API fetching
     api_fetch_enabled: bool = True
