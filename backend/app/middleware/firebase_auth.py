@@ -95,7 +95,7 @@ class FirebaseAuthMiddleware(BaseHTTPMiddleware):
             return JSONResponse(status_code=401, content={"detail": "User account expired"})
 
         # Per-key rate limit (post-auth) - using uid as key
-        if await check_per_key_rate_limit(request, uid):
+        if await check_per_key_rate_limit(request, uid, user=user):
             return JSONResponse(
                 status_code=429,
                 content={"detail": "Per-user rate limit exceeded"},
