@@ -186,7 +186,45 @@ function QueryContent() {
               images: [],
             }}
           />
-          {isLoading && (
+
+          {/* Skeleton cards for sections not yet arrived */}
+          {isLoading && streamingSectionTitles.length > 0 && (() => {
+            const arrivedTitles = new Set(streamingSections.map(s => s.title));
+            const pending = streamingSectionTitles.filter(t => !arrivedTitles.has(t));
+            return pending.map((title, i) => (
+              <div
+                key={`pending-${i}`}
+                className="rounded-2xl border border-border/40 bg-[var(--bg-surface)] px-5 py-4 space-y-3 animate-pulse"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-accent/50" />
+                  <span className="text-sm font-semibold text-text-secondary">{title}</span>
+                </div>
+                <div className="space-y-2">
+                  <div className="h-2.5 rounded-full bg-[var(--bg-elevated)] w-full" />
+                  <div className="h-2.5 rounded-full bg-[var(--bg-elevated)] w-5/6" />
+                  <div className="h-2.5 rounded-full bg-[var(--bg-elevated)] w-4/6" />
+                </div>
+              </div>
+            ));
+          })()}
+
+          {isLoading && streamingSectionTitles.length > 0 && (
+            <div className="flex items-center gap-2 px-1 text-xs text-text-muted">
+              <span className="inline-flex gap-1">
+                {[0, 150, 300].map(delay => (
+                  <span key={delay}
+                    className="w-1 h-1 rounded-full bg-accent animate-bounce"
+                    style={{ animationDelay: `${delay}ms` }} />
+                ))}
+              </span>
+              <span>
+                {streamingSections.length} of {streamingSectionTitles.length} sections complete
+              </span>
+            </div>
+          )}
+
+          {isLoading && streamingSectionTitles.length === 0 && (
             <Card>
               <div className="flex items-center gap-3 text-sm text-text-muted">
                 <span className="inline-flex gap-1">
@@ -196,17 +234,11 @@ function QueryContent() {
                       style={{ animationDelay: `${delay}ms` }} />
                   ))}
                 </span>
-                <span>
-                  Generating detailed sections…
-                  {streamingSections.length > 0 && streamingSectionTitles.length > 0 && (
-                    <span className="ml-1.5 font-mono text-xs text-accent">
-                      {streamingSections.length} of {streamingSectionTitles.length} complete
-                    </span>
-                  )}
-                </span>
+                <span>Generating detailed sections…</span>
               </div>
             </Card>
           )}
+
           {/* Error note shown beneath partial results — only when BLUF already rendered */}
           {visibleError && !isLoading && (
             <ErrorBanner message={visibleError} onDismiss={handleDismissError} />
