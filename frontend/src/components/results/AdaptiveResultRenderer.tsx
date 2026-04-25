@@ -248,7 +248,7 @@ function EvidenceGlossary() {
         className="w-full flex items-center justify-between px-4 py-2.5 bg-muted/40 hover:bg-muted/60 transition-colors text-left"
       >
         <span className="font-medium text-foreground">
-          Evidence Grading Explained (ACC/AHA Framework)
+          Evidence Grading Explained
         </span>
         <span className="text-muted-foreground">{open ? "▲" : "▼"}</span>
       </button>

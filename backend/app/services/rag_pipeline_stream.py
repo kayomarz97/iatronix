@@ -80,6 +80,8 @@ async def stream_query(
                 yield f"event: token\ndata: {json.dumps({'text': payload})}\n\n"
             elif kind == "bluf":
                 yield f"event: bluf\ndata: {json.dumps(payload)}\n\n"
+            elif kind == "fetch_articles":
+                yield f"event: fetch_articles\ndata: {json.dumps(payload)}\n\n"
             elif kind == "section_complete":
                 yield f"event: section_complete\ndata: {json.dumps(payload)}\n\n"
             elif kind == "done":
