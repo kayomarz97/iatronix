@@ -69,6 +69,7 @@ class UserProfileResponse(BaseModel):
     tier: str
     llm_provider: Optional[str]
     has_llm_key: bool  # True if encrypted_llm_key is set (never expose the key itself)
+    has_openrouter_key: bool = False
     preferences: dict
     newsletter_consent: bool
     last_login: Optional[str]

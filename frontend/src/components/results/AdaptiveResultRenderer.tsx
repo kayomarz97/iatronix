@@ -21,6 +21,8 @@ interface Props {
   data: AdaptiveResponse;
   fetchSources?: string[];
   hideEvidenceBar?: boolean;
+  isFallback?: boolean;
+  fallbackModel?: string | null;
 }
 
 // ── LOE / COR colour maps ────────────────────────────────────────────────────
@@ -338,11 +340,17 @@ function MedicalImageRenderer({ images }: { images?: AdaptiveImage[] }) {
 }
 
 // ── Main renderer ────────────────────────────────────────────────────────────
-export function AdaptiveResultRenderer({ data, fetchSources, hideEvidenceBar }: Props) {
+export function AdaptiveResultRenderer({ data, fetchSources, hideEvidenceBar, isFallback, fallbackModel }: Props) {
   const router = useRouter();
 
   return (
     <div className="space-y-5">
+      {isFallback && (
+        <div className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-xs text-amber-400">
+          <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+          Using backup model{fallbackModel ? ` (${fallbackModel.split("/").pop()})` : ""}
+        </div>
+      )}
       <ResultHero
         eyebrow="Adaptive Answer"
         title={data.bluf.headline}

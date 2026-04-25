@@ -1373,6 +1373,7 @@ async def _run_parallel_pipeline(
     condition_context: str | None,
     comparative_is_drug: bool,
     structured_callback,
+    use_chat_service: bool = False,
 ) -> dict | None:
     """Two-phase parallel generation. Returns parsed dict compatible with AdaptiveResponse or None."""
     provider = user_llm_provider or get_provider(effective_model)
@@ -1385,9 +1386,32 @@ async def _run_parallel_pipeline(
         condition_context=condition_context,
         comparative_is_drug=comparative_is_drug,
     )
-    bluf_llm = create_llm(effective_model, max_tokens=settings.parallel_bluf_max_tokens,
-                          user_key=user_llm_key, user_provider=user_llm_provider)
-    bluf_raw, bluf_usage = await _call_llm_simple(bluf_llm, provider, bluf_system, bluf_data, bluf_user)
+    _is_fallback = False
+    if use_chat_service and user_llm_provider == "openrouter":
+        from app.services.chat_service import chat_with_fallback
+        from langchain_core.messages import HumanMessage, SystemMessage as _SM
+
+        _bluf_msgs = [
+            _SM(content=bluf_system + ("\n\n" + bluf_data if bluf_data else "")),
+            HumanMessage(content=bluf_user),
+        ]
+        _bluf_result, _is_fallback = await chat_with_fallback(
+            _bluf_msgs, user_llm_key, settings.parallel_bluf_max_tokens, effective_model
+        )
+        bluf_raw = _bluf_result.content if isinstance(_bluf_result.content, str) else None
+        bluf_usage = {}
+        if _is_fallback and structured_callback:
+            try:
+                await structured_callback("model_info", {
+                    "is_fallback": True,
+                    "model": settings.openrouter_gemma_fallback,
+                })
+            except Exception:
+                pass
+    else:
+        bluf_llm = create_llm(effective_model, max_tokens=settings.parallel_bluf_max_tokens,
+                              user_key=user_llm_key, user_provider=user_llm_provider)
+        bluf_raw, bluf_usage = await _call_llm_simple(bluf_llm, provider, bluf_system, bluf_data, bluf_user)
     bluf_parsed = parse_llm_json(bluf_raw) if bluf_raw else None
     if not bluf_parsed:
         logger.warning("parallel_pipeline: BLUF call failed or unparseable")
@@ -1523,6 +1547,22 @@ async def process_query(
                 latency_ms=latency_ms,
             )
 
+    # If user has an OAuth-linked OpenRouter key and no manual BYOK key,
+    # use the OAuth key with Gemma 4 primary model.
+    use_chat_service = False
+    if user_llm_key is None and user and getattr(user, "openrouter_key", None):
+        from app.services.byok import decrypt_key as _decrypt_or_key
+        _or_key = _decrypt_or_key(user.openrouter_key)
+        if _or_key:
+            user_llm_key = _or_key
+            user_llm_provider = "openrouter"
+            use_chat_service = True
+            # Default to Gemma 4 primary if request doesn't specify a model
+            if not request.model_id or "/" not in request.model_id:
+                request = request.model_copy(
+                    update={"model_id": settings.openrouter_gemma_primary}
+                )
+
     # Fetch voyage API key (for Anthropic users who want vector search),
     # NCBI API key (for PubMed rate limit increase), and user email (for Unpaywall)
     user_voyage_key: str | None = None
@@ -1561,10 +1601,17 @@ async def process_query(
     speculative_type, _ = classify_query(request.query)
 
     # Run DSPy analysis, Redis cache check, and query rewriter in parallel
+    # For OpenRouter users, use their chosen model for DSPy classification —
+    # settings.model_classify is a Claude Haiku ID that OpenRouter doesn't recognise.
+    _dspy_classify_model = (
+        normalized_request_model
+        if user_llm_provider == "openrouter"
+        else settings.model_classify
+    )
     _dspy_result, _cache_prefetch, _rewritten = await asyncio.gather(
         _analyze_query_with_dspy(
             request.query,
-            model_id=settings.model_classify,
+            model_id=_dspy_classify_model,
             user_key=user_llm_key,
             user_provider=user_llm_provider,
         ),
@@ -1920,6 +1967,7 @@ async def process_query(
             condition_context=condition_context,
             comparative_is_drug=comparative_is_drug,
             structured_callback=structured_callback,
+            use_chat_service=use_chat_service,
         )
         if parallel_parsed is not None:
             _gen_usage = parallel_parsed.pop("_parallel_usage", {})

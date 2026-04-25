@@ -118,7 +118,7 @@ function ErrorBanner({ message, onDismiss }: { message: string; onDismiss: () =>
 }
 
 function QueryContent() {
-  const { result, streamingText, streamingBluf, streamingSections, streamingSectionTitles, streamingFlowcharts, streamingTables, fetchedArticles, isLoading, loadingStage, error, activeModelName, submitQuery, clearResult } = useQueryContext();
+  const { result, streamingText, streamingBluf, streamingSections, streamingSectionTitles, streamingFlowcharts, streamingTables, fetchedArticles, isLoading, loadingStage, error, activeModelName, isFallback, fallbackModel, submitQuery, clearResult } = useQueryContext();
   const { user } = useAuth();
   const searchParams = useSearchParams();
   const lastAutoSubmit = useRef<string | null>(null);
@@ -286,7 +286,7 @@ function QueryContent() {
             <div className="flex gap-5 items-start">
               <SidebarNav data={result.response as AdaptiveResponse} />
               <div className="flex-1 min-w-0">
-                <AdaptiveResultRenderer data={result.response as AdaptiveResponse} fetchSources={result.fetch_sources} />
+                <AdaptiveResultRenderer data={result.response as AdaptiveResponse} fetchSources={result.fetch_sources} isFallback={isFallback} fallbackModel={fallbackModel} />
               </div>
             </div>
           )}

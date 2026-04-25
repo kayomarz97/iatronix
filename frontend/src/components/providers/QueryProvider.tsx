@@ -50,6 +50,8 @@ interface QueryContextType {
   loadingStage: string;
   error: string | null;
   activeModelName: string;
+  isFallback: boolean;
+  fallbackModel: string | null;
   submitQuery: (query: string) => Promise<void>;
   clearResult: () => void;
 }
@@ -71,6 +73,8 @@ export function QueryProvider({ children }: { children: ReactNode }) {
   const [loadingStage, setLoadingStage] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const [activeModelName, setActiveModelName] = useState(PROVIDER_DEFAULT_MODEL_NAMES.anthropic);
+  const [isFallback, setIsFallback] = useState(false);
+  const [fallbackModel, setFallbackModel] = useState<string | null>(null);
 
   useEffect(() => {
     const provider = localStorage.getItem(LLM_PROVIDER_STORAGE_KEY) || "anthropic";
@@ -100,6 +104,8 @@ export function QueryProvider({ children }: { children: ReactNode }) {
     setFetchedArticles([]);
     setError(null);
     setResult(null);
+    setIsFallback(false);
+    setFallbackModel(null);
 
     const queryStart = Date.now();
 
@@ -117,6 +123,11 @@ export function QueryProvider({ children }: { children: ReactNode }) {
           if (flowcharts) setStreamingFlowcharts(flowcharts);
           if (tables) setStreamingTables(tables);
           setLoadingStage("generating");
+        } else if (event.type === "model_info") {
+          if (event.payload.is_fallback) {
+            setIsFallback(true);
+            setFallbackModel(event.payload.model);
+          }
         } else if (event.type === "fetch_articles") {
           setFetchedArticles(event.payload.titles);
         } else if (event.type === "section_complete") {
@@ -186,8 +197,8 @@ export function QueryProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ result, streamingText, streamingBluf, streamingSections, streamingSectionTitles, streamingFlowcharts, streamingTables, fetchedArticles, isLoading, loadingStage, error, activeModelName, submitQuery, clearResult }),
-    [result, streamingText, streamingBluf, streamingSections, streamingSectionTitles, streamingFlowcharts, streamingTables, fetchedArticles, isLoading, loadingStage, error, activeModelName, submitQuery, clearResult]
+    () => ({ result, streamingText, streamingBluf, streamingSections, streamingSectionTitles, streamingFlowcharts, streamingTables, fetchedArticles, isLoading, loadingStage, error, activeModelName, isFallback, fallbackModel, submitQuery, clearResult }),
+    [result, streamingText, streamingBluf, streamingSections, streamingSectionTitles, streamingFlowcharts, streamingTables, fetchedArticles, isLoading, loadingStage, error, activeModelName, isFallback, fallbackModel, submitQuery, clearResult]
   );
 
   return <QueryContext.Provider value={value}>{children}</QueryContext.Provider>;
