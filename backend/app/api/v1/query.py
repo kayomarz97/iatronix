@@ -31,6 +31,8 @@ async def query_stream_endpoint(request: Request, body: QueryRequest):
         try:
             async for chunk in stream_query(body, redis_client, user_key_id, user=user):
                 yield chunk
+        except asyncio.CancelledError:
+            logger.info("SSE stream cancelled — client disconnected")
         except Exception:
             logger.exception("SSE stream error")
             import json

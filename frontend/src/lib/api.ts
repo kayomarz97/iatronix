@@ -6,7 +6,7 @@ export type StreamEvent =
   | { type: "bluf"; payload: AdaptiveBLUF & { section_titles?: string[]; flowcharts?: AdaptiveFlowchart[]; tables?: AdaptiveTable[] } }
   | { type: "section_complete"; payload: AdaptiveSection & { index: number } }
   | { type: "done"; payload: { result: QueryResponse } }
-  | { type: "error"; payload: { detail: string } };
+  | { type: "error"; payload: { detail: string; error_type?: string } };
 
 export async function* submitQueryStream(
   query: string,

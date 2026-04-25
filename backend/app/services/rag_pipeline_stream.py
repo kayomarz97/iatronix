@@ -47,7 +47,13 @@ async def stream_query(
             await queue.put(("done", result))
         except Exception as exc:
             logger.exception("stream_query error")
-            await queue.put(("error", str(exc)))
+            err_str = str(exc)
+            is_rate_limit = "429" in err_str or "rate_limit" in err_str.lower() or "overloaded" in err_str.lower()
+            err_payload = {
+                "detail": "Service temporarily busy. Your partial results are preserved." if is_rate_limit else err_str,
+                "error_type": "rate_limit" if is_rate_limit else "pipeline_error",
+            }
+            await queue.put(("error", err_payload))
         finally:
             await queue.put(_SENTINEL)
 
@@ -80,11 +86,11 @@ async def stream_query(
                 yield f"event: done\ndata: {json.dumps({'result': payload.model_dump()})}\n\n"
                 break
             elif kind == "error":
-                yield f"event: error\ndata: {json.dumps({'detail': payload})}\n\n"
+                yield f"event: error\ndata: {json.dumps(payload)}\n\n"
                 break
     finally:
         pipeline_task.cancel()
         try:
-            await pipeline_task
+            await asyncio.shield(asyncio.gather(pipeline_task, return_exceptions=True))
         except (asyncio.CancelledError, Exception):
             pass
