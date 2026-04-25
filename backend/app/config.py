@@ -118,9 +118,10 @@ class Settings(BaseSettings):
     openrouter_token_url: str = "https://openrouter.ai/api/v1/auth/keys"
     openrouter_callback_base: str = ""  # Set per-env in .env — e.g. https://med.debkay.com
 
-    # Gemma 4 model routing
+    # Gemma 4 model routing — 3-model fallback chain
     openrouter_gemma_primary: str = "google/gemma-4-31b-it"
     openrouter_gemma_fallback: str = "google/gemma-4-26b-a4b-it:free"
+    openrouter_meta_fallback: str = "meta-llama/llama-3.3-70b-instruct:free"
 
     # BYOK-only: these fields are unused (kept for backward compat with .env files)
     # All LLM calls use the user's own key from the frontend Settings page

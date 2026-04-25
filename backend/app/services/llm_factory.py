@@ -54,7 +54,7 @@ def create_llm(
             api_key=api_key,
             max_tokens=effective_max_tokens,
             timeout=settings.llm_timeout_seconds,
-            max_retries=0,
+            max_retries=2,  # LangChain handles exponential backoff; reduces transient 429/overload errors
         )
     elif provider == "gemini":
         try:
@@ -79,6 +79,7 @@ def create_llm(
             api_key=api_key,
             max_tokens=effective_max_tokens,
             timeout=settings.llm_timeout_seconds,
+            max_retries=1,
         )
     elif provider == "openrouter":
         return ChatOpenAI(

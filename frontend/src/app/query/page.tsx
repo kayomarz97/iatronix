@@ -292,25 +292,37 @@ function QueryContent() {
           )}
 
           {/* Token usage breakdown */}
-          {result.token_usage && (
-            <div className="mt-3 rounded-lg border bg-surface-alt p-3 text-xs space-y-1">
-              {result.token_usage.models.map((m) => (
-                <div key={m.model_id} className="flex justify-between gap-4">
-                  <span className="font-mono text-text-muted">{m.model_id}</span>
-                  <span>{m.input_tokens.toLocaleString()} in · ${m.input_cost_usd.toFixed(5)}</span>
-                  <span>{m.output_tokens.toLocaleString()} out · ${m.output_cost_usd.toFixed(5)}</span>
-                  <span className="font-semibold">${m.subtotal_usd.toFixed(5)}</span>
+          {result.token_usage && (() => {
+            const showCost = result.token_usage.total_cost_usd > 0;
+            return (
+              <div className="mt-3 rounded-lg border bg-surface-alt p-3 text-xs space-y-1">
+                {result.token_usage.models.map((m) => (
+                  <div key={m.model_id} className="flex justify-between gap-4">
+                    <span className="font-mono text-text-muted">{m.model_id}</span>
+                    <span>
+                      {m.input_tokens.toLocaleString()} in
+                      {showCost && ` · $${m.input_cost_usd.toFixed(5)}`}
+                    </span>
+                    <span>
+                      {m.output_tokens.toLocaleString()} out
+                      {showCost && ` · $${m.output_cost_usd.toFixed(5)}`}
+                    </span>
+                    {showCost && <span className="font-semibold">${m.subtotal_usd.toFixed(5)}</span>}
+                  </div>
+                ))}
+                <div className="flex justify-between border-t pt-1 font-bold">
+                  <span>
+                    Total — {result.token_usage.total_input_tokens.toLocaleString()} in /{" "}
+                    {result.token_usage.total_output_tokens.toLocaleString()} out
+                  </span>
+                  {showCost && <span>${result.token_usage.total_cost_usd.toFixed(5)}</span>}
                 </div>
-              ))}
-              <div className="flex justify-between border-t pt-1 font-bold">
-                <span>
-                  Total — {result.token_usage.total_input_tokens.toLocaleString()} in /{" "}
-                  {result.token_usage.total_output_tokens.toLocaleString()} out
-                </span>
-                <span>${result.token_usage.total_cost_usd.toFixed(5)}</span>
+                {result.token_usage.note && (
+                  <p className="text-text-muted mt-1 opacity-70">{result.token_usage.note}</p>
+                )}
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           <DisclaimerBanner
             disclaimer={result.disclaimer}

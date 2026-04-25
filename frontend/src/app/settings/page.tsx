@@ -61,10 +61,19 @@ export default function SettingsPage() {
     setEmail(localStorage.getItem("iatronix_email") || "");
     const savedEngine = localStorage.getItem("iatronix_engine_pref") as "anthropic" | "openrouter" | null;
     if (savedEngine) setEnginePref(savedEngine);
+    // Immediately show last-known OpenRouter status from profile cache (no network flash)
+    try {
+      const cached = localStorage.getItem("iatronix_profile");
+      if (cached) {
+        const p = JSON.parse(cached);
+        if (typeof p.has_openrouter_key === "boolean") {
+          setOpenrouterConnected(p.has_openrouter_key);
+        }
+      }
+    } catch {}
     fetchProfile();
     fetchLlmStatus();
     fetchNcbiStatus();
-    fetchOpenrouterStatus();
   }, []);
 
   const getApiKey = () => localStorage.getItem(API_KEY_STORAGE_KEY) || "";
@@ -79,6 +88,17 @@ export default function SettingsPage() {
         const data = await res.json();
         setProfile(data);
         localStorage.setItem("iatronix_profile", JSON.stringify(data));
+        // Sync OpenRouter status from profile (avoids a separate round-trip)
+        if (typeof data.has_openrouter_key === "boolean") {
+          setOpenrouterConnected(data.has_openrouter_key);
+        }
+        // Sync engine pref from server — server is source of truth
+        if (data.preferences?.engine_pref) {
+          const serverPref = data.preferences.engine_pref as "anthropic" | "openrouter";
+          setEnginePref(serverPref);
+          localStorage.setItem(LLM_PROVIDER_STORAGE_KEY, serverPref);
+          localStorage.setItem("iatronix_engine_pref", serverPref);
+        }
       }
     } catch {}
   };
@@ -91,7 +111,8 @@ export default function SettingsPage() {
       if (res.ok) {
         const data = await res.json();
         setLlmStatus(data);
-        if (data.is_set && data.provider) localStorage.setItem(LLM_PROVIDER_STORAGE_KEY, data.provider);
+        // Do NOT write LLM_PROVIDER_STORAGE_KEY here — that would override the user's
+        // engine preference (Anthropic vs OpenRouter). Engine pref is synced via fetchProfile.
       }
     } catch {}
   };
@@ -239,18 +260,6 @@ export default function SettingsPage() {
     }
   };
 
-  const fetchOpenrouterStatus = async () => {
-    const apiKey = getApiKey();
-    if (!apiKey) return;
-    try {
-      const res = await fetch("/api/v1/auth/openrouter/status", { headers: authHeader() });
-      if (res.ok) {
-        const data = await res.json();
-        setOpenrouterConnected(data.connected);
-      }
-    } catch {}
-  };
-
   const disconnectOpenrouter = async () => {
     setOpenrouterLoading(true);
     setOpenrouterMessage(null);
@@ -278,7 +287,9 @@ export default function SettingsPage() {
 
   const handleEngineToggle = (pref: "anthropic" | "openrouter") => {
     setEnginePref(pref);
+    // Write to both keys so QueryProvider reads the correct model immediately
     localStorage.setItem("iatronix_engine_pref", pref);
+    localStorage.setItem(LLM_PROVIDER_STORAGE_KEY, pref);
     fetch("/api/v1/auth/settings", {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeader() },
@@ -487,7 +498,8 @@ export default function SettingsPage() {
           {!openrouterConnected && (
             <a
               href="/api/v1/auth/openrouter/login"
-              className="px-4 py-2 bg-primary text-white rounded-md text-sm min-h-[44px] inline-flex items-center"
+              className="px-4 py-2 bg-primary rounded-md text-sm min-h-[44px] inline-flex items-center"
+              style={{ color: "white", textDecoration: "none" }}
             >
               Connect OpenRouter →
             </a>

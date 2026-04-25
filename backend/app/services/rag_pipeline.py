@@ -1003,6 +1003,16 @@ _PRICING = {
 
 
 def _model_cost(model_id: str, inp: int, out: int) -> ModelCost:
+    if "/" in model_id:
+        # OpenRouter model — user's own credits, cost is opaque to us
+        return ModelCost(
+            model_id=model_id,
+            input_tokens=inp,
+            output_tokens=out,
+            input_cost_usd=0.0,
+            output_cost_usd=0.0,
+            subtotal_usd=0.0,
+        )
     key = next((k for k in _PRICING if k in model_id), None)
     rates = _PRICING.get(key, {"in": 0.80, "out": 4.00})
     in_cost = round(inp / 1_000_000 * rates["in"], 6)
@@ -1395,7 +1405,7 @@ async def _run_parallel_pipeline(
             _SM(content=bluf_system + ("\n\n" + bluf_data if bluf_data else "")),
             HumanMessage(content=bluf_user),
         ]
-        _bluf_result, _is_fallback = await chat_with_fallback(
+        _bluf_result, _is_fallback, _used_model = await chat_with_fallback(
             _bluf_msgs, user_llm_key, settings.parallel_bluf_max_tokens, effective_model
         )
         bluf_raw = _bluf_result.content if isinstance(_bluf_result.content, str) else None
@@ -1404,7 +1414,7 @@ async def _run_parallel_pipeline(
             try:
                 await structured_callback("model_info", {
                     "is_fallback": True,
-                    "model": settings.openrouter_gemma_fallback,
+                    "model": _used_model,
                 })
             except Exception:
                 pass
@@ -1954,7 +1964,9 @@ async def process_query(
     _llm_t0 = time.perf_counter()
 
     # ── Parallel section agents (when enabled) ────────────────────────────────
-    if settings.parallel_sections_enabled and structured_callback is not None:
+    # OpenRouter OAuth users (use_chat_service=True) run single-call mode to conserve
+    # free-tier daily limits (~20 req/day per model; parallel mode burns 6-8 calls/query).
+    if settings.parallel_sections_enabled and structured_callback is not None and not use_chat_service:
         _llm_t0 = time.perf_counter()
         parallel_parsed = await _run_parallel_pipeline(
             query=rewritten_query,
@@ -1988,7 +2000,43 @@ async def process_query(
             parsed = None
 
     _single_call_needed = raw_response != "__parallel__"
-    if _single_call_needed:
+    _gen_llm = None  # only set by the non-chat-service path; guards the retry block
+    if _single_call_needed and use_chat_service:
+        # OpenRouter OAuth path: single call via chat_with_fallback (3-model chain)
+        _llm_t0 = time.perf_counter()
+        raw_response = None
+        _gen_usage = {}
+        try:
+            from app.services.chat_service import chat_with_fallback as _cwf
+            from langchain_core.messages import SystemMessage as _SM2, HumanMessage as _HM2
+            _combined = system_text + ("\n\n" + data_block if data_block else "")
+            _cs_msgs = [_SM2(content=_combined), _HM2(content=user_text)]
+            _cs_result, _cs_is_fallback, _cs_used_model = await _cwf(
+                _cs_msgs, user_llm_key, max_tokens, effective_model
+            )
+            raw_response = _cs_result.content if isinstance(_cs_result.content, str) else None
+            _cs_usage = getattr(_cs_result, "usage_metadata", None) or {}
+            _gen_usage = {
+                "input_tokens": _cs_usage.get("input_tokens", 0) or 0,
+                "output_tokens": _cs_usage.get("output_tokens", 0) or 0,
+            }
+            if _cs_is_fallback and structured_callback:
+                try:
+                    await structured_callback("model_info", {
+                        "is_fallback": True,
+                        "model": _cs_used_model,
+                    })
+                except Exception:
+                    pass
+            parsed = parse_llm_json(raw_response) if raw_response else None
+        except HTTPException:
+            raise
+        except Exception:
+            logger.error("chat_with_fallback single-call failed", exc_info=True)
+            raw_response = None
+            parsed = None
+
+    if _single_call_needed and not use_chat_service:
         _llm_t0 = time.perf_counter()
         raw_response = None
         _gen_usage = {}
@@ -2296,11 +2344,17 @@ async def process_query(
             total_in = sum(m.input_tokens for m in models_cost)
             total_out = sum(m.output_tokens for m in models_cost)
             total_cost = sum(m.subtotal_usd for m in models_cost)
+            _usage_note = (
+                "* DSPy classification tokens not included (tracked separately by DSPy LM)."
+                if settings.dspy_enabled
+                else ""
+            )
             token_usage = TokenUsage(
                 models=models_cost,
                 total_input_tokens=total_in,
                 total_output_tokens=total_out,
                 total_cost_usd=total_cost,
+                note=_usage_note,
             )
 
     response = QueryResponse(

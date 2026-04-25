@@ -21,13 +21,13 @@ type LLMProvider = "anthropic" | "openai" | "openrouter";
 const PROVIDER_DEFAULT_MODELS: Record<LLMProvider, string> = {
   anthropic: "claude-haiku-4-5-20251001",
   openai: "gpt-4o-mini",
-  openrouter: "meta-llama/llama-3.3-70b-instruct:free",
+  openrouter: "google/gemma-4-31b-it",
 };
 
 const PROVIDER_DEFAULT_MODEL_NAMES: Record<LLMProvider, string> = {
   anthropic: "Claude Haiku 4.5",
   openai: "GPT-4o Mini",
-  openrouter: "Llama 3.3 70B",
+  openrouter: "Gemma 4",
 };
 
 function getProviderModel(provider: string): { id: string; name: string } {

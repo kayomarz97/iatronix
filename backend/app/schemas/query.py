@@ -270,6 +270,7 @@ class TokenUsage(BaseModel):
     total_input_tokens: int = 0
     total_output_tokens: int = 0
     total_cost_usd: float = 0.0
+    note: str = ""
 
 
 class QueryResponse(BaseModel):
