@@ -1376,7 +1376,7 @@ async def _run_parallel_pipeline(
         or query
     )
 
-    async def _gen_one_section(title: str) -> tuple[dict | None, dict]:
+    async def _gen_one_section(title: str, idx: int) -> tuple[dict | None, dict]:
         sec_system, sec_data, sec_user = build_section_messages(
             section_title=title,
             all_section_titles=section_titles,
@@ -1389,10 +1389,21 @@ async def _run_parallel_pipeline(
         sec_llm = create_llm(effective_model, max_tokens=settings.parallel_sections_max_tokens,
                              user_key=user_llm_key, user_provider=user_llm_provider)
         raw, usage = await _call_llm_simple(sec_llm, provider, sec_system, sec_data, sec_user)
-        return (parse_llm_json(raw) if raw else None), usage
+        sec = parse_llm_json(raw) if raw else None
+        # Emit as soon as this section is ready — don't wait for all sections to finish
+        if sec is not None and structured_callback:
+            section_dict = {
+                "title": sec.get("title", title),
+                "content_items": sec.get("content_items", []),
+            }
+            try:
+                await structured_callback("section_complete", {**section_dict, "index": idx})
+            except Exception:
+                pass
+        return sec, usage
 
     raw_sections = await asyncio.gather(
-        *[_gen_one_section(t) for t in section_titles],
+        *[_gen_one_section(t, i) for i, t in enumerate(section_titles)],
         return_exceptions=True,
     )
 
@@ -1417,12 +1428,6 @@ async def _run_parallel_pipeline(
         }
         all_sections.append(section_dict)
         all_refs.extend(r for r in sec.get("references", []) if isinstance(r, dict))
-
-        if structured_callback:
-            try:
-                await structured_callback("section_complete", {**section_dict, "index": idx})
-            except Exception:
-                pass
 
     if not all_sections:
         logger.warning("parallel_pipeline: all section calls failed")
