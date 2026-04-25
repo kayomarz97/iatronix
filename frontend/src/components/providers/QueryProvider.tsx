@@ -131,7 +131,10 @@ export function QueryProvider({ children }: { children: ReactNode }) {
             response_time_ms: Date.now() - queryStart,
           });
         } else if (event.type === "error") {
-          throw new Error(event.payload.detail);
+          const detail = event.payload.detail ?? "An error occurred";
+          const err = new Error(detail);
+          (err as Error & { errorType?: string }).errorType = event.payload.error_type;
+          throw err;
         }
       }
     };
@@ -140,6 +143,7 @@ export function QueryProvider({ children }: { children: ReactNode }) {
       await runStream(apiKey);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "An error occurred";
+      const errType = (err as Error & { errorType?: string }).errorType;
       if (msg.includes("401")) {
         // Retry once with a fresh token
         let retryApiKey = await getIdToken();
@@ -157,22 +161,16 @@ export function QueryProvider({ children }: { children: ReactNode }) {
         }
         posthog?.capture("query_error", { error_type: "auth", model_id: modelId });
         setError("Session expired. Please sign in again.");
-      } else if (msg.includes("429") || msg.toLowerCase().includes("rate limit")) {
+      } else if (errType === "rate_limit" || msg.includes("429") || msg.toLowerCase().includes("rate limit")) {
         posthog?.capture("query_error", { error_type: "rate_limit", model_id: modelId });
-        setError("Rate limit exceeded. Please wait a minute before trying again.");
+        setError("Service temporarily busy. Partial results shown below — please try again.");
       } else {
-        posthog?.capture("query_error", { error_type: "other", model_id: modelId });
+        posthog?.capture("query_error", { error_type: errType ?? "other", model_id: modelId });
         setError(msg);
       }
     } finally {
       setIsLoading(false);
       setLoadingStage("");
-      setStreamingText("");
-      setStreamingBluf(null);
-      setStreamingSections([]);
-      setStreamingSectionTitles([]);
-      setStreamingFlowcharts([]);
-      setStreamingTables([]);
     }
   }, []);
 

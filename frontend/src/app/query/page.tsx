@@ -1,6 +1,6 @@
 "use client";
 
-import React, { Suspense, useEffect, useRef } from "react";
+import React, { Suspense, useEffect, useRef, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
 import { SearchBar } from "@/components/ui/SearchBar";
 import { LoadingScreen } from "@/components/LoadingScreen";
@@ -99,11 +99,41 @@ function SidebarNav({ data }: { data: AdaptiveResponse }) {
   );
 }
 
+function ErrorBanner({ message, onDismiss }: { message: string; onDismiss: () => void }) {
+  return (
+    <div className="flex items-start gap-3 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm">
+      <svg className="mt-0.5 h-4 w-4 shrink-0 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+      </svg>
+      <span className="flex-1 text-red-300">{message}</span>
+      <button
+        onClick={onDismiss}
+        className="shrink-0 text-red-400 hover:text-red-200 transition-colors leading-none"
+        aria-label="Dismiss"
+      >
+        ✕
+      </button>
+    </div>
+  );
+}
+
 function QueryContent() {
-  const { result, streamingText, streamingBluf, streamingSections, streamingSectionTitles, streamingFlowcharts, streamingTables, isLoading, loadingStage, error, activeModelName, submitQuery } = useQueryContext();
+  const { result, streamingText, streamingBluf, streamingSections, streamingSectionTitles, streamingFlowcharts, streamingTables, isLoading, loadingStage, error, activeModelName, submitQuery, clearResult } = useQueryContext();
   const { user } = useAuth();
   const searchParams = useSearchParams();
   const lastAutoSubmit = useRef<string | null>(null);
+  const [dismissedError, setDismissedError] = React.useState<string | null>(null);
+
+  const visibleError = error && error !== dismissedError ? error : null;
+
+  const handleDismissError = useCallback(() => {
+    setDismissedError(error);
+  }, [error]);
+
+  // Reset dismissed state when a new query starts
+  useEffect(() => {
+    if (isLoading) setDismissedError(null);
+  }, [isLoading]);
 
   useEffect(() => {
     const q = searchParams.get("q");
@@ -120,10 +150,8 @@ function QueryContent() {
         <SearchBar onSubmit={submitQuery} isLoading={isLoading} />
       </div>
 
-      {error && (
-        <Card>
-          <p className="text-danger text-sm">{error}</p>
-        </Card>
+      {visibleError && (
+        <ErrorBanner message={visibleError} onDismiss={handleDismissError} />
       )}
 
       {isLoading && !streamingText && !streamingBluf && (
@@ -140,8 +168,8 @@ function QueryContent() {
         <StreamingProgress streamingText={streamingText} loadingStage={loadingStage} />
       )}
 
-      {/* Parallel path: progressively render BLUF + sections as they arrive */}
-      {streamingBluf && isLoading && (
+      {/* Parallel path: progressively render BLUF + sections as they arrive (or preserved on error) */}
+      {streamingBluf && (isLoading || error) && !result && (
         <div className="space-y-5">
           <AdaptiveResultRenderer
             data={{
@@ -157,25 +185,27 @@ function QueryContent() {
               images: [],
             }}
           />
-          <Card>
-            <div className="flex items-center gap-3 text-sm text-text-muted">
-              <span className="inline-flex gap-1">
-                {[0, 150, 300].map(delay => (
-                  <span key={delay}
-                    className="w-1.5 h-1.5 rounded-full bg-accent animate-bounce"
-                    style={{ animationDelay: `${delay}ms` }} />
-                ))}
-              </span>
-              <span>
-                Generating detailed sections…
-                {streamingSections.length > 0 && streamingSectionTitles.length > 0 && (
-                  <span className="ml-1.5 font-mono text-xs text-accent">
-                    {streamingSections.length} of {streamingSectionTitles.length} complete
-                  </span>
-                )}
-              </span>
-            </div>
-          </Card>
+          {isLoading && (
+            <Card>
+              <div className="flex items-center gap-3 text-sm text-text-muted">
+                <span className="inline-flex gap-1">
+                  {[0, 150, 300].map(delay => (
+                    <span key={delay}
+                      className="w-1.5 h-1.5 rounded-full bg-accent animate-bounce"
+                      style={{ animationDelay: `${delay}ms` }} />
+                  ))}
+                </span>
+                <span>
+                  Generating detailed sections…
+                  {streamingSections.length > 0 && streamingSectionTitles.length > 0 && (
+                    <span className="ml-1.5 font-mono text-xs text-accent">
+                      {streamingSections.length} of {streamingSectionTitles.length} complete
+                    </span>
+                  )}
+                </span>
+              </div>
+            </Card>
+          )}
         </div>
       )}
 
