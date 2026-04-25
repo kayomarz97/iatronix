@@ -496,13 +496,28 @@ export default function SettingsPage() {
 
         <div className="flex gap-2">
           {!openrouterConnected && (
-            <a
-              href="/api/v1/auth/openrouter/login"
+            <button
+              onClick={async () => {
+                try {
+                  const res = await fetch("/api/v1/auth/openrouter/login", {
+                    method: "POST",
+                    headers: authHeader(),
+                  });
+                  if (res.ok) {
+                    const { redirect_url } = await res.json();
+                    window.location.href = redirect_url;
+                  } else {
+                    setOpenrouterMessage("Failed to start OpenRouter login");
+                  }
+                } catch {
+                  setOpenrouterMessage("Network error — try again");
+                }
+              }}
               className="px-4 py-2 bg-primary rounded-md text-sm min-h-[44px] inline-flex items-center"
-              style={{ color: "white", textDecoration: "none" }}
+              style={{ color: "white" }}
             >
               Connect OpenRouter →
-            </a>
+            </button>
           )}
           {openrouterConnected && (
             <button
