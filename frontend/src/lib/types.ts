@@ -130,6 +130,7 @@ export interface TokenUsage {
   total_input_tokens: number;
   total_output_tokens: number;
   total_cost_usd: number;
+  note?: string;
 }
 
 // --- Request / Response ---

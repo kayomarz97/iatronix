@@ -204,6 +204,31 @@ Then add it to the `asyncio.gather()` call in `data_fetcher.py`'s main fetch fun
 
 In `llm_factory.py`, add a new branch to the provider switch. The factory returns an object with a `.complete(prompt, max_tokens)` interface. Follow the existing Anthropic/OpenAI pattern.
 
+### 6.5 OpenRouter OAuth + ChatService (added 2026-04)
+
+**ChatService** (`backend/app/services/chat_service.py`) wraps OpenRouter calls with a **3-model fallback chain** for users who connect via OAuth PKCE:
+
+Chain: `gemma_primary` → `gemma_fallback` → `meta_fallback` (Meta Llama 3.3 free — independent of Google infra)
+
+```python
+from app.services.chat_service import chat_with_fallback
+
+result, is_fallback, used_model = await chat_with_fallback(
+    messages=langchain_messages,
+    user_key=decrypted_openrouter_key,
+    max_tokens=4096,
+    model_id="google/gemma-4-31b-it",  # optional — defaults to settings.openrouter_gemma_primary
+)
+```
+
+**Key rule:** `chat_with_fallback` is only used when `use_chat_service=True` in `process_query()`. This flag is set when `user.openrouter_key` is set AND `user.encrypted_llm_key` is NOT set (OAuth path, not manual BYOK path). Manual BYOK OpenRouter users continue using `create_llm()` directly.
+
+**Rate limit conservation:** When `use_chat_service=True`, the parallel sections pipeline is skipped regardless of `PARALLEL_SECTIONS_ENABLED`. OpenRouter free-tier models cap at ~20 req/day per model; parallel mode would burn 6–8 calls/query (3–4 queries/day). Single-call mode = 1 call/query (~20 queries/day).
+
+**Adding a new fallback trigger:** Edit `_FALLBACK_STATUS_CODES` or `_is_fallback_trigger()` in `chat_service.py`.
+
+**Adding a 4th model to the chain:** Add `openrouter_<name>_fallback` to `config.py` and append it to the `chain` list in `chat_with_fallback()`.
+
 ### 6.4 Add a Specialist Sub-Agent (Multi-Agent Pattern)
 
 The pipeline now supports **parallel section agents** (live, enabled by `PARALLEL_SECTIONS_ENABLED`). The pattern:
