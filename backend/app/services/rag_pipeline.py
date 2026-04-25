@@ -287,6 +287,45 @@ def _summarize_vectors(vector_results: list) -> str:
     return "\n".join(str(r)[:300] for r in vector_results[:5])
 
 
+def _extract_fetch_articles(fetched_data: "FetchedData") -> list:
+    """Collect real article titles from fetched data to stream to the UI."""
+    seen: set = set()
+    out: list = []
+    data_objects = [
+        fetched_data.drug_data,
+        fetched_data.disease_data,
+        fetched_data.condition_data,
+        fetched_data.procedure_data,
+        fetched_data.evidence_data,
+        fetched_data.comparative_evidence,
+    ]
+    if fetched_data.comparative_drug_data:
+        data_objects.extend(fetched_data.comparative_drug_data)
+    for obj in data_objects:
+        if obj is None:
+            continue
+        for ab in (
+            getattr(obj, "guideline_abstracts", None) or []
+            + (getattr(obj, "systematic_review_abstracts", None) or [])
+            + (getattr(obj, "clinical_trial_abstracts", None) or [])
+        ):
+            title = (ab.get("title") or "").strip()
+            if not title or title in seen:
+                continue
+            seen.add(title)
+            out.append({
+                "title": title,
+                "journal": ab.get("journal") or "",
+                "year": ab.get("year"),
+                "pmid": ab.get("pmid") or "",
+            })
+            if len(out) >= 20:
+                break
+        if len(out) >= 20:
+            break
+    return out
+
+
 def _describe_data(fetched_data: "FetchedData") -> str:
     """Describe what data sources were fetched."""
     sources = []
@@ -1690,6 +1729,13 @@ async def process_query(
             "vector_hits": len(vector_results),
         },
     )
+
+    # Emit real article titles to the frontend as soon as fetch completes
+    if structured_callback and fetched_data:
+        try:
+            await structured_callback("fetch_articles", {"titles": _extract_fetch_articles(fetched_data)})
+        except Exception:
+            pass
 
     # Handle semantic cache hit (checked in parallel above)
     if _sem_result is not None:

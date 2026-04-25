@@ -1,10 +1,18 @@
 import type { QueryResponse, ModelInfo, AdaptiveBLUF, AdaptiveSection, AdaptiveFlowchart, AdaptiveTable } from "./types";
 
+export interface FetchedArticle {
+  title: string;
+  journal?: string;
+  year?: number | null;
+  pmid?: string;
+}
+
 export type StreamEvent =
   | { type: "stage"; payload: { stage: string } }
   | { type: "token"; payload: { text: string } }
   | { type: "bluf"; payload: AdaptiveBLUF & { section_titles?: string[]; flowcharts?: AdaptiveFlowchart[]; tables?: AdaptiveTable[] } }
   | { type: "section_complete"; payload: AdaptiveSection & { index: number } }
+  | { type: "fetch_articles"; payload: { titles: FetchedArticle[] } }
   | { type: "done"; payload: { result: QueryResponse } }
   | { type: "error"; payload: { detail: string; error_type?: string } };
 

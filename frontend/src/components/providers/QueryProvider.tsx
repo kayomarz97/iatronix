@@ -10,6 +10,7 @@ import {
   type ReactNode,
 } from "react";
 import { submitQueryStream } from "@/lib/api";
+import type { FetchedArticle } from "@/lib/api";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { API_KEY_STORAGE_KEY, LLM_PROVIDER_STORAGE_KEY } from "@/lib/constants";
 import type { QueryResponse, AdaptiveBLUF, AdaptiveSection, AdaptiveFlowchart, AdaptiveTable } from "@/lib/types";
@@ -44,6 +45,7 @@ interface QueryContextType {
   streamingSectionTitles: string[];
   streamingFlowcharts: AdaptiveFlowchart[];
   streamingTables: AdaptiveTable[];
+  fetchedArticles: FetchedArticle[];
   isLoading: boolean;
   loadingStage: string;
   error: string | null;
@@ -64,6 +66,7 @@ export function QueryProvider({ children }: { children: ReactNode }) {
   const [streamingSectionTitles, setStreamingSectionTitles] = useState<string[]>([]);
   const [streamingFlowcharts, setStreamingFlowcharts] = useState<AdaptiveFlowchart[]>([]);
   const [streamingTables, setStreamingTables] = useState<AdaptiveTable[]>([]);
+  const [fetchedArticles, setFetchedArticles] = useState<FetchedArticle[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [loadingStage, setLoadingStage] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
@@ -94,6 +97,7 @@ export function QueryProvider({ children }: { children: ReactNode }) {
     setStreamingSectionTitles([]);
     setStreamingFlowcharts([]);
     setStreamingTables([]);
+    setFetchedArticles([]);
     setError(null);
     setResult(null);
 
@@ -113,6 +117,8 @@ export function QueryProvider({ children }: { children: ReactNode }) {
           if (flowcharts) setStreamingFlowcharts(flowcharts);
           if (tables) setStreamingTables(tables);
           setLoadingStage("generating");
+        } else if (event.type === "fetch_articles") {
+          setFetchedArticles(event.payload.titles);
         } else if (event.type === "section_complete") {
           setStreamingSections((prev) => [...prev, event.payload]);
         } else if (event.type === "done") {
@@ -180,8 +186,8 @@ export function QueryProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ result, streamingText, streamingBluf, streamingSections, streamingSectionTitles, streamingFlowcharts, streamingTables, isLoading, loadingStage, error, activeModelName, submitQuery, clearResult }),
-    [result, streamingText, streamingBluf, streamingSections, streamingSectionTitles, streamingFlowcharts, streamingTables, isLoading, loadingStage, error, activeModelName, submitQuery, clearResult]
+    () => ({ result, streamingText, streamingBluf, streamingSections, streamingSectionTitles, streamingFlowcharts, streamingTables, fetchedArticles, isLoading, loadingStage, error, activeModelName, submitQuery, clearResult }),
+    [result, streamingText, streamingBluf, streamingSections, streamingSectionTitles, streamingFlowcharts, streamingTables, fetchedArticles, isLoading, loadingStage, error, activeModelName, submitQuery, clearResult]
   );
 
   return <QueryContext.Provider value={value}>{children}</QueryContext.Provider>;

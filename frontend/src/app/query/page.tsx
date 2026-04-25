@@ -118,7 +118,7 @@ function ErrorBanner({ message, onDismiss }: { message: string; onDismiss: () =>
 }
 
 function QueryContent() {
-  const { result, streamingText, streamingBluf, streamingSections, streamingSectionTitles, streamingFlowcharts, streamingTables, isLoading, loadingStage, error, activeModelName, submitQuery, clearResult } = useQueryContext();
+  const { result, streamingText, streamingBluf, streamingSections, streamingSectionTitles, streamingFlowcharts, streamingTables, fetchedArticles, isLoading, loadingStage, error, activeModelName, submitQuery, clearResult } = useQueryContext();
   const { user } = useAuth();
   const searchParams = useSearchParams();
   const lastAutoSubmit = useRef<string | null>(null);
@@ -161,6 +161,7 @@ function QueryContent() {
             (loadingStage as "classifying" | "fetching" | "generating" | "verifying") ||
             "classifying"
           }
+          fetchedArticles={fetchedArticles}
         />
       )}
 
