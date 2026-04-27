@@ -26,6 +26,7 @@ class SearchState(TypedDict):
     user_email: Optional[str]
     user_ncbi_key: Optional[str]
     api_fetch_timeout: float
+    pubmed_expansion_terms: Optional[dict]
 
     # Outputs — each written by a separate parallel node
     fetched_data: Any

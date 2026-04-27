@@ -1340,31 +1340,45 @@ async def _analyze_and_expand_query(
     Returns None on ANY failure — caller falls back to the legacy individual calls.
     Never raises; all exceptions are caught and logged.
     """
-    if not settings.pubmed_expansion_enabled or not user_key:
+    if not settings.pubmed_expansion_enabled:
         return None
     import json as _json
 
     _prompt = (
-        "You are a medical query analyst and PubMed search specialist.\n"
-        "Return ONLY a JSON object with EXACTLY these keys — no markdown fences, no explanation:\n"
+        "You are a medical PubMed search specialist. Return ONLY valid JSON — no markdown fences, no explanation.\n"
+        "\n"
+        "EXAMPLE INPUT: gynecomastia\n"
+        "EXAMPLE OUTPUT:\n"
         "{\n"
-        '  "rewritten_query": "<corrected spelling/abbreviations, same clinical intent>",\n'
-        '  "query_type": "<drug|disease|comparative|procedure|evidence|general>",\n'
-        '  "entities": ["<primary entity>", "<secondary entity if applicable>"],\n'
-        '  "condition_context": "<condition name if drug-in-condition query, else empty string>",\n'
-        '  "response_focus": "<what user wants in 1 sentence>",\n'
-        '  "related_topics": ["<t1>", "<t2>", "<t3>", "<t4>", "<t5>"],\n'
+        '  "rewritten_query": "gynecomastia",\n'
+        '  "query_type": "disease",\n'
+        '  "entities": ["gynecomastia"],\n'
+        '  "condition_context": "",\n'
+        '  "response_focus": "etiology, diagnosis, and management of gynecomastia",\n'
+        '  "related_topics": ["male breast tissue", "testosterone", "estrogen imbalance", "puberty", "drug-induced gynecomastia"],\n'
         '  "pubmed_terms": {\n'
-        '    "guideline": ["<MeSH+boolean PubMed query>", "<broader fallback query>"],\n'
-        '    "review": ["<systematic review PubMed query>", "<broader fallback>"],\n'
-        '    "trial": ["<RCT PubMed query>", "<broader fallback>"]\n'
-        "  }\n"
+        '    "guideline": [\n'
+        '      "Gynecomastia[MeSH] AND (Practice Guideline[pt] OR Guideline[pt])",\n'
+        '      "gynecomastia[Title/Abstract] AND (guideline OR consensus OR recommendation)"\n'
+        '    ],\n'
+        '    "review": [\n'
+        '      "Gynecomastia[MeSH] AND (Systematic Review[pt] OR Meta-Analysis[pt])",\n'
+        '      "gynecomastia[Title/Abstract] AND (systematic review OR meta-analysis)"\n'
+        '    ],\n'
+        '    "trial": [\n'
+        '      "Gynecomastia[MeSH] AND (Randomized Controlled Trial[pt] OR clinical trial[pt])",\n'
+        '      "gynecomastia[Title/Abstract] AND (treatment OR therapy OR management)"\n'
+        '    ],\n'
+        '    "journal_filter": "\\"Journal of Clinical Endocrinology and Metabolism\\"[Journal] OR \\"Clinical Endocrinology\\"[Journal] OR \\"Endocrine Reviews\\"[Journal]"\n'
+        '  }\n'
         "}\n"
-        "MeSH rules: use standard MeSH headings where known, e.g. insulin resistance[MeSH].\n"
-        "Boolean: (termA[MeSH] OR synonymB[Title/Abstract]) AND (termC[MeSH] OR synonymD[Title/Abstract]).\n"
-        "pubmed_terms must be complete valid PubMed query strings.\n"
-        "Do NOT include date ranges in pubmed_terms — the caller appends them.\n"
-        "Output ONLY valid JSON, no markdown.\n"
+        "\n"
+        "RULES (follow exactly):\n"
+        "1. entities: SHORT CLINICAL TERMS ONLY — e.g. [\"gynecomastia\"], never a sentence or description\n"
+        "2. pubmed_terms strings: valid PubMed queries using [MeSH], [Title/Abstract], AND/OR, [pt] filters\n"
+        "3. journal_filter: 2–4 top peer-reviewed journals for this topic joined with OR — use exact journal names in quotes\n"
+        "4. Do NOT include date ranges in pubmed_terms (added automatically)\n"
+        "5. Output ONLY JSON — no markdown, no backticks, no explanation\n"
         "\n"
         f"Query: {query}"
     )
@@ -1457,8 +1471,9 @@ async def _call_llm_simple(
             msgs = [SystemMessage(content=combined), HumanMessage(content=user_text)]
         result = await llm.ainvoke(msgs)
         usage = getattr(result, "usage_metadata", None) or {}
-        cache_read = usage.get("cache_read_input_tokens", 0)
-        cache_write = usage.get("cache_creation_input_tokens", 0)
+        _token_details = usage.get("input_token_details") or {}
+        cache_read = _token_details.get("cache_read", 0)
+        cache_write = _token_details.get("cache_creation", 0)
         if cache_read:
             logger.debug("Prompt cache HIT: %d tokens saved", cache_read)
         elif cache_write:
