@@ -37,10 +37,10 @@ logger = logging.getLogger(__name__)
 
 # PubMed rate limiter: without key (3 req/sec), with key (10 req/sec)
 # Use semaphores + minimum gap enforcement to stay within NCBI limits
-_PUBMED_SEM_NO_KEY = asyncio.Semaphore(2)
+_PUBMED_SEM_NO_KEY = asyncio.Semaphore(1)
 _PUBMED_SEM_WITH_KEY = asyncio.Semaphore(8)
 _PUBMED_LAST_REQUEST: float = 0.0
-_PUBMED_MIN_GAP_NO_KEY = 0.5
+_PUBMED_MIN_GAP_NO_KEY = 0.4
 _PUBMED_MIN_GAP_WITH_KEY = 0.1
 
 # ------------------------------------------------------------------
@@ -715,7 +715,7 @@ async def _resolve_drug_name_online(client: httpx.AsyncClient, drug_name: str) -
 
 
 async def _fetch_pubmed_abstracts(
-    client: httpx.AsyncClient, entity: str, pub_type: str = "guideline"
+    client: httpx.AsyncClient, entity: str, pub_type: str = "guideline", extra_journal_filter: str | None = None
 ) -> tuple[list, set[str]]:
     """Fetch PubMed guideline or systematic review abstracts for an entity.
 
@@ -743,7 +743,7 @@ async def _fetch_pubmed_abstracts(
         )
 
     term = f"{entity}[Title/Abstract] AND {pt_filter} AND 2010:{cur_year}[dp]"
-    journal_filter = _get_journal_filter(entity)
+    journal_filter = extra_journal_filter or _get_journal_filter(entity)
     journal_term = (
         f"{entity}[Title/Abstract] AND {journal_filter} AND 2010:{cur_year}[dp]"
         if journal_filter
@@ -813,12 +813,8 @@ async def _pubmed_esearch_throttled(
     gap = _PUBMED_MIN_GAP_WITH_KEY if api_key else _PUBMED_MIN_GAP_NO_KEY
 
     async with sem:
-        global _PUBMED_LAST_REQUEST
-        loop = asyncio.get_event_loop()
-        wait = gap - (loop.time() - _PUBMED_LAST_REQUEST)
-        if wait > 0:
-            await asyncio.sleep(wait)
-        _PUBMED_LAST_REQUEST = loop.time()
+        _delay = 0.15 if api_key else 0.4
+        await asyncio.sleep(_delay)
         return await _pubmed_esearch(client, term, retmax, sort=sort)
 
 
@@ -1618,7 +1614,7 @@ async def _fetch_rxnorm_interactions(
 # ------------------------------------------------------------------
 
 
-async def fetch_drug_data(drug_name: str, *, extra_pubmed_terms: list[str] | None = None) -> DrugFetchResult:
+async def fetch_drug_data(drug_name: str, *, extra_pubmed_terms: list[str] | None = None, extra_journal_filter: str | None = None) -> DrugFetchResult:
     """Fetch drug data using live online resolution rather than local repositories."""
     result = DrugFetchResult()
 
@@ -1636,8 +1632,8 @@ async def fetch_drug_data(drug_name: str, *, extra_pubmed_terms: list[str] | Non
             _fetch_fda_label(client, search_name),
             _fetch_fda_events(client, search_name),
             _fetch_rxnorm_class_chain(client, search_name),
-            _fetch_pubmed_abstracts(client, search_name, "guideline"),
-            _fetch_pubmed_abstracts(client, search_name, "systematic_review"),
+            _fetch_pubmed_abstracts(client, search_name, "guideline", extra_journal_filter),
+            _fetch_pubmed_abstracts(client, search_name, "systematic_review", extra_journal_filter),
             _pubmed_esearch_recent_guidelines(client, search_name, 8),
             _fetch_dailymed(client, search_name),
             _fetch_medlineplus(client, search_name),
@@ -1812,7 +1808,7 @@ async def fetch_drug_data(drug_name: str, *, extra_pubmed_terms: list[str] | Non
     return result
 
 
-async def fetch_disease_data(disease_name: str, *, extra_pubmed_terms: list[str] | None = None) -> DiseaseFetchResult:
+async def fetch_disease_data(disease_name: str, *, extra_pubmed_terms: list[str] | None = None, extra_journal_filter: str | None = None) -> DiseaseFetchResult:
     """Fetch disease data from PubMed (guidelines + reviews + classification), NICE,
     MedlinePlus, and Semantic Scholar — all in parallel.
 
@@ -1824,7 +1820,7 @@ async def fetch_disease_data(disease_name: str, *, extra_pubmed_terms: list[str]
 
     from datetime import datetime as _dt
     cur_year = _dt.now().year
-    journal_filter = _get_journal_filter(disease_name)
+    journal_filter = extra_journal_filter or _get_journal_filter(disease_name)
 
     # Build PubMed search terms
     guideline_term = f"{disease_name}[Title/Abstract] AND (Practice Guideline[pt] OR Guideline[pt]) AND 2010:{cur_year}[dp]"
@@ -1964,16 +1960,16 @@ async def fetch_disease_data(disease_name: str, *, extra_pubmed_terms: list[str]
     return result
 
 
-async def fetch_procedure_data(procedure_name: str, *, extra_pubmed_terms: list[str] | None = None) -> ProcedureFetchResult:
+async def fetch_procedure_data(procedure_name: str, *, extra_pubmed_terms: list[str] | None = None, extra_journal_filter: str | None = None) -> ProcedureFetchResult:
     """Fetch procedure/guideline data from PubMed practice guidelines."""
     result = ProcedureFetchResult()
 
     async with _make_client() as client:
         # Build main search tasks
         _tasks = [
-            _fetch_pubmed_abstracts(client, procedure_name, "guideline"),
+            _fetch_pubmed_abstracts(client, procedure_name, "guideline", extra_journal_filter),
             _fetch_pubmed_procedure_guidelines(client, procedure_name),
-            _fetch_pubmed_abstracts(client, procedure_name, "systematic_review"),
+            _fetch_pubmed_abstracts(client, procedure_name, "systematic_review", extra_journal_filter),
             _fetch_pmc_statpearls(client, procedure_name),
         ]
 
@@ -2080,7 +2076,7 @@ async def _fetch_pubmed_procedure_guidelines(
     return articles, sources
 
 
-async def fetch_evidence_data(query: str, *, extra_pubmed_terms: list[str] | None = None) -> EvidenceFetchResult:
+async def fetch_evidence_data(query: str, *, extra_pubmed_terms: list[str] | None = None, extra_journal_filter: str | None = None) -> EvidenceFetchResult:
     """Fetch evidence for drug+condition questions (clinical trials + reviews).
 
     Speed optimization: parallel esearch → single batch efetch.
@@ -2272,11 +2268,13 @@ async def fetch_data_for_query(
     _review_terms: list[str] | None = None
     _trial_terms: list[str] | None = None
     _all_terms: list[str] | None = None
+    _llm_journal_filter: str | None = None
     if pubmed_expansion_terms:
         _guideline_terms = pubmed_expansion_terms.get("guideline") or []
         _review_terms = pubmed_expansion_terms.get("review") or []
         _trial_terms = pubmed_expansion_terms.get("trial") or []
         _all_terms = _guideline_terms + _review_terms + _trial_terms
+        _llm_journal_filter = pubmed_expansion_terms.get("journal_filter") or None
 
     start = time.time()
     fetched = FetchedData(query_type=query_type)
@@ -2286,9 +2284,9 @@ async def fetch_data_for_query(
             if condition_context:
                 # Fetch drug data AND condition management guidelines in parallel (B6)
                 drug_result, condition_result, evidence_result = await asyncio.gather(
-                    fetch_drug_data(entities[0], extra_pubmed_terms=_guideline_terms if pubmed_expansion_terms else None),
-                    fetch_disease_data(condition_context, extra_pubmed_terms=(_guideline_terms + _review_terms) if pubmed_expansion_terms else None),
-                    fetch_evidence_data(f"{entities[0]} {condition_context}", extra_pubmed_terms=_all_terms if pubmed_expansion_terms else None),
+                    fetch_drug_data(entities[0], extra_pubmed_terms=_guideline_terms if pubmed_expansion_terms else None, extra_journal_filter=_llm_journal_filter),
+                    fetch_disease_data(condition_context, extra_pubmed_terms=(_guideline_terms + _review_terms) if pubmed_expansion_terms else None, extra_journal_filter=_llm_journal_filter),
+                    fetch_evidence_data(f"{entities[0]} {condition_context}", extra_pubmed_terms=_all_terms if pubmed_expansion_terms else None, extra_journal_filter=_llm_journal_filter),
                     return_exceptions=True,
                 )
                 fetched.drug_data = (
@@ -2325,22 +2323,22 @@ async def fetch_data_for_query(
                 if fetched.condition_data:
                     _fire_and_forget_index(fetched.condition_data.guideline_abstracts)
             else:
-                fetched.drug_data = await fetch_drug_data(entities[0], extra_pubmed_terms=_guideline_terms if pubmed_expansion_terms else None)
+                fetched.drug_data = await fetch_drug_data(entities[0], extra_pubmed_terms=_guideline_terms if pubmed_expansion_terms else None, extra_journal_filter=_llm_journal_filter)
                 fetched.fallback_to_llm = not fetched.drug_data.fetch_success
                 _fire_and_forget_index(fetched.drug_data.guideline_abstracts)
                 _fire_and_forget_index(fetched.drug_data.clinical_trial_abstracts)
 
         elif query_type == "disease" and entities:
-            fetched.disease_data = await fetch_disease_data(entities[0], extra_pubmed_terms=(_guideline_terms + _review_terms) if pubmed_expansion_terms else None)
+            fetched.disease_data = await fetch_disease_data(entities[0], extra_pubmed_terms=(_guideline_terms + _review_terms) if pubmed_expansion_terms else None, extra_journal_filter=_llm_journal_filter)
             fetched.fallback_to_llm = not fetched.disease_data.fetch_success
             _fire_and_forget_index(fetched.disease_data.guideline_abstracts)
             _fire_and_forget_index(fetched.disease_data.systematic_review_abstracts)
 
         elif query_type == "comparative" and len(entities) >= 2:
             drug_results = await asyncio.gather(
-                fetch_drug_data(entities[0], extra_pubmed_terms=_guideline_terms if pubmed_expansion_terms else None),
-                fetch_drug_data(entities[1], extra_pubmed_terms=_guideline_terms if pubmed_expansion_terms else None),
-                fetch_evidence_data(" vs ".join(entities[:2]), extra_pubmed_terms=_all_terms if pubmed_expansion_terms else None),
+                fetch_drug_data(entities[0], extra_pubmed_terms=_guideline_terms if pubmed_expansion_terms else None, extra_journal_filter=_llm_journal_filter),
+                fetch_drug_data(entities[1], extra_pubmed_terms=_guideline_terms if pubmed_expansion_terms else None, extra_journal_filter=_llm_journal_filter),
+                fetch_evidence_data(" vs ".join(entities[:2]), extra_pubmed_terms=_all_terms if pubmed_expansion_terms else None, extra_journal_filter=_llm_journal_filter),
                 return_exceptions=True,
             )
             for r in drug_results[:2]:
@@ -2368,12 +2366,12 @@ async def fetch_data_for_query(
             )
 
         elif query_type == "procedure" and entities:
-            fetched.procedure_data = await fetch_procedure_data(entities[0], extra_pubmed_terms=_guideline_terms if pubmed_expansion_terms else None)
+            fetched.procedure_data = await fetch_procedure_data(entities[0], extra_pubmed_terms=_guideline_terms if pubmed_expansion_terms else None, extra_journal_filter=_llm_journal_filter)
             fetched.fallback_to_llm = not fetched.procedure_data.fetch_success
             _fire_and_forget_index(fetched.procedure_data.guideline_abstracts)
 
         elif query_type == "evidence" and entities:
-            fetched.evidence_data = await fetch_evidence_data(" ".join(entities), extra_pubmed_terms=_all_terms if pubmed_expansion_terms else None)
+            fetched.evidence_data = await fetch_evidence_data(" ".join(entities), extra_pubmed_terms=_all_terms if pubmed_expansion_terms else None, extra_journal_filter=_llm_journal_filter)
             fetched.fallback_to_llm = not fetched.evidence_data.fetch_success
             _fire_and_forget_index(fetched.evidence_data.clinical_trial_abstracts)
 
