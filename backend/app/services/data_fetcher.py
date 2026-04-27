@@ -822,7 +822,7 @@ async def _pubmed_esearch_throttled(
         return await _pubmed_esearch(client, term, retmax, sort=sort)
 
 
-async def _pubmed_efetch(client: httpx.AsyncClient, ids: list[str]) -> tuple[list, set[str]]:
+async def _pubmed_efetch(client: httpx.AsyncClient, ids: list[str], *, skip_snowball: bool = False) -> tuple[list, set[str]]:
     """PubMed efetch → parsed article list, enriched with PMC full text or Unpaywall PDF.
 
     Returns: (articles, sources_used) where sources_used is a set like
@@ -851,7 +851,47 @@ async def _pubmed_efetch(client: httpx.AsyncClient, ids: list[str]) -> tuple[lis
     articles, sources = await _enrich_abstracts_with_fulltext(
         client, articles, user_email=_user_email_ctx.get()
     )
+
+    # Reference snowballing: one extra efetch for cited PMIDs from primary article set
+    if settings.snowball_enabled and not skip_snowball and articles:
+        articles, _snow_sources = await _snowball_references(
+            client, articles, max_refs=settings.snowball_max_refs
+        )
+        sources |= _snow_sources
+
     return articles, sources
+
+
+async def _snowball_references(
+    client: httpx.AsyncClient,
+    articles: list,
+    *,
+    max_refs: int = 15,
+) -> tuple[list, set[str]]:
+    """Fetch cited articles referenced by the primary article set (one extra PubMed call).
+    Called only from _pubmed_efetch with skip_snowball=True to prevent infinite recursion.
+    """
+    primary_pmids: set[str] = {a["pmid"] for a in articles if a.get("pmid")}
+    candidates: list[str] = []
+    seen_candidates: set[str] = set()
+    for art in articles:
+        for pid in (art.get("ref_pmids") or []):
+            if pid not in primary_pmids and pid not in seen_candidates:
+                seen_candidates.add(pid)
+                candidates.append(pid)
+    if not candidates:
+        return articles, set()
+    snow_articles, snow_sources = await _pubmed_efetch(
+        client, candidates[:max_refs], skip_snowball=True  # CRITICAL: prevents infinite recursion
+    )
+    merged_pmids: set[str] = set(primary_pmids)
+    merged: list = list(articles)
+    for sa in snow_articles:
+        pid = sa.get("pmid")
+        if pid and pid not in merged_pmids:
+            merged_pmids.add(pid)
+            merged.append(sa)
+    return merged, snow_sources
 
 
 async def _fetch_pubmed_classification(client: httpx.AsyncClient, entity: str) -> tuple[list, set[str]]:
@@ -942,19 +982,38 @@ def _parse_pubmed_xml(xml_text: str) -> list:
             pmcid_el = article.find(".//ArticleId[@IdType='pmc']")
             pmcid = pmcid_el.text if pmcid_el is not None else None
 
+            # Extract cited PMIDs for reference snowballing
+            ref_pmids: list[str] = []
+            for _ref in article.findall(".//ReferenceList/Reference"):
+                for _art_id in _ref.findall(".//ArticleId[@IdType='pubmed']"):
+                    if _art_id.text and _art_id.text.strip().isdigit():
+                        ref_pmids.append(_art_id.text.strip())
+            if ref_pmids:
+                result_dict = {
+                    "pmid": pmid,
+                    "title": title,
+                    "abstract": abstract if abstract else "(No abstract available)",
+                    "year": year,
+                    "collective_name": collective,
+                    "journal": journal,
+                    "doi": doi,
+                    "pmcid": pmcid,
+                    "ref_pmids": ref_pmids,
+                }
+            else:
+                result_dict = {
+                    "pmid": pmid,
+                    "title": title,
+                    "abstract": abstract if abstract else "(No abstract available)",
+                    "year": year,
+                    "collective_name": collective,
+                    "journal": journal,
+                    "doi": doi,
+                    "pmcid": pmcid,
+                }
+
             if title:
-                results.append(
-                    {
-                        "pmid": pmid,
-                        "title": title,
-                        "abstract": abstract if abstract else "(No abstract available)",
-                        "year": year,
-                        "collective_name": collective,
-                        "journal": journal,
-                        "doi": doi,
-                        "pmcid": pmcid,
-                    }
-                )
+                results.append(result_dict)
         except Exception:
             continue
 
@@ -1559,7 +1618,7 @@ async def _fetch_rxnorm_interactions(
 # ------------------------------------------------------------------
 
 
-async def fetch_drug_data(drug_name: str) -> DrugFetchResult:
+async def fetch_drug_data(drug_name: str, *, extra_pubmed_terms: list[str] | None = None) -> DrugFetchResult:
     """Fetch drug data using live online resolution rather than local repositories."""
     result = DrugFetchResult()
 
@@ -1572,6 +1631,31 @@ async def fetch_drug_data(drug_name: str) -> DrugFetchResult:
         if resolution.get("rxcui"):
             result.rxcui = resolution["rxcui"]
 
+        # Build main search tasks
+        _tasks = [
+            _fetch_fda_label(client, search_name),
+            _fetch_fda_events(client, search_name),
+            _fetch_rxnorm_class_chain(client, search_name),
+            _fetch_pubmed_abstracts(client, search_name, "guideline"),
+            _fetch_pubmed_abstracts(client, search_name, "systematic_review"),
+            _pubmed_esearch_recent_guidelines(client, search_name, 8),
+            _fetch_dailymed(client, search_name),
+            _fetch_medlineplus(client, search_name),
+            _fetch_pmc_statpearls(client, search_name),
+            _fetch_chembl(client, search_name),
+        ]
+
+        # LLM-expanded MeSH terms — additive on top of hardcoded searches above
+        if extra_pubmed_terms:
+            import datetime as _dt
+            _cur_year = _dt.datetime.now().year
+            _date_suffix = f" AND 2010:{_cur_year}[dp]"
+            for _t in extra_pubmed_terms[:3]:  # cap at 3 extra terms per call
+                if _t and len(_t) > 10 and "[dp]" not in _t:  # skip empty/malformed/already-dated
+                    _tasks.append(
+                        _pubmed_esearch_throttled(client, _t + _date_suffix, 8)
+                    )
+
         (
             fda_label,
             fda_events,
@@ -1583,19 +1667,8 @@ async def fetch_drug_data(drug_name: str) -> DrugFetchResult:
             medlineplus_drug,
             statpearls_text,
             chembl_data,
-        ) = await asyncio.gather(
-            _fetch_fda_label(client, search_name),
-            _fetch_fda_events(client, search_name),
-            _fetch_rxnorm_class_chain(client, search_name),
-            _fetch_pubmed_abstracts(client, search_name, "guideline"),
-            _fetch_pubmed_abstracts(client, search_name, "systematic_review"),
-            _pubmed_esearch_recent_guidelines(client, search_name, 8),
-            _fetch_dailymed(client, search_name),
-            _fetch_medlineplus(client, search_name),
-            _fetch_pmc_statpearls(client, search_name),
-            _fetch_chembl(client, search_name),
-            return_exceptions=True,
-        )
+            *_extra_esearch_results,
+        ) = await asyncio.gather(*_tasks, return_exceptions=True)
 
         # Unpack guidelines and sysreviews results (now tuples with sources)
         guidelines = []
@@ -1611,6 +1684,18 @@ async def fetch_drug_data(drug_name: str) -> DrugFetchResult:
             guidelines = recent_articles + guidelines
             for src in recent_sources:
                 guidelines_sources.add(src)
+
+        # Fetch expanded PubMed search results from LLM-generated terms
+        if _extra_esearch_results:
+            _extra_pmids = []
+            for _res in _extra_esearch_results:
+                if isinstance(_res, list):
+                    _extra_pmids.extend(_res[:8])  # take first 8 from each extra search
+            if _extra_pmids:
+                _extra_articles, _extra_sources = await _pubmed_efetch(client, _extra_pmids)
+                guidelines = guidelines + _extra_articles
+                for src in _extra_sources:
+                    guidelines_sources.add(src)
 
         sysreviews = []
         sysreviews_sources = set()
@@ -1727,7 +1812,7 @@ async def fetch_drug_data(drug_name: str) -> DrugFetchResult:
     return result
 
 
-async def fetch_disease_data(disease_name: str) -> DiseaseFetchResult:
+async def fetch_disease_data(disease_name: str, *, extra_pubmed_terms: list[str] | None = None) -> DiseaseFetchResult:
     """Fetch disease data from PubMed (guidelines + reviews + classification), NICE,
     MedlinePlus, and Semantic Scholar — all in parallel.
 
@@ -1774,6 +1859,16 @@ async def fetch_disease_data(disease_name: str) -> DiseaseFetchResult:
             _fetch_ncbi_disease_structured(client, disease_name),
         ]
 
+        # LLM-expanded MeSH terms — additive on top of hardcoded searches above
+        if extra_pubmed_terms:
+            _cur_year = _dt.now().year
+            _date_suffix = f" AND 2010:{_cur_year}[dp]"
+            for _t in extra_pubmed_terms[:3]:  # cap at 3 extra terms per call
+                if _t and len(_t) > 10 and "[dp]" not in _t:  # skip empty/malformed/already-dated
+                    tasks.append(
+                        _pubmed_esearch_throttled(client, _t + _date_suffix, 8)
+                    )
+
         # Use asyncio.wait so partial results are recovered if some calls time out
         task_objs = [asyncio.ensure_future(coro) for coro in tasks]
         done, pending = await asyncio.wait(
@@ -1801,8 +1896,15 @@ async def fetch_disease_data(disease_name: str) -> DiseaseFetchResult:
         semantic = results[7] if isinstance(results[7], list) else []
         ncbi = results[8] if len(results) > 8 and isinstance(results[8], str) else None
 
+        # Extract expanded PubMed search results from LLM-generated terms
+        extra_guideline_ids = []
+        if len(results) > 9:
+            for _res in results[9:]:
+                if isinstance(_res, list):
+                    extra_guideline_ids.extend(_res[:8])  # take first 8 from each extra search
+
         # Merge and deduplicate PMIDs (recent guidelines takes priority)
-        unique_guideline_ids = list(set(recent_guideline_ids) | set(guideline_ids) | set(broad_guideline_ids))
+        unique_guideline_ids = list(set(recent_guideline_ids) | set(guideline_ids) | set(broad_guideline_ids) | set(extra_guideline_ids))
         all_review_ids = list(set(review_ids) | set(broad_review_ids))
         all_pmids = set(unique_guideline_ids) | set(all_review_ids)
         all_ids = list(all_pmids)
@@ -1862,16 +1964,32 @@ async def fetch_disease_data(disease_name: str) -> DiseaseFetchResult:
     return result
 
 
-async def fetch_procedure_data(procedure_name: str) -> ProcedureFetchResult:
+async def fetch_procedure_data(procedure_name: str, *, extra_pubmed_terms: list[str] | None = None) -> ProcedureFetchResult:
     """Fetch procedure/guideline data from PubMed practice guidelines."""
     result = ProcedureFetchResult()
 
     async with _make_client() as client:
-        guidelines_result, practice_result, reviews_result, statpearls = await asyncio.gather(
+        # Build main search tasks
+        _tasks = [
             _fetch_pubmed_abstracts(client, procedure_name, "guideline"),
             _fetch_pubmed_procedure_guidelines(client, procedure_name),
             _fetch_pubmed_abstracts(client, procedure_name, "systematic_review"),
             _fetch_pmc_statpearls(client, procedure_name),
+        ]
+
+        # LLM-expanded MeSH terms — additive on top of hardcoded searches above
+        if extra_pubmed_terms:
+            import datetime as _dt
+            _cur_year = _dt.datetime.now().year
+            _date_suffix = f" AND 2010:{_cur_year}[dp]"
+            for _t in extra_pubmed_terms[:3]:  # cap at 3 extra terms per call
+                if _t and len(_t) > 10 and "[dp]" not in _t:  # skip empty/malformed/already-dated
+                    _tasks.append(
+                        _pubmed_esearch_throttled(client, _t + _date_suffix, 8)
+                    )
+
+        guidelines_result, practice_result, reviews_result, statpearls, *_extra_esearch_results = await asyncio.gather(
+            *_tasks,
             return_exceptions=True,
         )
 
@@ -1897,6 +2015,19 @@ async def fetch_procedure_data(procedure_name: str) -> ProcedureFetchResult:
         elif isinstance(reviews_result, list):
             reviews = reviews_result
 
+        # Fetch expanded PubMed search results from LLM-generated terms
+        extra_guidelines = []
+        if _extra_esearch_results:
+            _extra_pmids = []
+            for _res in _extra_esearch_results:
+                if isinstance(_res, list):
+                    _extra_pmids.extend(_res[:8])  # take first 8 from each extra search
+            if _extra_pmids:
+                _extra_articles, _extra_sources = await _pubmed_efetch(client, _extra_pmids)
+                extra_guidelines = _extra_articles
+                for src in _extra_sources:
+                    guidelines_sources.add(src)
+
         # Collect all sources
         all_sources = guidelines_sources | practice_sources | reviews_sources
         for src in all_sources:
@@ -1906,7 +2037,8 @@ async def fetch_procedure_data(procedure_name: str) -> ProcedureFetchResult:
         result.guideline_abstracts = _cap_abstracts(
             (guidelines if isinstance(guidelines, list) else []) +
             (practice if isinstance(practice, list) else []) +
-            (reviews if isinstance(reviews, list) else []),
+            (reviews if isinstance(reviews, list) else []) +
+            extra_guidelines,
             6000
         )
         if result.guideline_abstracts and "PubMed" not in result.data_sources:
@@ -1948,7 +2080,7 @@ async def _fetch_pubmed_procedure_guidelines(
     return articles, sources
 
 
-async def fetch_evidence_data(query: str) -> EvidenceFetchResult:
+async def fetch_evidence_data(query: str, *, extra_pubmed_terms: list[str] | None = None) -> EvidenceFetchResult:
     """Fetch evidence for drug+condition questions (clinical trials + reviews).
 
     Speed optimization: parallel esearch → single batch efetch.
@@ -1968,20 +2100,40 @@ async def fetch_evidence_data(query: str) -> EvidenceFetchResult:
 
     async with _make_client() as client:
         # Phase 1: all esearch in parallel
-        trial_ids, review_ids, guideline_ids, broad_ids = await asyncio.gather(
+        _tasks = [
             _pubmed_esearch_throttled(client, trial_term, 12),
             _pubmed_esearch_throttled(client, review_term, 8),
             _pubmed_esearch_throttled(client, guideline_term, 10),
             _pubmed_esearch_throttled(client, broad_evidence_term, 12),
-            return_exceptions=True,
-        )
+        ]
+
+        # LLM-expanded MeSH terms — additive on top of hardcoded searches above
+        if extra_pubmed_terms:
+            import datetime as _dt
+            _cur_year = _dt.datetime.now().year
+            _date_suffix = f" AND 2010:{_cur_year}[dp]"
+            for _t in extra_pubmed_terms[:3]:  # cap at 3 extra terms per call
+                if _t and len(_t) > 10 and "[dp]" not in _t:  # skip empty/malformed/already-dated
+                    _tasks.append(
+                        _pubmed_esearch_throttled(client, _t + _date_suffix, 8)
+                    )
+
+        results = await asyncio.gather(*_tasks, return_exceptions=True)
+        trial_ids, review_ids, guideline_ids, broad_ids = results[0:4]
         trial_ids = trial_ids if isinstance(trial_ids, list) else []
         review_ids = review_ids if isinstance(review_ids, list) else []
         guideline_ids = guideline_ids if isinstance(guideline_ids, list) else []
         broad_ids = broad_ids if isinstance(broad_ids, list) else []
 
+        # Extract expanded PubMed search results from LLM-generated terms
+        extra_ids = []
+        if len(results) > 4:
+            for _res in results[4:]:
+                if isinstance(_res, list):
+                    extra_ids.extend(_res[:8])  # take first 8 from each extra search
+
         # Phase 2: single batch efetch
-        all_ids = list(set(trial_ids + review_ids + guideline_ids + broad_ids))
+        all_ids = list(set(trial_ids + review_ids + guideline_ids + broad_ids + extra_ids))
         if all_ids:
             all_abstracts, enrichment_sources = await _pubmed_efetch(client, all_ids)
             for src in enrichment_sources:
@@ -1994,6 +2146,7 @@ async def fetch_evidence_data(query: str) -> EvidenceFetchResult:
         review_set = set(review_ids)
         guideline_set = set(guideline_ids)
         broad_set = set(broad_ids)
+        extra_set = set(extra_ids)
         for a in all_abstracts:
             pmid = a.get("pmid")
             if pmid in trial_set:
@@ -2003,6 +2156,8 @@ async def fetch_evidence_data(query: str) -> EvidenceFetchResult:
             if pmid in guideline_set:
                 result.guideline_abstracts.append(a)
             elif pmid in broad_set:
+                result.guideline_abstracts.append(a)
+            elif pmid in extra_set:
                 result.guideline_abstracts.append(a)
 
         result.clinical_trial_abstracts = _cap_abstracts(
@@ -2097,6 +2252,7 @@ async def fetch_data_for_query(
     condition_context: Optional[str] = None,
     user_email: Optional[str] = None,
     ncbi_api_key: Optional[str] = None,
+    pubmed_expansion_terms: dict | None = None,
 ) -> FetchedData:
     """Top-level orchestrator called by the pipeline.
 
@@ -2110,6 +2266,18 @@ async def fetch_data_for_query(
     """
     _user_email_ctx.set(user_email)  # available to all _pubmed_efetch calls in this request
     _ncbi_key_ctx.set(ncbi_api_key)  # available to all _pubmed_esearch_throttled calls in this request
+
+    # Extract per-category expansion terms (None if no LLM expansion was done)
+    _guideline_terms: list[str] | None = None
+    _review_terms: list[str] | None = None
+    _trial_terms: list[str] | None = None
+    _all_terms: list[str] | None = None
+    if pubmed_expansion_terms:
+        _guideline_terms = pubmed_expansion_terms.get("guideline") or []
+        _review_terms = pubmed_expansion_terms.get("review") or []
+        _trial_terms = pubmed_expansion_terms.get("trial") or []
+        _all_terms = _guideline_terms + _review_terms + _trial_terms
+
     start = time.time()
     fetched = FetchedData(query_type=query_type)
 
@@ -2118,9 +2286,9 @@ async def fetch_data_for_query(
             if condition_context:
                 # Fetch drug data AND condition management guidelines in parallel (B6)
                 drug_result, condition_result, evidence_result = await asyncio.gather(
-                    fetch_drug_data(entities[0]),
-                    fetch_disease_data(condition_context),
-                    fetch_evidence_data(f"{entities[0]} {condition_context}"),
+                    fetch_drug_data(entities[0], extra_pubmed_terms=_guideline_terms if pubmed_expansion_terms else None),
+                    fetch_disease_data(condition_context, extra_pubmed_terms=(_guideline_terms + _review_terms) if pubmed_expansion_terms else None),
+                    fetch_evidence_data(f"{entities[0]} {condition_context}", extra_pubmed_terms=_all_terms if pubmed_expansion_terms else None),
                     return_exceptions=True,
                 )
                 fetched.drug_data = (
@@ -2157,22 +2325,22 @@ async def fetch_data_for_query(
                 if fetched.condition_data:
                     _fire_and_forget_index(fetched.condition_data.guideline_abstracts)
             else:
-                fetched.drug_data = await fetch_drug_data(entities[0])
+                fetched.drug_data = await fetch_drug_data(entities[0], extra_pubmed_terms=_guideline_terms if pubmed_expansion_terms else None)
                 fetched.fallback_to_llm = not fetched.drug_data.fetch_success
                 _fire_and_forget_index(fetched.drug_data.guideline_abstracts)
                 _fire_and_forget_index(fetched.drug_data.clinical_trial_abstracts)
 
         elif query_type == "disease" and entities:
-            fetched.disease_data = await fetch_disease_data(entities[0])
+            fetched.disease_data = await fetch_disease_data(entities[0], extra_pubmed_terms=(_guideline_terms + _review_terms) if pubmed_expansion_terms else None)
             fetched.fallback_to_llm = not fetched.disease_data.fetch_success
             _fire_and_forget_index(fetched.disease_data.guideline_abstracts)
             _fire_and_forget_index(fetched.disease_data.systematic_review_abstracts)
 
         elif query_type == "comparative" and len(entities) >= 2:
             drug_results = await asyncio.gather(
-                fetch_drug_data(entities[0]),
-                fetch_drug_data(entities[1]),
-                fetch_evidence_data(" vs ".join(entities[:2])),
+                fetch_drug_data(entities[0], extra_pubmed_terms=_guideline_terms if pubmed_expansion_terms else None),
+                fetch_drug_data(entities[1], extra_pubmed_terms=_guideline_terms if pubmed_expansion_terms else None),
+                fetch_evidence_data(" vs ".join(entities[:2]), extra_pubmed_terms=_all_terms if pubmed_expansion_terms else None),
                 return_exceptions=True,
             )
             for r in drug_results[:2]:
@@ -2200,12 +2368,12 @@ async def fetch_data_for_query(
             )
 
         elif query_type == "procedure" and entities:
-            fetched.procedure_data = await fetch_procedure_data(entities[0])
+            fetched.procedure_data = await fetch_procedure_data(entities[0], extra_pubmed_terms=_guideline_terms if pubmed_expansion_terms else None)
             fetched.fallback_to_llm = not fetched.procedure_data.fetch_success
             _fire_and_forget_index(fetched.procedure_data.guideline_abstracts)
 
         elif query_type == "evidence" and entities:
-            fetched.evidence_data = await fetch_evidence_data(" ".join(entities))
+            fetched.evidence_data = await fetch_evidence_data(" ".join(entities), extra_pubmed_terms=_all_terms if pubmed_expansion_terms else None)
             fetched.fallback_to_llm = not fetched.evidence_data.fetch_success
             _fire_and_forget_index(fetched.evidence_data.clinical_trial_abstracts)
 

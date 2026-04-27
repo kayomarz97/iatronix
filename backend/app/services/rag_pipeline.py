@@ -1317,6 +1317,96 @@ async def _analyze_query_with_dspy(
         return None
 
 
+async def _analyze_and_expand_query(
+    query: str,
+    *,
+    model_id: str,
+    user_key: str | None,
+    user_provider: str | None,
+) -> dict | None:
+    """Single Haiku call: rewrites query + entity extraction + PubMed MeSH term generation.
+
+    Replaces _analyze_query_with_dspy() + _rewrite_query() with one call.
+    Returns None on ANY failure — caller falls back to the legacy individual calls.
+    Never raises; all exceptions are caught and logged.
+    """
+    if not settings.pubmed_expansion_enabled or not user_key:
+        return None
+    import json as _json
+
+    _prompt = (
+        "You are a medical query analyst and PubMed search specialist.\n"
+        "Return ONLY a JSON object with EXACTLY these keys — no markdown fences, no explanation:\n"
+        "{\n"
+        '  "rewritten_query": "<corrected spelling/abbreviations, same clinical intent>",\n'
+        '  "query_type": "<drug|disease|comparative|procedure|evidence|general>",\n'
+        '  "entities": ["<primary entity>", "<secondary entity if applicable>"],\n'
+        '  "condition_context": "<condition name if drug-in-condition query, else empty string>",\n'
+        '  "response_focus": "<what user wants in 1 sentence>",\n'
+        '  "related_topics": ["<t1>", "<t2>", "<t3>", "<t4>", "<t5>"],\n'
+        '  "pubmed_terms": {\n'
+        '    "guideline": ["<MeSH+boolean PubMed query>", "<broader fallback query>"],\n'
+        '    "review": ["<systematic review PubMed query>", "<broader fallback>"],\n'
+        '    "trial": ["<RCT PubMed query>", "<broader fallback>"]\n'
+        "  }\n"
+        "}\n"
+        "MeSH rules: use standard MeSH headings where known, e.g. insulin resistance[MeSH].\n"
+        "Boolean: (termA[MeSH] OR synonymB[Title/Abstract]) AND (termC[MeSH] OR synonymD[Title/Abstract]).\n"
+        "pubmed_terms must be complete valid PubMed query strings.\n"
+        "Do NOT include date ranges in pubmed_terms — the caller appends them.\n"
+        "Output ONLY valid JSON, no markdown.\n"
+        "\n"
+        f"Query: {query}"
+    )
+    # NOTE: _call_llm splits on "\nQuery: " — static instruction above gets cached, query does not.
+    try:
+        raw = await _call_llm(
+            model_id, _prompt, max_tokens=512,
+            user_key=user_key, user_provider=user_provider,
+        )
+        if not raw:
+            return None
+
+        # Strip markdown fences — some models wrap JSON despite instructions
+        clean = raw.strip()
+        if clean.startswith("```"):
+            parts = clean.split("```")
+            # parts[0]="" parts[1]="json\n{...}" parts[2]=""  OR  parts[1]="{...}"
+            inner = parts[1] if len(parts) >= 2 else clean
+            clean = inner.lstrip("json").lstrip("JSON").strip()
+
+        data = _json.loads(clean)
+
+        # Validate required keys exist before trusting the response
+        required_keys = {"rewritten_query", "query_type", "entities", "pubmed_terms"}
+        if not required_keys.issubset(data.keys()):
+            logger.warning(
+                "_analyze_and_expand_query: missing keys %s — falling back",
+                required_keys - data.keys(),
+            )
+            return None
+
+        # Validate pubmed_terms structure
+        pt = data.get("pubmed_terms", {})
+        if not isinstance(pt, dict) or not any(pt.get(k) for k in ("guideline", "review", "trial")):
+            logger.warning("_analyze_and_expand_query: invalid pubmed_terms — falling back")
+            return None
+
+        # Sanitize entities using existing helper
+        data["entities"] = _sanitize_entities(data.get("entities") or [])
+        # Normalize condition_context: empty string → None
+        data["condition_context"] = (data.get("condition_context") or "").strip() or None
+
+        return data
+
+    except _json.JSONDecodeError as e:
+        logger.warning("_analyze_and_expand_query: JSON parse failed (%s) — falling back", e)
+        return None
+    except Exception as e:
+        logger.warning("_analyze_and_expand_query: unexpected error (%s) — falling back", e)
+        return None
+
+
 def _dedup_references(refs: list) -> list:
     """Deduplicate reference dicts by title+pmid key."""
     seen: set[str] = set()
@@ -1345,16 +1435,32 @@ async def _call_llm_simple(
         if provider == "anthropic":
             sys_content = [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
             if data_block:
-                sys_content.append({"type": "text", "text": data_block})
+                # Cache the data block when large enough (Anthropic minimum: 1024 tokens ≈ 4096 chars).
+                # Same data block is reused across all 5-6 section calls for one query — 73% token savings.
+                if len(data_block) > 4096:
+                    sys_content.append({"type": "text", "text": data_block, "cache_control": {"type": "ephemeral"}})
+                else:
+                    sys_content.append({"type": "text", "text": data_block})
             msgs = [SystemMessage(content=sys_content), HumanMessage(content=user_text)]
         else:
             combined = system + ("\n\n" + data_block if data_block else "")
             msgs = [SystemMessage(content=combined), HumanMessage(content=user_text)]
         result = await llm.ainvoke(msgs)
         usage = getattr(result, "usage_metadata", None) or {}
+        cache_read = usage.get("cache_read_input_tokens", 0)
+        cache_write = usage.get("cache_creation_input_tokens", 0)
+        if cache_read:
+            logger.debug("Prompt cache HIT: %d tokens saved", cache_read)
+        elif cache_write:
+            logger.debug("Prompt cache WRITE: %d tokens written", cache_write)
         return (
             result.content if isinstance(result.content, str) else None,
-            {"input_tokens": usage.get("input_tokens", 0), "output_tokens": usage.get("output_tokens", 0)},
+            {
+                "input_tokens": usage.get("input_tokens", 0),
+                "output_tokens": usage.get("output_tokens", 0),
+                "cache_creation_input_tokens": cache_write,
+                "cache_read_input_tokens": cache_read,
+            },
         )
     except Exception as exc:
         logger.warning("_call_llm_simple failed: %s", exc)
@@ -1560,32 +1666,54 @@ async def process_query(
     # Speculative type via rule-based classifier (sync, ~1ms) — used for parallel cache check
     speculative_type, _ = classify_query(request.query)
 
-    # Run DSPy analysis, Redis cache check, and query rewriter in parallel
-    _dspy_result, _cache_prefetch, _rewritten = await asyncio.gather(
-        _analyze_query_with_dspy(
+    # Run merged analysis+expansion, Redis cache check in parallel
+    _combined, _cache_prefetch = await asyncio.gather(
+        _analyze_and_expand_query(
             request.query,
             model_id=settings.model_classify,
             user_key=user_llm_key,
             user_provider=user_llm_provider,
         ),
         cache_get(redis_client, request.query, speculative_type, normalized_request_model),
-        _rewrite_query(
-            request.query,
-            model_id=normalized_request_model,
-            user_key=user_llm_key,
-            user_provider=user_llm_provider,
-        ),
         return_exceptions=True,
     )
-    query_analysis = _dspy_result if not isinstance(_dspy_result, Exception) else None
+    combined = _combined if not isinstance(_combined, Exception) else None
     _speculative_cache = _cache_prefetch if not isinstance(_cache_prefetch, Exception) else None
-    rewritten_query = (
-        _rewritten
-        if isinstance(_rewritten, str) and _rewritten.strip()
-        else request.query
-    )
-    if rewritten_query != request.query:
-        logger.info("Query rewritten: %r → %r", request.query, rewritten_query)
+    pubmed_expansion_terms: dict | None = None
+
+    if combined:
+        # New merged path: 1 Haiku call instead of 2
+        rewritten_query = combined.get("rewritten_query") or request.query
+        query_analysis = combined  # contains entities, condition_context, query_type etc.
+        pubmed_expansion_terms = combined.get("pubmed_terms")
+        if rewritten_query != request.query:
+            logger.info("Query rewritten: %r → %r", request.query, rewritten_query)
+    else:
+        # Legacy fallback — exact same behaviour as before this change
+        logger.info("_analyze_and_expand_query failed — falling back to legacy DSPy + rewrite")
+        _dspy_result, _rewritten = await asyncio.gather(
+            _analyze_query_with_dspy(
+                request.query,
+                model_id=settings.model_classify,
+                user_key=user_llm_key,
+                user_provider=user_llm_provider,
+            ),
+            _rewrite_query(
+                request.query,
+                model_id=normalized_request_model,
+                user_key=user_llm_key,
+                user_provider=user_llm_provider,
+            ),
+            return_exceptions=True,
+        )
+        query_analysis = _dspy_result if not isinstance(_dspy_result, Exception) else None
+        rewritten_query = (
+            _rewritten
+            if isinstance(_rewritten, str) and _rewritten.strip()
+            else request.query
+        )
+        if rewritten_query != request.query:
+            logger.info("Query rewritten: %r → %r", request.query, rewritten_query)
 
     if request.query_type:
         query_type, confidence = request.query_type, 0.99
@@ -1723,6 +1851,7 @@ async def process_query(
         user_voyage_key=user_voyage_key,
         user_email=user_email,
         user_ncbi_key=user_ncbi_key,
+        pubmed_expansion_terms=pubmed_expansion_terms,
     )
     logger.info(
         "pipeline.data_fetch",
@@ -1963,7 +2092,10 @@ async def process_query(
                         {"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}},
                     ]
                     if data_block:
-                        _sys_content.append({"type": "text", "text": data_block})
+                        if len(data_block) > 4096:
+                            _sys_content.append({"type": "text", "text": data_block, "cache_control": {"type": "ephemeral"}})
+                        else:
+                            _sys_content.append({"type": "text", "text": data_block})
                     _msgs = [
                         SystemMessage(content=_sys_content),
                         HumanMessage(content=user_text),
@@ -2088,7 +2220,10 @@ async def process_query(
                         {"type": "text", "text": retry_static, "cache_control": {"type": "ephemeral"}},
                     ]
                     if data_block:
-                        _sys_content.append({"type": "text", "text": data_block})
+                        if len(data_block) > 4096:
+                            _sys_content.append({"type": "text", "text": data_block, "cache_control": {"type": "ephemeral"}})
+                        else:
+                            _sys_content.append({"type": "text", "text": data_block})
                     _msgs = [
                         SystemMessage(content=_sys_content),
                         HumanMessage(content=user_text),

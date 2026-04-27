@@ -60,25 +60,21 @@ function ArticleTicker({ articles }: { articles: FetchedArticle[] }) {
   const [visible, setVisible] = useState<FetchedArticle[]>([]);
   const [totalSeen, setTotalSeen] = useState(0);
   const indexRef = useRef(0);
-  const loopRef = useRef(false);
 
   useEffect(() => {
     if (articles.length === 0) return;
     indexRef.current = 0;
-    loopRef.current = false;
     setVisible([]);
     setTotalSeen(0);
 
     const id = setInterval(() => {
-      const article = articles[indexRef.current % articles.length];
-      indexRef.current += 1;
-
-      // Track total unique articles on first pass
-      if (!loopRef.current) {
-        setTotalSeen(indexRef.current);
-        if (indexRef.current >= articles.length) loopRef.current = true;
+      if (indexRef.current >= articles.length) {
+        clearInterval(id);
+        return;
       }
-
+      const article = articles[indexRef.current];
+      indexRef.current += 1;
+      setTotalSeen(indexRef.current);
       setVisible(prev => [...prev.slice(-4), article]);
     }, 1400);
 
@@ -102,7 +98,9 @@ function ArticleTicker({ articles }: { articles: FetchedArticle[] }) {
           style={{ background: "#3b82f6", animation: "pulse 1s ease-in-out infinite" }}
         />
         <span className="text-[10px] uppercase tracking-widest font-semibold" style={{ color: "var(--text-muted)" }}>
-          {loopRef.current ? `${articles.length} articles retrieved` : `Retrieving articles… (${totalSeen} found)`}
+          {totalSeen >= articles.length && articles.length > 0
+            ? `${articles.length} articles retrieved`
+            : `Retrieving articles… (${totalSeen} found)`}
         </span>
       </div>
 
@@ -172,6 +170,13 @@ function FetchingDetail({ articles }: { articles: FetchedArticle[] }) {
       )}
 
       <ArticleTicker articles={articles} />
+
+      {articles.length > 0 && (
+        <div className="flex items-center gap-2 text-[11px] mt-2">
+          <span style={{ display: "inline-block", width: 7, height: 7, borderRadius: "50%", background: "#6366f1", animation: "pulse 1.6s ease-in-out infinite" }} />
+          <span style={{ color: "var(--text-muted)" }}>Scanning cited references…</span>
+        </div>
+      )}
     </div>
   );
 }
