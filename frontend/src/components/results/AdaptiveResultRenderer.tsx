@@ -90,25 +90,38 @@ function ClaimRow({ item }: { item: AdaptiveContentItem }) {
   const sourceHref = item.url
     ?? (item.pmid ? `https://pubmed.ncbi.nlm.nih.gov/${item.pmid}/` : null);
 
+  const badgeAndSource = (
+    <>
+      <EvidenceBadge loe={item.loe ?? undefined} cor={item.cor ?? undefined} compact />
+      {item.source && (
+        sourceHref ? (
+          <a href={sourceHref} target="_blank" rel="noopener noreferrer"
+             className="text-[10px] text-blue-400 hover:underline max-w-[120px] text-right leading-tight">
+            {item.source}
+          </a>
+        ) : (
+          <span className="text-[10px] text-muted-foreground max-w-[120px] text-right leading-tight">
+            {item.source}
+          </span>
+        )
+      )}
+    </>
+  );
+
   return (
-    <div className="flex gap-2 items-start py-3 border-b border-border/40 last:border-0">
-      <div className="flex-1 text-sm prose prose-sm max-w-none prose-p:my-2 prose-ul:my-2 prose-ul:list-disc prose-ul:pl-5 prose-li:block prose-li:my-1.5 prose-table:text-xs prose-strong:font-bold prose-em:italic" style={{ color: "var(--text-primary)" }}>
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.text}</ReactMarkdown>
+    <div className="py-3 border-b border-border/40 last:border-0">
+      <div className="flex gap-2 items-start">
+        <div className="flex-1 text-sm prose prose-sm max-w-none prose-p:my-2 prose-ul:my-2 prose-ul:list-disc prose-ul:pl-5 prose-li:block prose-li:my-1.5 prose-table:text-xs prose-strong:font-bold prose-em:italic" style={{ color: "var(--text-primary)" }}>
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.text}</ReactMarkdown>
+        </div>
+        {/* Badge beside text on sm+ screens */}
+        <div className="hidden sm:flex flex-col items-end gap-1 shrink-0 pt-0.5">
+          {badgeAndSource}
+        </div>
       </div>
-      <div className="flex flex-col items-end gap-1 shrink-0 pt-0.5">
-        <EvidenceBadge loe={item.loe ?? undefined} cor={item.cor ?? undefined} compact />
-        {item.source && (
-          sourceHref ? (
-            <a href={sourceHref} target="_blank" rel="noopener noreferrer"
-               className="text-[10px] text-blue-400 hover:underline max-w-[120px] text-right leading-tight">
-              {item.source}
-            </a>
-          ) : (
-            <span className="text-[10px] text-muted-foreground max-w-[120px] text-right leading-tight">
-              {item.source}
-            </span>
-          )
-        )}
+      {/* Badge below text on mobile (< sm) */}
+      <div className="flex sm:hidden items-center gap-2 mt-1.5 flex-wrap">
+        {badgeAndSource}
       </div>
     </div>
   );

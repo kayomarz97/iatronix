@@ -49,6 +49,7 @@ async def fetch_node(state: SearchState) -> dict:
                 condition_context=routing.condition_context,
                 user_email=state.get("user_email"),
                 ncbi_api_key=state.get("user_ncbi_key"),
+                pubmed_expansion_terms=state.get("pubmed_expansion_terms"),
             ),
             timeout=state["api_fetch_timeout"],
         )
@@ -133,6 +134,7 @@ async def run_search_graph(
     user_voyage_key: str | None = None,
     user_email: str | None = None,
     user_ncbi_key: str | None = None,
+    pubmed_expansion_terms: dict | None = None,
 ) -> tuple[Any, list, Any]:
     """Run parallel search (fetch + vector + semantic cache) via LangGraph.
 
@@ -154,6 +156,7 @@ async def run_search_graph(
         "user_email": user_email,
         "user_ncbi_key": user_ncbi_key,
         "api_fetch_timeout": api_fetch_timeout,
+        "pubmed_expansion_terms": pubmed_expansion_terms,
         "fetched_data": None,
         "vector_results": [],
         "sem_result": None,
