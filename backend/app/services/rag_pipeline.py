@@ -1978,6 +1978,7 @@ async def process_query(
         user_email=user_email,
         user_ncbi_key=user_ncbi_key,
         pubmed_expansion_terms=pubmed_expansion_terms,
+        force_refresh=request.force_refresh,
     )
     logger.info(
         "pipeline.data_fetch",
@@ -2004,36 +2005,30 @@ async def process_query(
         else:
             sem_response, sem_cache_id, sem_verified_at = None, None, None
         if sem_response:
-            latency_ms = int((time.time() - start_time) * 1000)
-            sem_response["cached"] = True
-            sem_response["latency_ms"] = latency_ms
-            try:
-                _sem_hit_resp = QueryResponse(**sem_response)
-            except Exception:
-                _sem_hit_resp = None
-            if _sem_hit_resp:
-                _sem_stale = is_stale(
-                    sem_verified_at,
-                    settings.semantic_cache_swr_ttl_seconds,
-                )
-                if _sem_stale and sem_cache_id:
-                    asyncio.create_task(
-                        _revalidate_semantic_cache(
-                            request,
-                            query_type,
-                            sem_cache_id,
-                            redis_client,
-                            user_key_id,
-                            user_llm_key,
-                            user_llm_provider,
-                            user=user,
+            # Check if cache is fresh (not stale)
+            _sem_stale = is_stale(
+                sem_verified_at,
+                settings.semantic_cache_swr_ttl_seconds,
+            )
+            # For medical safety: only return cached result if it's fresh (not stale)
+            # If stale, skip cache and continue to run fresh pipeline
+            if not _sem_stale:
+                latency_ms = int((time.time() - start_time) * 1000)
+                sem_response["cached"] = True
+                if sem_verified_at:
+                    from datetime import datetime
+                    sem_response["cached_at"] = sem_verified_at.isoformat() if hasattr(sem_verified_at, 'isoformat') else str(sem_verified_at)
+                sem_response["latency_ms"] = latency_ms
+                try:
+                    _sem_hit_resp = QueryResponse(**sem_response)
+                except Exception:
+                    _sem_hit_resp = None
+                if _sem_hit_resp:
+                    if user and user.id:
+                        asyncio.create_task(
+                            _log_search_history(user.id, request.query, query_type, sem_response)
                         )
-                    )
-                if user and user.id:
-                    asyncio.create_task(
-                        _log_search_history(user.id, request.query, query_type, sem_response)
-                    )
-                return _sem_hit_resp
+                    return _sem_hit_resp
 
     if use_api_fetch and fetched_data is not None and not fetched_data.fallback_to_llm:
         fetched_data, retrieval_notes = await _expand_retrieval_if_needed(
@@ -2618,29 +2613,3 @@ async def process_query(
     return response
 
 
-async def _revalidate_semantic_cache(
-    request,
-    query_type: str,
-    cache_id: int,
-    redis_client,
-    user_key_id,
-    user_llm_key,
-    user_llm_provider,
-    user=None,
-) -> None:
-    """
-    Background SWR revalidation: re-run the pipeline for a stale cache entry
-    and update the semantic cache entry with the fresh response.
-    Runs as a fire-and-forget asyncio task.
-    """
-    try:
-        fresh_response = await process_query(
-            request,
-            redis_client=redis_client,
-            user_key_id=user_key_id,
-            user=user,
-        )
-        await semantic_cache_revalidate(cache_id, fresh_response.model_dump())
-        logger.debug("SWR revalidation complete for semantic cache id=%d", cache_id)
-    except Exception:
-        logger.debug("SWR revalidation failed for cache id=%d", cache_id, exc_info=True)

@@ -27,6 +27,7 @@ class SearchState(TypedDict):
     user_ncbi_key: Optional[str]
     api_fetch_timeout: float
     pubmed_expansion_terms: Optional[dict]
+    force_refresh: bool  # If True, bypass all cache layers
 
     # Outputs — each written by a separate parallel node
     fetched_data: Any
@@ -84,8 +85,15 @@ async def vector_node(state: SearchState) -> dict:
 
 
 async def semantic_cache_node(state: SearchState) -> dict:
-    """Check the semantic cache for a prior similar query (uses original, not rewritten, query)."""
+    """Check the semantic cache for a prior similar query (uses original, not rewritten, query).
+
+    Skipped entirely if force_refresh=True.
+    """
     from app.services.semantic_cache import semantic_cache_get
+
+    # Skip cache if force_refresh is set
+    if state.get("force_refresh", False):
+        return {"sem_result": None}
 
     try:
         result = await semantic_cache_get(
@@ -136,6 +144,7 @@ async def run_search_graph(
     user_email: str | None = None,
     user_ncbi_key: str | None = None,
     pubmed_expansion_terms: dict | None = None,
+    force_refresh: bool = False,
 ) -> tuple[Any, list, Any]:
     """Run parallel search (fetch + vector + semantic cache) via LangGraph.
 
@@ -158,6 +167,7 @@ async def run_search_graph(
         "user_ncbi_key": user_ncbi_key,
         "api_fetch_timeout": api_fetch_timeout,
         "pubmed_expansion_terms": pubmed_expansion_terms,
+        "force_refresh": force_refresh,
         "fetched_data": None,
         "vector_results": [],
         "sem_result": None,

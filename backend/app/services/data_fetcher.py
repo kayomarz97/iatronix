@@ -146,6 +146,49 @@ _SPECIALTY_MAP: dict[str, list[str]] = {
 }
 
 
+# Medical term synonyms for PubMed OR expansion (improves recall on complex queries)
+_MEDICAL_TERM_SYNONYMS: dict[str, list[str]] = {
+    "renal impairment": ["renal impairment", "CKD", "chronic kidney disease", "kidney disease", "renal disease"],
+    "renal failure": ["renal failure", "acute kidney injury", "AKI", "kidney failure"],
+    "liver failure": ["liver failure", "hepatic failure", "cirrhosis", "hepatic cirrhosis"],
+    "heart failure": ["heart failure", "CHF", "congestive heart failure", "cardiac failure"],
+    "kidney disease": ["kidney disease", "renal disease", "CKD", "chronic kidney disease"],
+    "diabetes": ["diabetes", "diabetes mellitus", "DM"],
+    "hypertension": ["hypertension", "high blood pressure", "HTN"],
+    "arrhythmia": ["arrhythmia", "cardiac arrhythmia", "atrial fibrillation", "AFib"],
+    "afib": ["AFib", "atrial fibrillation", "arrhythmia"],
+    "copd": ["COPD", "chronic obstructive pulmonary disease"],
+    "infection": ["infection", "infectious disease", "sepsis"],
+    "stroke": ["stroke", "cerebrovascular accident", "CVA"],
+}
+
+
+# Guideline societies and their expected update cycles
+GUIDELINE_SOCIETIES: dict[str, dict[str, int]] = {
+    "American Diabetes Association": {"update_years": 1, "key_journals": ["Diabetes Care"]},
+    "American Heart Association": {"update_years": 2, "key_journals": ["Circulation"]},
+    "American College of Cardiology": {"update_years": 2, "key_journals": ["Journal of the American College of Cardiology"]},
+    "National Institute for Health and Care Excellence": {"update_years": 3, "key_journals": ["NICE Guidelines"]},
+    "American Academy of Pediatrics": {"update_years": 2, "key_journals": ["Pediatrics"]},
+    "American Thoracic Society": {"update_years": 2, "key_journals": ["American Journal of Respiratory and Critical Care Medicine"]},
+    "Infectious Diseases Society of America": {"update_years": 3, "key_journals": ["Clinical Infectious Diseases"]},
+}
+
+
+def _expand_medical_term(term: str) -> str:
+    """Expand a medical term with OR-joined synonyms for better PubMed recall.
+
+    Example: "renal impairment" → "(renal impairment OR CKD OR chronic kidney disease OR ...)"
+    """
+    term_lower = term.lower()
+    for key, synonyms in _MEDICAL_TERM_SYNONYMS.items():
+        if key in term_lower:
+            # Create OR expression with all synonyms
+            or_expr = " OR ".join(f'"{s}"' for s in synonyms)
+            return f"({or_expr})"
+    return f'"{term}"'  # fallback: quoted term
+
+
 def _get_journal_filter(entity: str) -> str:
     """Build a PubMed journal filter string (TA field) for the entity's specialty.
 
@@ -653,6 +696,100 @@ async def _fetch_rxnorm_ingredient(client: httpx.AsyncClient, rxcui: str) -> Opt
     return None
 
 
+async def _fetch_chembl_identity(client: httpx.AsyncClient, drug_name: str) -> tuple[str | None, float]:
+    """Resolve drug name via ChEMBL API. Returns (canonical_name, confidence).
+
+    Returns (None, 0.0) if no match found.
+    """
+    try:
+        search = await _safe_get(
+            client,
+            "https://www.ebi.ac.uk/chembl/api/data/molecule.json",
+            params={"pref_name__iexact": drug_name, "format": "json", "limit": 1},
+        )
+        if search and search.get("molecules"):
+            mol = search["molecules"][0]
+            pref_name = mol.get("pref_name")
+            if pref_name and pref_name.lower() != drug_name.lower():
+                return pref_name, 0.65
+    except Exception:
+        pass
+    return None, 0.0
+
+
+async def _fetch_pubchem_identity(client: httpx.AsyncClient, drug_name: str) -> tuple[str | None, float]:
+    """Resolve drug name via PubChem CID API. Returns (IUPAC_name, confidence).
+
+    Returns (None, 0.0) if no match found.
+    """
+    try:
+        # PubChem Identifier API to get CID
+        cid_response = await _safe_get(
+            client,
+            f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/{drug_name}/cids/JSON",
+            timeout=5,
+        )
+        if cid_response and cid_response.get("IdentifierList", {}).get("CID"):
+            cid = cid_response["IdentifierList"]["CID"][0]
+            # Now fetch the compound data
+            compound = await _safe_get(
+                client,
+                f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/{cid}/JSON",
+                params={"c1ccc2c(c1)oc(=O)c3[nH]c(=O)[nH]c23": "O"},
+            )
+            if compound:
+                props = compound.get("PC_Compounds", [{}])[0].get("props", [])
+                for prop in props:
+                    if prop.get("urn", {}).get("label") == "IUPAC Name":
+                        iupac = prop.get("value", {}).get("sval")
+                        if iupac and iupac.lower() != drug_name.lower():
+                            return iupac, 0.60
+    except Exception:
+        pass
+    return None, 0.0
+
+
+async def _fetch_ema_identity(client: httpx.AsyncClient, drug_name: str) -> tuple[str | None, float]:
+    """Resolve drug name via EMA (European Medicines Agency) API. Returns (authorized_name, confidence).
+
+    Returns (None, 0.0) if no match found.
+    """
+    try:
+        # EMA API to search medicines
+        search = await _safe_get(
+            client,
+            "https://www.ema.europa.eu/api/medicines/search",
+            params={"q": drug_name, "limit": 1},
+        )
+        if search and search.get("medicines"):
+            med = search["medicines"][0]
+            auth_name = med.get("name") or med.get("active_substance")
+            if auth_name and auth_name.lower() != drug_name.lower():
+                return auth_name, 0.68
+    except Exception:
+        pass
+    return None, 0.0
+
+
+async def _fetch_who_inn(client: httpx.AsyncClient, drug_name: str) -> tuple[str | None, float]:
+    """Resolve drug name via WHO INN (International Nonproprietary Name) database.
+
+    Returns (INN_name, confidence) if found, (None, 0.0) otherwise.
+    """
+    try:
+        # WHO INN searchable list
+        response = await _safe_get(
+            client,
+            f"https://www.who.int/medicines/services/inn/SCP_INN.pdf",
+            timeout=10,
+        )
+        # Note: PDF parsing would require pdfplumber, which is already in deps
+        # For now, return None — this is a placeholder for direct WHO API if available
+    except Exception:
+        pass
+    return None, 0.0
+
+
 async def _resolve_drug_name_online(client: httpx.AsyncClient, drug_name: str) -> dict:
     """Resolve a brand or misspelled drug name to its generic (salt) name.
 
@@ -660,7 +797,10 @@ async def _resolve_drug_name_online(client: httpx.AsyncClient, drug_name: str) -
     1. RxNorm exact match → follow /related?tty=IN to get ingredient rxcui
     2. RxNorm approximate match → same ingredient lookup
     3. OpenFDA brand search → extract openfda.generic_name directly
-    4. Fallback to original name
+    4. ChEMBL identity search (non-FDA drugs)
+    5. PubChem IUPAC lookup (non-FDA drugs)
+    6. EMA drug register (non-FDA drugs)
+    7. Fallback to original name (confidence 0.0 ensures raw name used in PubMed)
     """
     exact_rxcui, approx_rxcui = await asyncio.gather(
         _fetch_rxnorm_cui(client, drug_name),
@@ -678,6 +818,7 @@ async def _resolve_drug_name_online(client: httpx.AsyncClient, drug_name: str) -
 
     final_rxcui = ingredient_rxcui or rxcui
     resolved_name = await _fetch_rxnorm_name(client, final_rxcui) if final_rxcui else None
+    confidence = 0.95 if exact_rxcui else (0.75 if approx_rxcui else 0.0)
 
     # Fallback: OpenFDA brand search → extract generic_name directly
     if not resolved_name or resolved_name.lower() == drug_name.lower():
@@ -696,14 +837,39 @@ async def _resolve_drug_name_online(client: httpx.AsyncClient, drug_name: str) -
             )
             if generic and generic.lower() != drug_name.lower():
                 resolved_name = generic
+                confidence = 0.82
+
+    # Non-FDA fallbacks for drugs not found in US registries (EU/UK/India drugs)
+    if not resolved_name or resolved_name.lower() == drug_name.lower():
+        # Try ChEMBL, PubChem, EMA in parallel
+        chembl_result, pubchem_result, ema_result = await asyncio.gather(
+            _fetch_chembl_identity(client, drug_name),
+            _fetch_pubchem_identity(client, drug_name),
+            _fetch_ema_identity(client, drug_name),
+            return_exceptions=True,
+        )
+
+        candidates = []
+        if isinstance(chembl_result, tuple) and chembl_result[0]:
+            candidates.append(chembl_result)
+        if isinstance(pubchem_result, tuple) and pubchem_result[0]:
+            candidates.append(pubchem_result)
+        if isinstance(ema_result, tuple) and ema_result[0]:
+            candidates.append(ema_result)
+
+        if candidates:
+            # Pick highest confidence candidate
+            resolved_name, confidence = max(candidates, key=lambda x: x[1])
 
     if resolved_name and resolved_name.lower() != drug_name.lower():
         return {
             "query_name": drug_name,
             "resolved_name": resolved_name,
             "rxcui": final_rxcui,
-            "confidence": 0.95 if exact_rxcui else 0.75,
+            "confidence": confidence,
         }
+    # CRITICAL: Always return at least the original drug_name with confidence 0.0
+    # This ensures raw drug_name is passed to PubMed even when resolution fails
     return {
         "query_name": drug_name,
         "resolved_name": drug_name,
@@ -1017,6 +1183,49 @@ def _parse_pubmed_xml(xml_text: str) -> list:
             continue
 
     return results
+
+
+async def _check_for_superseding_guideline(
+    client: httpx.AsyncClient, article: dict
+) -> dict | None:
+    """Check if there's a newer version of a guideline from the same society.
+
+    If a newer version is found, return it. Otherwise return None.
+    Used to replace older guidelines with newer ones automatically.
+    """
+    article_year = article.get("year", 0)
+    article_title = article.get("title", "").lower()
+    article_journal = article.get("journal", "").lower()
+
+    # Try to identify the guideline society from the journal or title
+    society_name = None
+    for society in GUIDELINE_SOCIETIES.keys():
+        if society.lower() in article_journal or society.lower() in article_title:
+            society_name = society
+            break
+
+    if not society_name:
+        return None  # Can't identify society, can't check for newer version
+
+    expected_update_years = GUIDELINE_SOCIETIES[society_name]["update_years"]
+    from datetime import datetime
+    current_year = datetime.now().year
+
+    # If the article is very recent (< 1 year old), unlikely there's a newer version
+    if current_year - article_year < 1:
+        return None
+
+    # Search for newer guidelines from the same society
+    search_term = f"{society_name} guideline {current_year - expected_update_years}:{current_year}[dp]"
+    newer_ids = await _pubmed_esearch_throttled(client, search_term, 3, sort="pub_date")
+    if not newer_ids:
+        return None
+
+    # Fetch the newest result
+    articles, _ = await _pubmed_efetch(client, [newer_ids[0]], skip_snowball=True)
+    if articles:
+        return articles[0]
+    return None
 
 
 # ------------------------------------------------------------------
@@ -1849,8 +2058,8 @@ async def fetch_disease_data(disease_name: str, *, extra_pubmed_terms: list[str]
         tasks: list = [
             _pubmed_esearch_throttled(client, guideline_term, 16, sort="pub_date"),
             _pubmed_esearch_throttled(client, review_term, 12, sort="pub_date"),
-            _pubmed_esearch_throttled(client, broad_guideline_term, 8),
-            _pubmed_esearch_throttled(client, broad_review_term, 8),
+            _pubmed_esearch_throttled(client, broad_guideline_term, 8, sort="pub_date"),
+            _pubmed_esearch_throttled(client, broad_review_term, 8, sort="pub_date"),
             _pubmed_esearch_recent_guidelines(client, disease_name, 8),
             _fetch_nice(client, disease_name),
             _fetch_medlineplus(client, disease_name),
@@ -2090,10 +2299,10 @@ async def _cascade_pubmed_for_complex(
 
     Returns (EvidenceFetchResult, evidence_tier, cascade_log).
     Guarantee: if PubMed has ANY content on the drug or its class, this returns at least one abstract.
-    The cascade order:
-        1. drug + primary_disease + ALL comorbidities                → tier "guideline" if ≥3 hits
-        2. drug + primary_disease + first comorbidity                → tier "rct"        if ≥3 hits
-        3. drug + primary_disease                                    → tier "review"     if ≥3 hits
+    The cascade order (all tiers now require ≥1 hit, lowered from ≥3 for better recall):
+        1. drug + primary_disease + ALL comorbidities                → tier "guideline" if ≥1 hit
+        2. drug + primary_disease + first comorbidity                → tier "rct"        if ≥1 hit
+        3. drug + primary_disease                                    → tier "review"     if ≥1 hit
         4. drug + first comorbidity                                  → tier "case_report" if ≥1 hit
         5. drug alone                                                → tier "case_report" if ≥1 hit
         6. drug RxNorm class (already provided by fetch_drug_data)   → tier "drug_class"
@@ -2101,11 +2310,14 @@ async def _cascade_pubmed_for_complex(
     a "Evidence is limited — based on …" prefix in the rendered section text.
     """
     cascade_log: list[str] = []
+    # Expand medical terms in comorbidities for better PubMed recall
+    expanded_comorbidities = [_expand_medical_term(c) for c in (comorbidities or [])]
+
     layers: list[tuple[str, str]] = [
-        ("guideline", " ".join([drug, primary_disease, *comorbidities]).strip()),
-        ("rct", " ".join([drug, primary_disease, comorbidities[0] if comorbidities else ""]).strip()),
+        ("guideline", " ".join([drug, primary_disease, *expanded_comorbidities]).strip()),
+        ("rct", " ".join([drug, primary_disease, expanded_comorbidities[0] if expanded_comorbidities else ""]).strip()),
         ("review", f"{drug} {primary_disease}".strip()),
-        ("case_report", f"{drug} {comorbidities[0]}" if comorbidities else drug),
+        ("case_report", f"{drug} {expanded_comorbidities[0]}" if expanded_comorbidities else drug),
         ("case_report", drug),
     ]
 
@@ -2129,8 +2341,8 @@ async def _cascade_pubmed_for_complex(
             + len(ev.guideline_abstracts)
         )
         cascade_log.append(f"{tier}:{q!r} → {hits} abstracts")
-        # Acceptance threshold: 3 for high tiers, 1 for case_report tier.
-        if (tier in ("guideline", "rct", "review") and hits >= 3) or (tier == "case_report" and hits >= 1):
+        # Acceptance threshold: 1 for all tiers (lowered from 3 for high tiers to improve recall on complex queries)
+        if hits >= 1:
             return ev, tier, cascade_log
 
     # Final fall-through: return whatever the last attempt returned (may be empty).
@@ -2176,12 +2388,12 @@ async def fetch_evidence_data(query: str, *, extra_pubmed_terms: list[str] | Non
     )
 
     async with _make_client() as client:
-        # Phase 1: all esearch in parallel
+        # Phase 1: all esearch in parallel (guideline searches forced to pub_date sort for recency)
         _tasks = [
             _pubmed_esearch_throttled(client, trial_term, 12),
             _pubmed_esearch_throttled(client, review_term, 8),
-            _pubmed_esearch_throttled(client, guideline_term, 10),
-            _pubmed_esearch_throttled(client, broad_evidence_term, 12),
+            _pubmed_esearch_throttled(client, guideline_term, 10, sort="pub_date"),
+            _pubmed_esearch_throttled(client, broad_evidence_term, 12, sort="pub_date"),
         ]
 
         # LLM-expanded MeSH terms — additive on top of hardcoded searches above

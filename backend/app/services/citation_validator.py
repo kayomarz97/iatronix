@@ -124,6 +124,12 @@ def validate_citations(response_data: dict, query_type: str, fetched_data=None, 
                 warnings.append(f"Future source year: {source_year} for '{source}'")
             elif source_year < MIN_SOURCE_YEAR:
                 warnings.append(f"Very old source: {source} ({source_year})")
+            # Guideline recency warning — if cited guideline is >2 years old, likely superseded
+            elif "guideline" in source.lower() and CURRENT_YEAR - source_year > 2:
+                warnings.append(
+                    f"Older guideline: {source} ({source_year}) — newer version may exist. "
+                    f"Verify against current standards."
+                )
 
         if loe and loe not in LOE_VALUES:
             warnings.append(f"Invalid LOE value: '{loe}'")
@@ -134,15 +140,18 @@ def validate_citations(response_data: dict, query_type: str, fetched_data=None, 
         if confidence == "low":
             low_confidence_count += 1
 
-    # Evidence confidence check
+    # Evidence confidence check — higher threshold for complex queries (70% vs 50% for simple)
     if total_claims > 0:
         low_ratio = (low_confidence_count + missing_citation_count) / total_claims
-        if low_ratio > 0.5:
-            warnings.insert(
-                0,
-                "This response has limited evidence support. "
-                "Please verify with primary sources.",
+        threshold = 0.7 if strict else 0.5  # strict mode = complex queries
+        if low_ratio > threshold:
+            msg = (
+                "This response has a mixed evidence base — some claims rely on lower-quality sources. "
+                "Please verify critical claims with primary sources."
+                if strict
+                else "This response has limited evidence support. Please verify with primary sources."
             )
+            warnings.insert(0, msg)
 
     # Reference URL and PMID validation
     from app.services.url_builder import build_pmid_index

@@ -19,10 +19,22 @@ def normalize_query(query: str) -> str:
 
 
 def make_cache_key(query: str, query_type: str, model_id: str) -> str:
-    """Build complete cache key: v{version}:{model}:{type}:{hash}."""
+    """Build complete cache key: v{version}:{model}:{type}:{hash}[:{guideline_week}].
+
+    For guideline-heavy queries (disease/procedure), include ISO week number
+    so caches expire weekly for medical freshness even within 7-day TTL.
+    """
+    from datetime import datetime
     normalized = normalize_query(query)
     query_hash = hashlib.sha256(normalized.encode()).hexdigest()
-    return f"v{settings.prompt_version}:{model_id}:{query_type}:{query_hash}"
+    key = f"v{settings.prompt_version}:{model_id}:{query_type}:{query_hash}"
+
+    # Append ISO week number for guideline-heavy queries (weekly rollover)
+    if query_type in ("disease", "procedure"):
+        iso_week = datetime.now().isocalendar()[1]
+        key = f"{key}:w{iso_week}"
+
+    return key
 
 
 def _ttl_for_type(query_type: str) -> int:
