@@ -20,19 +20,26 @@ export function ResultHero({
   context,
 }: ResultHeroProps) {
   return (
-    <div className="relative overflow-hidden rounded-[28px] border border-border/80 bg-[linear-gradient(135deg,rgba(15,23,42,0.98),rgba(30,41,59,0.95)_55%,rgba(37,99,235,0.18))] p-5 shadow-[0_24px_70px_rgba(2,8,23,0.32)]">
+    <div
+      className="relative overflow-hidden rounded-[28px] border p-5 shadow-[0_24px_70px_rgba(2,8,23,0.32)]"
+      style={{
+        background: "var(--hero-grad)",
+        borderColor: "var(--hero-border)",
+        color: "var(--hero-text)",
+      }}
+    >
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(96,165,250,0.2),transparent_35%),radial-gradient(circle_at_bottom_left,rgba(16,185,129,0.12),transparent_28%)]" />
       <div className="relative space-y-4">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="space-y-1">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-sky-300/80">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.22em]" style={{ color: "var(--hero-text)", opacity: 0.7 }}>
               {eyebrow}
             </p>
-            <h2 className="text-2xl font-semibold tracking-tight text-white sm:text-[2rem]">
+            <h2 className="text-2xl font-semibold tracking-tight sm:text-[2rem]" style={{ color: "var(--hero-text)" }}>
               {title}
             </h2>
             {subtitle && (
-              <p className="max-w-3xl text-sm leading-7 text-slate-300">
+              <p className="max-w-3xl text-sm leading-7" style={{ color: "var(--hero-text)", opacity: 0.8 }}>
                 {subtitle}
               </p>
             )}
@@ -52,20 +59,26 @@ export function ResultHero({
         </div>
 
         {directAnswer && (
-          <div className="rounded-2xl border border-white/10 bg-white/6 px-4 py-4 backdrop-blur-sm">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-300">
+          <div
+            className="rounded-2xl px-4 py-4 backdrop-blur-sm border"
+            style={{ background: "var(--hero-pill-bg)", borderColor: "var(--hero-pill-border)" }}
+          >
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em]" style={{ color: "var(--hero-text)", opacity: 0.75 }}>
               Direct Answer
             </p>
-            <div className="mt-2 text-sm leading-7 text-slate-50">{directAnswer}</div>
+            <div className="mt-2 text-sm leading-7" style={{ color: "var(--hero-text)" }}>{directAnswer}</div>
           </div>
         )}
 
         {context && (
-          <div className="rounded-2xl border border-white/8 bg-black/10 px-4 py-3 backdrop-blur-sm">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+          <div
+            className="rounded-2xl px-4 py-3 backdrop-blur-sm border"
+            style={{ background: "var(--hero-pill-bg)", borderColor: "var(--hero-pill-border)" }}
+          >
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em]" style={{ color: "var(--hero-text)", opacity: 0.75 }}>
               More Context
             </p>
-            <div className="mt-2 text-sm leading-7 text-slate-300">{context}</div>
+            <div className="mt-2 text-sm leading-7" style={{ color: "var(--hero-text)", opacity: 0.85 }}>{context}</div>
           </div>
         )}
       </div>
@@ -112,8 +125,11 @@ export function ResultStatPill({
   value: string | number;
 }) {
   return (
-    <div className="rounded-full border border-white/10 bg-white/6 px-3 py-1.5 text-xs text-slate-300 backdrop-blur-sm">
-      <span className="font-semibold text-white">{value}</span> {label}
+    <div
+      className="rounded-full px-3 py-1.5 text-xs backdrop-blur-sm border"
+      style={{ background: "var(--hero-pill-bg)", borderColor: "var(--hero-pill-border)", color: "var(--hero-text)", opacity: 0.85 }}
+    >
+      <span className="font-semibold">{value}</span> {label}
     </div>
   );
 }

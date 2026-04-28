@@ -5,6 +5,7 @@ import { Monitor, Moon, Sun, Edit2, Check, X } from "lucide-react";
 import { API_KEY_STORAGE_KEY, LLM_PROVIDER_STORAGE_KEY } from "@/lib/constants";
 import { useTheme } from "@/hooks/useTheme";
 import { saveServiceKey, deleteServiceKey, listServiceKeys } from "@/lib/api";
+import { getLLMConfig, type LLMConfig } from "@/lib/modelRegistry";
 // Voyage AI hidden — reserved for future re-enable
 
 const POSITIONS = [
@@ -37,6 +38,15 @@ export default function SettingsPage() {
   const [openrouterMessage, setOpenrouterMessage] = useState<string | null>(null);
   const [openrouterLoading, setOpenrouterLoading] = useState(false);
   const [enginePref, setEnginePref] = useState<"anthropic" | "openrouter">("anthropic");
+
+  // Independent per-provider BYOK state (Workstream B)
+  type ProviderKeyStatus = { provider: string; is_set: boolean; masked: string | null };
+  const [byokKeys, setByokKeys] = useState<ProviderKeyStatus[]>([]);
+  const [byokInputs, setByokInputs] = useState<Record<string, string>>({});
+  const [byokMessages, setByokMessages] = useState<Record<string, string>>({});
+  const [byokLoading, setByokLoading] = useState<Record<string, boolean>>({});
+  const [llmConfig, setLlmConfig] = useState<LLMConfig | null>(null);
+  const [activeProvider, setActiveProvider] = useState<string>("cerebras");
 
   const [profile, setProfile] = useState<{
     full_name?: string;
@@ -79,6 +89,8 @@ export default function SettingsPage() {
     fetchProfile();
     fetchLlmStatus();
     fetchNcbiStatus();
+    fetchBYOKKeys();
+    getLLMConfig().then(setLlmConfig);
   }, []);
 
   const getApiKey = () => localStorage.getItem(API_KEY_STORAGE_KEY) || "";
@@ -266,6 +278,80 @@ export default function SettingsPage() {
     } finally {
       setCerebrasLoading(false);
     }
+  };
+
+  const fetchBYOKKeys = async () => {
+    const apiKey = getApiKey();
+    if (!apiKey) return;
+    try {
+      const res = await fetch("/api/v1/auth/llm-keys", { headers: authHeader() });
+      if (res.ok) {
+        const data = await res.json();
+        setByokKeys(data.providers || []);
+        if (data.active_provider) setActiveProvider(data.active_provider);
+      }
+    } catch {}
+  };
+
+  const saveBYOKKey = async (provider: string) => {
+    const key = byokInputs[provider] || "";
+    if (!key) return;
+    setByokLoading((p) => ({ ...p, [provider]: true }));
+    setByokMessages((p) => ({ ...p, [provider]: "" }));
+    try {
+      const res = await fetch("/api/v1/auth/llm-keys", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", ...authHeader() },
+        body: JSON.stringify({ provider, key }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setByokMessages((p) => ({ ...p, [provider]: data.detail || "Failed to save key" }));
+      } else {
+        setByokMessages((p) => ({ ...p, [provider]: "Key saved successfully" }));
+        setByokInputs((p) => ({ ...p, [provider]: "" }));
+        setByokKeys(data.providers || []);
+        if (data.active_provider) setActiveProvider(data.active_provider);
+      }
+    } catch {
+      setByokMessages((p) => ({ ...p, [provider]: "Network error" }));
+    } finally {
+      setByokLoading((p) => ({ ...p, [provider]: false }));
+    }
+  };
+
+  const removeBYOKKey = async (provider: string) => {
+    setByokLoading((p) => ({ ...p, [provider]: true }));
+    setByokMessages((p) => ({ ...p, [provider]: "" }));
+    try {
+      const res = await fetch(`/api/v1/auth/llm-keys/${provider}`, {
+        method: "DELETE",
+        headers: authHeader(),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setByokMessages((p) => ({ ...p, [provider]: "Key removed" }));
+        setByokKeys(data.providers || []);
+        if (data.active_provider) setActiveProvider(data.active_provider);
+      } else {
+        setByokMessages((p) => ({ ...p, [provider]: "Failed to remove key" }));
+      }
+    } catch {
+      setByokMessages((p) => ({ ...p, [provider]: "Network error" }));
+    } finally {
+      setByokLoading((p) => ({ ...p, [provider]: false }));
+    }
+  };
+
+  const handleNewEnginePref = (pref: string) => {
+    setActiveProvider(pref);
+    localStorage.setItem("iatronix_engine_pref", pref);
+    localStorage.setItem(LLM_PROVIDER_STORAGE_KEY, pref);
+    fetch("/api/v1/auth/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeader() },
+      body: JSON.stringify({ preferences: { engine_pref: pref } }),
+    }).catch(() => {});
   };
 
   const fetchNcbiStatus = async () => {
@@ -485,106 +571,125 @@ export default function SettingsPage() {
         </div>
       </section>
 
-      {/* ── LLM Key ── */}
-      <section className="space-y-3">
-        <h2 className="text-lg font-semibold">Anthropic API Key (BYOK)</h2>
-        <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
-          Bring your own Anthropic (Claude) API key. Your key is encrypted and stored securely — never used server-side.
-        </p>
-
-        {llmStatus && (
-          <div className="p-3 rounded-md text-sm" style={{ background: "var(--bg-elevated)", border: "1px solid var(--border)" }}>
-            <span className="font-medium">Current: </span>
-            {llmStatus.is_set ? (
-              <span style={{ color: "var(--success)" }}>Anthropic key is active</span>
-            ) : (
-              <span style={{ color: "var(--danger)" }}>No key set — AI features require your own Anthropic API key</span>
-            )}
-          </div>
-        )}
-
-        <div className="space-y-2">
-          <input
-            type="password"
-            value={llmKey}
-            onChange={(e) => setLlmKey(e.target.value)}
-            placeholder="sk-ant-..."
-            className="w-full px-3 py-2 rounded-md border border-border bg-surface text-sm min-h-[44px]"
-          />
+      {/* ── AI Engine Toggle ── */}
+      {llmConfig && (
+        <section className="space-y-3">
+          <h2 className="text-lg font-semibold">AI Engine</h2>
+          <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
+            Choose which provider to use for queries. Add the corresponding key below first.
+          </p>
           <div className="flex gap-2">
-            <button onClick={saveLLMKey} disabled={loading || !llmKey} className="px-4 py-2 bg-primary text-white rounded-md text-sm min-h-[44px] disabled:opacity-50">
-              {loading ? "Saving..." : "Save Key"}
-            </button>
-            {llmStatus?.is_set && (
-              <button onClick={removeLLMKey} disabled={loading} className="px-4 py-2 rounded-md border border-border text-sm min-h-[44px]">
-                Remove Key
-              </button>
-            )}
+            {Object.entries(llmConfig.providers).filter(([p]) => p === "cerebras" || p === "anthropic").map(([prov, info]) => {
+              const keyStatus = byokKeys.find((k) => k.provider === prov);
+              const isActive = activeProvider === prov;
+              const hasKey = keyStatus?.is_set;
+              return (
+                <button
+                  key={prov}
+                  disabled={!hasKey}
+                  onClick={() => handleNewEnginePref(prov)}
+                  title={!hasKey ? `Add the ${info.display} key below first` : undefined}
+                  style={{
+                    flex: 1, padding: "12px 8px", display: "flex", flexDirection: "column",
+                    alignItems: "center", gap: "0.3rem",
+                    background: isActive ? "var(--accent-glow)" : "var(--bg-elevated)",
+                    border: `1px solid ${isActive ? "var(--accent)" : "var(--border)"}`,
+                    borderRadius: "var(--radius-md)", cursor: hasKey ? "pointer" : "not-allowed",
+                    fontSize: "0.85rem", fontWeight: isActive ? 600 : 400,
+                    color: isActive ? "var(--accent)" : "var(--text-secondary)",
+                    opacity: hasKey ? 1 : 0.5,
+                    transition: "all var(--transition)",
+                  }}
+                >
+                  {isActive && <span style={{ fontSize: 8, color: "var(--success)" }}>●</span>}
+                  <div className="font-medium">{info.display}</div>
+                  <div className="text-xs opacity-70">{prov}</div>
+                </button>
+              );
+            })}
           </div>
-        </div>
-        {message && <p className="text-sm" style={{ color: message.includes("saved") || message.includes("removed") ? "var(--success)" : "var(--text-secondary)" }}>{message}</p>}
-      </section>
+        </section>
+      )}
 
-      {/* ── Cerebras API Key ── */}
-      <section className="space-y-3">
-        <h2 className="text-lg font-semibold">Cerebras API Key (BYOK)</h2>
-        <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
-          Default AI provider. Uses GPT-OSS 120B — state-of-the-art open source reasoning, fast, and highly accurate for complex medical queries. Your key is encrypted — never stored in plaintext server-side.
-        </p>
+      {/* ── BYOK Keys (independent per-provider) ── */}
+      {(["cerebras", "anthropic"] as const).map((prov) => {
+        const keyStatus = byokKeys.find((k) => k.provider === prov);
+        const isSet = keyStatus?.is_set ?? false;
+        const masked = keyStatus?.masked;
+        const input = byokInputs[prov] || "";
+        const msg = byokMessages[prov] || "";
+        const busy = byokLoading[prov] || false;
+        const provInfo = llmConfig?.providers[prov];
+        const title = prov === "cerebras" ? "Cerebras API Key (BYOK)" : "Anthropic API Key (BYOK)";
+        const desc = prov === "cerebras"
+          ? "Default provider — GPT-OSS 120B. Fast, accurate medical reasoning. Your key is encrypted at rest."
+          : "Claude Haiku 4.5 via Anthropic. Your key is encrypted at rest, never exposed server-side.";
+        const placeholder = prov === "cerebras" ? "csk-..." : "sk-ant-...";
 
-        {llmStatus && (
-          <div className="p-3 rounded-md text-sm" style={{ background: "var(--bg-elevated)", border: "1px solid var(--border)" }}>
-            <span className="font-medium">Current: </span>
-            {llmStatus.provider === "cerebras" && llmStatus.is_set ? (
-              <span style={{ color: "var(--success)" }}>Cerebras key active · gpt-oss-120b</span>
-            ) : (
-              <span style={{ color: "var(--text-muted)" }}>No key set</span>
+        return (
+          <section key={prov} className="space-y-3">
+            <h2 className="text-lg font-semibold">{title}</h2>
+            <p className="text-sm" style={{ color: "var(--text-secondary)" }}>{desc}</p>
+
+            <div className="p-3 rounded-md text-sm" style={{ background: "var(--bg-elevated)", border: "1px solid var(--border)" }}>
+              <span className="font-medium">Status: </span>
+              {isSet ? (
+                <span style={{ color: "var(--success)" }}>
+                  <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: "var(--success)", marginRight: 6 }} />
+                  {masked ?? "Key set"}
+                  {provInfo && <span style={{ color: "var(--text-muted)", marginLeft: 8 }}>· {provInfo.display}</span>}
+                </span>
+              ) : (
+                <span style={{ color: "var(--danger)" }}>Not set</span>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <input
+                type="password"
+                value={input}
+                disabled={isSet}
+                onChange={(e) => setByokInputs((p) => ({ ...p, [prov]: e.target.value }))}
+                placeholder={isSet ? "Remove existing key to add a new one" : placeholder}
+                className="w-full px-3 py-2 rounded-md border border-border bg-surface text-sm min-h-[44px] disabled:opacity-50 disabled:cursor-not-allowed"
+              />
+              <div className="flex gap-2">
+                {!isSet && (
+                  <button
+                    onClick={() => saveBYOKKey(prov)}
+                    disabled={busy || !input}
+                    className="px-4 py-2 bg-primary text-white rounded-md text-sm min-h-[44px] disabled:opacity-50"
+                  >
+                    {busy ? "Saving..." : "Save Key"}
+                  </button>
+                )}
+                {isSet && (
+                  <button
+                    onClick={() => removeBYOKKey(prov)}
+                    disabled={busy}
+                    className="px-4 py-2 rounded-md border border-border text-sm min-h-[44px] disabled:opacity-50"
+                  >
+                    {busy ? "Removing..." : "Remove Key"}
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {prov === "cerebras" && (
+              <div className="flex gap-2 items-center text-xs">
+                <span style={{ color: "var(--text-muted)" }}>Get free API key at</span>
+                <a href="https://cloud.cerebras.ai" target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline">
+                  cloud.cerebras.ai
+                </a>
+              </div>
             )}
-          </div>
-        )}
 
-        <div className="space-y-2">
-          <input
-            type="password"
-            value={cerebrasKey}
-            onChange={(e) => setCerebrasKey(e.target.value)}
-            placeholder="csk-..."
-            className="w-full px-3 py-2 rounded-md border border-border bg-surface text-sm min-h-[44px]"
-          />
-          <div className="flex gap-2">
-            <button
-              onClick={saveCerebrasKey}
-              disabled={cerebrasLoading || !cerebrasKey}
-              className="px-4 py-2 bg-primary text-white rounded-md text-sm min-h-[44px] disabled:opacity-50"
-            >
-              {cerebrasLoading ? "Saving..." : "Save Key"}
-            </button>
-            {llmStatus?.provider === "cerebras" && llmStatus?.is_set && (
-              <button
-                onClick={removeCerebrasKey}
-                disabled={cerebrasLoading}
-                className="px-4 py-2 rounded-md border border-border text-sm min-h-[44px]"
-              >
-                Remove Key
-              </button>
+            {msg && (
+              <p className="text-sm" style={{ color: msg.includes("saved") || msg.includes("removed") ? "var(--success)" : "var(--text-secondary)" }}>{msg}</p>
             )}
-          </div>
-        </div>
-
-        <div className="flex gap-2 items-center text-xs">
-          <span style={{ color: "var(--text-muted)" }}>Get free API key at</span>
-          <a
-            href="https://cloud.cerebras.ai"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-blue-600 dark:text-blue-400 hover:underline"
-          >
-            cloud.cerebras.ai
-          </a>
-        </div>
-
-        {cerebrasMessage && <p className="text-sm" style={{ color: cerebrasMessage.includes("saved") || cerebrasMessage.includes("removed") ? "var(--success)" : "var(--text-secondary)" }}>{cerebrasMessage}</p>}
-      </section>
+          </section>
+        );
+      })}
 
       {false && (
         <>

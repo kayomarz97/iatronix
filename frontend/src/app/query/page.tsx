@@ -13,6 +13,7 @@ import { useQueryContext } from "@/components/providers/QueryProvider";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { formatLatency } from "@/lib/formatters";
 import type { DegradedResponse, AdaptiveResponse, AdaptiveBLUF, AdaptiveSection, TokenUsage } from "@/lib/types";
+import { getLLMConfig, displayFor, type LLMConfig } from "@/lib/modelRegistry";
 
 function StreamingProgress({ streamingText, loadingStage }: { streamingText: string; loadingStage: string }) {
   const sectionTitles = React.useMemo(() => {
@@ -123,6 +124,11 @@ function QueryContent() {
   const searchParams = useSearchParams();
   const lastAutoSubmit = useRef<string | null>(null);
   const [dismissedError, setDismissedError] = React.useState<string | null>(null);
+  const [llmConfig, setLlmConfig] = React.useState<LLMConfig | null>(null);
+
+  useEffect(() => {
+    getLLMConfig().then(setLlmConfig);
+  }, []);
 
   const visibleError = error && error !== dismissedError ? error : null;
 
@@ -302,15 +308,20 @@ function QueryContent() {
                   </span>
                 )}
               </div>
-              {result.token_usage.models.map((m) => (
-                <div key={m.model} className="flex justify-between">
-                  <span className="text-text-muted truncate max-w-[200px]">{m.model}</span>
-                  <span className="font-mono">
-                    {m.input_tokens.toLocaleString()}↑&nbsp;{m.output_tokens.toLocaleString()}↓
-                    {m.cost_usd > 0 && <>&nbsp;·&nbsp;${m.cost_usd.toFixed(5)}</>}
-                  </span>
-                </div>
-              ))}
+              {result.token_usage.models.map((m) => {
+                const info = llmConfig?.providers && Object.values(llmConfig.providers).find(p => p.model_id === m.model_id);
+                const name = llmConfig ? displayFor(m.model_id, llmConfig) : m.model_id;
+                const tooltip = info ? `$${info.input} in / $${info.output} out per 1M tokens` : undefined;
+                return (
+                  <div key={m.model_id} className="flex justify-between">
+                    <span className="text-text-muted truncate max-w-[200px]" title={tooltip}>{name}</span>
+                    <span className="font-mono">
+                      {m.input_tokens.toLocaleString()}↑&nbsp;{m.output_tokens.toLocaleString()}↓
+                      {m.subtotal_usd > 0 && <>&nbsp;·&nbsp;${m.subtotal_usd.toFixed(5)}</>}
+                    </span>
+                  </div>
+                );
+              })}
               <div className="border-t border-border/50 pt-1 flex justify-between font-medium">
                 <span>Total</span>
                 <span className="font-mono">

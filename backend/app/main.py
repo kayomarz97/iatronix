@@ -15,6 +15,7 @@ from app.api.v1 import service_keys as service_keys_module
 from app.api.v1 import waves as waves_module
 from app.api.v1 import suggestions as suggestions_module
 from app.api.v1 import openrouter_oauth as openrouter_oauth_module
+from app.api.v1 import config_routes as config_routes_module
 from app.config import settings
 from app.middleware.firebase_auth import FirebaseAuthMiddleware
 from app.middleware.payload_limit import PayloadLimitMiddleware
@@ -51,6 +52,24 @@ async def lifespan(app: FastAPI):
             await conn.execute(
                 text("ALTER TABLE users ADD COLUMN IF NOT EXISTS openrouter_key VARCHAR")
             )
+            await conn.execute(
+                text("ALTER TABLE users ADD COLUMN IF NOT EXISTS cerebras_api_key VARCHAR")
+            )
+            # Backfill: migrate existing encrypted_llm_key to per-provider columns
+            await conn.execute(text("""
+                UPDATE users
+                   SET cerebras_api_key = encrypted_llm_key
+                 WHERE llm_provider = 'cerebras'
+                   AND encrypted_llm_key IS NOT NULL
+                   AND cerebras_api_key IS NULL
+            """))
+            await conn.execute(text("""
+                UPDATE users
+                   SET anthropic_api_key = encrypted_llm_key
+                 WHERE llm_provider = 'anthropic'
+                   AND encrypted_llm_key IS NOT NULL
+                   AND anthropic_api_key IS NULL
+            """))
         logger.info("Schema migration complete")
     except Exception as _e:
         logger.warning(f"Schema migration skipped: {_e}")
@@ -180,3 +199,4 @@ app.include_router(service_keys_module.router, prefix="/api/v1")
 app.include_router(waves_module.router, prefix="/api/v1")
 app.include_router(suggestions_module.router, prefix="/api/v1")
 app.include_router(openrouter_oauth_module.router, prefix="/api/v1")
+app.include_router(config_routes_module.router, prefix="/api/v1")

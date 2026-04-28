@@ -1001,13 +1001,6 @@ _CLAIM_FIELDS = {"loe", "cor", "source", "confidence", "value"}
 _VALID_LOE = {"I", "II-1", "II-2", "II-3", "III"}
 _VALID_COR = {"I", "IIa", "IIb", "III-no-benefit", "III-harm"}
 
-_PRICING = {
-    "claude-haiku-4-5-20251001": {"in": 0.80, "out": 4.00},
-    "claude-sonnet-4-20250514": {"in": 3.00, "out": 15.00},
-    "llama3.1-8b": {"in": 0.10, "out": 0.10},   # Cerebras paid tier ($/1M)
-}
-
-
 def _model_cost(model_id: str, inp: int, out: int) -> ModelCost:
     if "/" in model_id:
         # OpenRouter model — user's own credits, cost is opaque to us
@@ -1019,10 +1012,10 @@ def _model_cost(model_id: str, inp: int, out: int) -> ModelCost:
             output_cost_usd=0.0,
             subtotal_usd=0.0,
         )
-    key = next((k for k in _PRICING if k in model_id), None)
-    rates = _PRICING.get(key, {"in": 0.80, "out": 4.00})
-    in_cost = round(inp / 1_000_000 * rates["in"], 6)
-    out_cost = round(out / 1_000_000 * rates["out"], 6)
+    from app.services.model_registry import pricing as _registry_pricing
+    in_rate, out_rate = _registry_pricing(model_id)
+    in_cost = round(inp / 1_000_000 * in_rate, 6)
+    out_cost = round(out / 1_000_000 * out_rate, 6)
     return ModelCost(
         model_id=model_id,
         input_tokens=inp,
@@ -1455,42 +1448,54 @@ def _dedup_references(refs: list) -> list:
 async def _call_llm_simple(
     llm,
     provider: str,
-    system: str,
+    static_system: str,
     data_block: str,
     user_text: str,
+    dynamic_system: str = "",
 ) -> tuple[str | None, dict]:
-    """Non-streaming single LLM call. Returns (raw text or None, usage dict)."""
+    """Non-streaming single LLM call. Returns (raw text or None, usage dict).
+
+    Accepts either the old 3-part (static_system, data_block, user_text) or new 4-part
+    (static_system, dynamic_system, data_block, user_text) interface — dynamic_system defaults
+    to "" for backward-compat callers.
+
+    Anthropic: cache_control on static_system (1h TTL) + data_block (5min ephemeral);
+               dynamic_system (varies per call) follows without cache_control.
+    Cerebras/others: concatenate in stable order (static → data → dynamic) for auto-cache prefix match.
+    """
     from langchain_core.messages import HumanMessage, SystemMessage
 
     try:
         if provider == "anthropic":
-            use_cache_control = (provider == "anthropic")
-            sys_content = [
-                {
-                    "type": "text",
-                    "text": system,
-                    **({"cache_control": {"type": "ephemeral"}} if use_cache_control else {}),
-                }
-            ]
+            sys_content: list[dict] = []
+            # Block 1 — long-static prefix, long-TTL cache (reused across many queries)
+            sys_content.append({
+                "type": "text",
+                "text": static_system,
+                "cache_control": {"type": "ephemeral"},
+            })
+            # Block 2 — data block, short-TTL cache (reused across all parallel section calls of one query)
             if data_block:
-                # Cache the data block when large enough (Anthropic minimum: 1024 tokens ≈ 4096 chars).
-                # Same data block is reused across all 5-6 section calls for one query — 73% token savings.
-                if len(data_block) > 4096:
-                    sys_content.append({
-                        "type": "text",
-                        "text": data_block,
-                        **({"cache_control": {"type": "ephemeral"}} if use_cache_control else {}),
-                    })
-                else:
-                    sys_content.append({"type": "text", "text": data_block})
+                block: dict = {"type": "text", "text": data_block}
+                if len(data_block) > 1024:  # Anthropic minimum: 1024 tokens ≈ 4096 chars; use chars as proxy
+                    block["cache_control"] = {"type": "ephemeral"}
+                sys_content.append(block)
+            # Block 3 — dynamic instructions, no cache_control (varies per section)
+            if dynamic_system:
+                sys_content.append({"type": "text", "text": dynamic_system})
             msgs = [SystemMessage(content=sys_content), HumanMessage(content=user_text)]
         else:
-            combined = system + ("\n\n" + data_block if data_block else "")
-            msgs = [SystemMessage(content=combined), HumanMessage(content=user_text)]
+            # Cerebras + others: stable prefix order for auto-cache hit on the common prefix
+            parts = [static_system]
+            if data_block:
+                parts.append(data_block)
+            if dynamic_system:
+                parts.append(dynamic_system)
+            msgs = [SystemMessage(content="\n\n".join(parts)), HumanMessage(content=user_text)]
+
         result = await llm.ainvoke(msgs)
         usage = getattr(result, "usage_metadata", None) or {}
         if not usage:
-            # OpenAI-format (Cerebras, OpenAI, OpenRouter)
             raw = getattr(result, "usage", None) or {}
             usage = {
                 "input_tokens": raw.get("prompt_tokens", 0),
@@ -1499,10 +1504,15 @@ async def _call_llm_simple(
         _token_details = usage.get("input_token_details") or {}
         cache_read = _token_details.get("cache_read", 0)
         cache_write = _token_details.get("cache_creation", 0)
-        if cache_read:
-            logger.info("Prompt cache HIT: %d tokens saved", cache_read)
+        # Also check Cerebras-style cached_tokens
+        _prompt_details = {}
+        if hasattr(result, "response_metadata"):
+            _prompt_details = (result.response_metadata or {}).get("usage", {}).get("prompt_tokens_details", {}) or {}
+        cerebras_cached = _prompt_details.get("cached_tokens", 0)
+        if cache_read or cerebras_cached:
+            logger.info("[cache] read=%d cerebras_cached=%d", cache_read, cerebras_cached)
         elif cache_write:
-            logger.info("Prompt cache WRITE: %d tokens written", cache_write)
+            logger.info("[cache] write=%d", cache_write)
         return (
             result.content if isinstance(result.content, str) else None,
             {
@@ -1550,7 +1560,7 @@ async def _run_parallel_pipeline(
             getattr(c, "disease_name", "") for c in (getattr(fetched_data, "comorbidity_data", []) or [])
             if getattr(c, "disease_name", "")
         ]
-        bluf_system, bluf_data, bluf_user = build_complex_bluf_messages(
+        bluf_static, bluf_dynamic, bluf_data, bluf_user = build_complex_bluf_messages(
             query=query,
             drug=drug,
             primary_disease=primary_disease,
@@ -1559,7 +1569,7 @@ async def _run_parallel_pipeline(
             vector_results=vector_results,
         )
     else:
-        bluf_system, bluf_data, bluf_user = build_bluf_only_messages(
+        bluf_static, bluf_dynamic, bluf_data, bluf_user = build_bluf_only_messages(
             query=query,
             query_type=query_type,
             fetched_data=fetched_data,
@@ -1572,8 +1582,9 @@ async def _run_parallel_pipeline(
         from app.services.chat_service import chat_with_fallback
         from langchain_core.messages import HumanMessage, SystemMessage as _SM
 
+        _combined_bluf_sys = bluf_static + ("\n\n" + bluf_data if bluf_data else "") + ("\n\n" + bluf_dynamic if bluf_dynamic else "")
         _bluf_msgs = [
-            _SM(content=bluf_system + ("\n\n" + bluf_data if bluf_data else "")),
+            _SM(content=_combined_bluf_sys),
             HumanMessage(content=bluf_user),
         ]
         _bluf_result, _is_fallback, _used_model = await chat_with_fallback(
@@ -1592,7 +1603,7 @@ async def _run_parallel_pipeline(
     else:
         bluf_llm = create_llm(effective_model, max_tokens=settings.parallel_bluf_max_tokens,
                               user_key=user_llm_key, user_provider=user_llm_provider)
-        bluf_raw, bluf_usage = await _call_llm_simple(bluf_llm, provider, bluf_system, bluf_data, bluf_user)
+        bluf_raw, bluf_usage = await _call_llm_simple(bluf_llm, provider, bluf_static, bluf_data, bluf_user, bluf_dynamic)
     bluf_parsed = parse_llm_json(bluf_raw) if bluf_raw else None
     if not bluf_parsed:
         logger.warning("parallel_pipeline: BLUF call failed or unparseable")
@@ -1624,7 +1635,7 @@ async def _run_parallel_pipeline(
 
     async def _gen_one_section(title: str, idx: int) -> tuple[dict | None, dict]:
         if query_type == "complex":
-            sec_system, sec_data, sec_user = build_complex_section_messages(
+            sec_static, sec_dynamic, sec_data, sec_user = build_complex_section_messages(
                 section_title=title,
                 all_section_titles=section_titles,
                 bluf_text=bluf_text,
@@ -1636,7 +1647,7 @@ async def _run_parallel_pipeline(
                 vector_results=vector_results,
             )
         else:
-            sec_system, sec_data, sec_user = build_section_messages(
+            sec_static, sec_dynamic, sec_data, sec_user = build_section_messages(
                 section_title=title,
                 all_section_titles=section_titles,
                 bluf_text=bluf_text,
@@ -1650,7 +1661,7 @@ async def _run_parallel_pipeline(
         # Semaphore limits concurrent LLM calls to stay under token-per-minute limits.
         # Quality is unaffected — each section still gets its full prompt and token budget.
         async with _section_sem:
-            raw, usage = await _call_llm_simple(sec_llm, provider, sec_system, sec_data, sec_user)
+            raw, usage = await _call_llm_simple(sec_llm, provider, sec_static, sec_data, sec_user, sec_dynamic)
         sec = parse_llm_json(raw) if raw else None
         # Emit as soon as this section is ready — don't wait for all sections to finish
         if sec is not None and structured_callback:
@@ -1737,25 +1748,50 @@ async def process_query(
             user_llm_provider = "openrouter"
             use_chat_service = True
 
-    # Fall back to manual BYOK key (Anthropic / OpenAI / manual OpenRouter key)
-    if user_llm_key is None and user and user.encrypted_llm_key:
+    # Fall back to per-provider BYOK columns (preferred path going forward)
+    if user_llm_key is None and user:
         from app.services.byok import decrypt_key
+        # Determine target provider from preferences, then legacy llm_provider field
+        _pref_provider = (getattr(user, "preferences", {}) or {}).get("engine_pref") or user.llm_provider
+        _provider_col_map = {
+            "anthropic":  "anthropic_api_key",
+            "cerebras":   "cerebras_api_key",
+            "openai":     "openai_api_key",
+        }
+        # Try preferred provider first, then cerebras, then anthropic, then openai
+        _provider_priority = []
+        if _pref_provider and _pref_provider in _provider_col_map:
+            _provider_priority.append(_pref_provider)
+        for _p in ("cerebras", "anthropic", "openai"):
+            if _p not in _provider_priority:
+                _provider_priority.append(_p)
 
-        user_llm_key = decrypt_key(user.encrypted_llm_key)
-        user_llm_provider = user.llm_provider
-        if user_llm_key is None:
-            # Decryption failed (e.g. ENCRYPTION_KEY changed after restart)
-            latency_ms = int((time.time() - start_time) * 1000)
-            return QueryResponse(
-                query_type="general",
-                model_used=request.model_id,
-                response=DegradedResponse(
-                    message="Your API key could not be retrieved — please re-enter it in Settings.",
-                    suggestion="Go to Settings → LLM API Key and save your key again. This happens when the server restarts without a stable ENCRYPTION_KEY.",
-                ),
-                disclaimer=DISCLAIMER,
-                latency_ms=latency_ms,
-            )
+        for _try_provider in _provider_priority:
+            _col = _provider_col_map[_try_provider]
+            _enc = getattr(user, _col, None)
+            if _enc:
+                _decrypted = decrypt_key(_enc)
+                if _decrypted:
+                    user_llm_key = _decrypted
+                    user_llm_provider = _try_provider
+                    break
+
+        # Final fallback: legacy encrypted_llm_key (backward compat for users not yet migrated)
+        if user_llm_key is None and user.encrypted_llm_key:
+            user_llm_key = decrypt_key(user.encrypted_llm_key)
+            user_llm_provider = user.llm_provider
+            if user_llm_key is None:
+                latency_ms = int((time.time() - start_time) * 1000)
+                return QueryResponse(
+                    query_type="general",
+                    model_used=request.model_id,
+                    response=DegradedResponse(
+                        message="Your API key could not be retrieved — please re-enter it in Settings.",
+                        suggestion="Go to Settings → LLM API Key and save your key again. This happens when the server restarts without a stable ENCRYPTION_KEY.",
+                    ),
+                    disclaimer=DISCLAIMER,
+                    latency_ms=latency_ms,
+                )
 
     # If no BYOK key either, check for OAuth OpenRouter key as a final fallback
     # (handles case where user only has OAuth key and didn't send an OpenRouter model_id)

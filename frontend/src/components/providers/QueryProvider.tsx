@@ -15,31 +15,14 @@ import { useAuth } from "@/components/providers/AuthProvider";
 import { API_KEY_STORAGE_KEY, LLM_PROVIDER_STORAGE_KEY } from "@/lib/constants";
 import type { QueryResponse, AdaptiveBLUF, AdaptiveSection, AdaptiveFlowchart, AdaptiveTable } from "@/lib/types";
 import { usePostHog } from "posthog-js/react";
+import { getLLMConfig, displayFor, type LLMConfig } from "@/lib/modelRegistry";
 
 type LLMProvider = "cerebras" | "anthropic" | "openai" | "openrouter";
 
-const PROVIDER_DEFAULT_MODELS: Record<LLMProvider, string> = {
-  cerebras: process.env.NEXT_PUBLIC_CEREBRAS_MODEL ?? "llama3.1-8b",
-  anthropic: "claude-haiku-4-5-20251001",
+const PROVIDER_DEFAULT_MODELS: Record<string, string> = {
   openai: "gpt-4o-mini",
   openrouter: "google/gemma-4-31b-it",
 };
-
-function modelDisplayName(provider: string, modelId: string): string {
-  if (provider === "cerebras") return `Llama 3.1 8B (Cerebras)`;
-  if (modelId.includes("haiku")) return "Claude Haiku 4.5";
-  if (modelId.includes("sonnet")) return "Claude Sonnet 4";
-  if (modelId.includes("gemma")) return "Gemma 4";
-  return modelId;
-}
-
-function getProviderModel(provider: string): { id: string; name: string } {
-  const p = (provider as LLMProvider) in PROVIDER_DEFAULT_MODELS
-    ? (provider as LLMProvider)
-    : "cerebras";
-  const id = PROVIDER_DEFAULT_MODELS[p];
-  return { id, name: modelDisplayName(p, id) };
-}
 
 interface QueryContextType {
   result: QueryResponse | null;
@@ -76,13 +59,18 @@ export function QueryProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(false);
   const [loadingStage, setLoadingStage] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
-  const [activeModelName, setActiveModelName] = useState("Llama 3.1 8B (Cerebras)");
+  const [activeModelName, setActiveModelName] = useState("GPT-OSS 120B (Cerebras)");
   const [isFallback, setIsFallback] = useState(false);
   const [fallbackModel, setFallbackModel] = useState<string | null>(null);
+  const [llmConfig, setLlmConfig] = useState<LLMConfig | null>(null);
 
   useEffect(() => {
-    const provider = localStorage.getItem(LLM_PROVIDER_STORAGE_KEY) || "cerebras";
-    setActiveModelName(getProviderModel(provider).name);
+    getLLMConfig().then((cfg) => {
+      setLlmConfig(cfg);
+      const provider = localStorage.getItem(LLM_PROVIDER_STORAGE_KEY) || cfg.default_provider;
+      const info = cfg.providers[provider];
+      if (info) setActiveModelName(info.display);
+    });
   }, []);
 
   const submitQuery = useCallback(async (query: string) => {
@@ -93,8 +81,11 @@ export function QueryProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    const provider = localStorage.getItem(LLM_PROVIDER_STORAGE_KEY) || "cerebras";
-    const { id: modelId, name: modelName } = getProviderModel(provider);
+    const provider = localStorage.getItem(LLM_PROVIDER_STORAGE_KEY) || llmConfig?.default_provider || "cerebras";
+    const cfg = llmConfig || await getLLMConfig();
+    const providerInfo = cfg.providers[provider];
+    const modelId = providerInfo?.model_id ?? PROVIDER_DEFAULT_MODELS[provider] ?? "gpt-oss-120b";
+    const modelName = providerInfo?.display ?? modelId;
     setActiveModelName(modelName);
 
     setIsLoading(true);
@@ -193,7 +184,7 @@ export function QueryProvider({ children }: { children: ReactNode }) {
       setIsLoading(false);
       setLoadingStage("");
     }
-  }, []);
+  }, [llmConfig]);
 
   const clearResult = useCallback(() => {
     setResult(null);

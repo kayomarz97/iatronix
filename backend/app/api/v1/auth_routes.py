@@ -13,9 +13,12 @@ from app.schemas.auth import (
     UpdatePreferencesRequest,
     UserProfileResponse,
     LlmKeyRequest,
+    LLMKeysResponse,
+    ProviderKeyStatus,
+    SaveLLMKeyRequest,
 )
 from app.middleware.firebase_auth import invalidate_user_cache
-from app.services.byok import encrypt_key, validate_user_key
+from app.services.byok import encrypt_key, validate_user_key, decrypt_key, mask_key
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -153,6 +156,95 @@ async def update_preferences(
     db_user.preferences = current
     await session.commit()
     return {"preferences": current, "message": "Preferences updated"}
+
+
+_PROVIDER_COLUMN_MAP = {
+    "anthropic": "anthropic_api_key",
+    "cerebras":  "cerebras_api_key",
+    "openai":    "openai_api_key",
+    "openrouter": "openrouter_key",
+}
+
+
+@router.get("/llm-keys", response_model=LLMKeysResponse)
+async def get_llm_keys(
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """Return independent key status for all supported providers."""
+    user = _get_authenticated_user(request)
+    result = await session.execute(select(User).where(User.id == user.id))
+    db_user = result.scalar_one()
+
+    statuses = []
+    for provider, col in _PROVIDER_COLUMN_MAP.items():
+        encrypted = getattr(db_user, col, None)
+        if encrypted:
+            plain = decrypt_key(encrypted)
+            masked = mask_key(plain) if plain else None
+            statuses.append(ProviderKeyStatus(provider=provider, is_set=True, masked=masked))
+        else:
+            statuses.append(ProviderKeyStatus(provider=provider, is_set=False))
+
+    active_prov = (db_user.preferences or {}).get("engine_pref") or db_user.llm_provider
+    return LLMKeysResponse(providers=statuses, active_provider=active_prov)
+
+
+@router.put("/llm-keys", response_model=LLMKeysResponse)
+async def save_llm_key(
+    req: SaveLLMKeyRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """Save a BYOK key for a specific provider. Rejects if a key is already stored."""
+    user = _get_authenticated_user(request)
+    result = await session.execute(select(User).where(User.id == user.id))
+    db_user = result.scalar_one()
+
+    col = _PROVIDER_COLUMN_MAP[req.provider]
+    if getattr(db_user, col, None):
+        raise HTTPException(409, "Remove the existing key for this provider before adding a new one.")
+
+    validation_result = await validate_user_key(req.key, req.provider)
+    if not validation_result["valid"]:
+        raise HTTPException(422, validation_result.get("detail", "Invalid API key"))
+
+    setattr(db_user, col, encrypt_key(req.key))
+    # Keep legacy fields in sync so existing pipeline code still works
+    db_user.encrypted_llm_key = encrypt_key(req.key)
+    db_user.llm_provider = req.provider
+    await session.commit()
+    invalidate_user_cache(user.firebase_uid)
+
+    return await get_llm_keys(request, session)
+
+
+@router.delete("/llm-keys/{provider}", response_model=LLMKeysResponse)
+async def delete_llm_key_by_provider(
+    provider: str,
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """Remove the stored key for a specific provider."""
+    if provider not in _PROVIDER_COLUMN_MAP:
+        raise HTTPException(400, f"Unknown provider: {provider}")
+
+    user = _get_authenticated_user(request)
+    result = await session.execute(select(User).where(User.id == user.id))
+    db_user = result.scalar_one()
+
+    col = _PROVIDER_COLUMN_MAP[provider]
+    setattr(db_user, col, None)
+
+    # Clear legacy fields if this was the active provider
+    if db_user.llm_provider == provider:
+        db_user.encrypted_llm_key = None
+        db_user.llm_provider = None
+
+    await session.commit()
+    invalidate_user_cache(user.firebase_uid)
+
+    return await get_llm_keys(request, session)
 
 
 @router.put("/llm-key", response_model=LLMKeyResponse)
