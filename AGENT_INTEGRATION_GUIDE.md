@@ -73,7 +73,7 @@ Next.js Proxy  →  FastAPI Backend (port 8000)
 - Regex fallback classifier (`query_classifier.py`)
 - Optional LLM classifier (if DSPy enabled)
 
-**Types:** `drug` | `disease` | `comparative` | `procedure` | `evidence` | `general`
+**Types:** `drug` | `disease` | `comparative` | `procedure` | `evidence` | `complex` | `general`
 
 ### 4.2 Cache Check
 Redis key format: `v{prompt_version}:{model_id}:{query_type}:{md5(normalized_query)}`
@@ -264,7 +264,30 @@ process_query()
        └─ Returns enrichment merged into final response
 ```
 
-### 6.5 Add a DSPy Module
+### 6.5 Cascade Tiering for Rare Queries (Complex Multi-Condition Pattern)
+
+The **complex query type** (drug/procedure in primary disease WITH comorbidities) implements a **cascade fetching pattern** to guarantee non-empty evidence even for rare combinations.
+
+**Pattern Overview:**
+```
+_cascade_pubmed_for_complex(drug, primary_disease, comorbidities)
+  │
+  ├─ Tier 1: drug + primary_disease + ALL comorbidities  → "guideline"  (if ≥3 hits)
+  ├─ Tier 2: drug + primary_disease + first comorbidity  → "rct"        (if ≥3 hits)
+  ├─ Tier 3: drug + primary_disease                      → "review"     (if ≥3 hits)
+  ├─ Tier 4: drug + first comorbidity                    → "case_report" (if ≥1 hit)
+  ├─ Tier 5: drug alone                                  → "case_report" (if ≥1 hit)
+  └─ Tier 6: (fallback) RxNorm drug class data           → "drug_class"
+```
+
+The tier is propagated to the section agents via `evidence_tier` field, which:
+- Caps section `confidence` floor (case_report → low, rct → high)
+- Prefixes section text with "Evidence is limited — based on case reports" when needed
+- Ensures the UI displays confidence caveats appropriately
+
+**When to use:** Apply this pattern when building queries where evidence is sparse for specific combinations. The guarantee is: if ANY data exists on the drug, it will be found and cited — never "no evidence" or hallucinated claims.
+
+### 6.6 Add a DSPy Module
 
 Add a new signature in `dspy_signatures.py`:
 ```python
@@ -281,7 +304,31 @@ Then wire it into `dspy_modules.py` as a chain step.
 
 ---
 
-## 7. Improvement Areas & Known Gaps
+## 7. Complex Query Type (Multi-Condition with Comorbidities)
+
+**Added:** April 2026
+
+The `complex` query type handles questions like: _"rivaroxaban dosing in severe AFib for a patient currently on fluconazole presenting with subacute hepatic impairment."_
+
+**Distinguishing features:**
+- Detects via regex in `query_classifier.py` (`_COMPLEX_RE`): looks for "with [comorbidity]", "alongside", "on [drug]", organ impairments, pregnancy, age modifiers
+- Routes through `build_complex_bluf_messages()` and `build_complex_section_messages()` (forced section titles for baseline rule + per-comorbidity conflicts)
+- Fetches via `_cascade_pubmed_for_complex()` — guarantees at least case-report-level evidence
+- Validates citations strictly (`validate_citations(..., query_type="complex")`) — all claims must cite [SOURCE: ...] labels from the data block
+- Emits evidence tier (guideline / rct / review / case_report / drug_class) to the frontend for confidence labeling
+
+**Files modified:**
+- `query_classifier.py`: add `_COMPLEX_RE` pattern, update LLM prompt
+- `dspy_signatures.py`: add `comorbidity_list` output field
+- `source_router.py`: add complex entity extraction
+- `data_fetcher.py`: add `_cascade_pubmed_for_complex()`, `_fetch_comorbidities()`, cascade fields on `FetchedData`
+- `prompt_engine.py`: add `build_complex_bluf_messages()`, `build_complex_section_messages()`
+- `rag_pipeline.py`: route complex queries through new builders
+- `citation_validator.py`: strict-mode enforcement for complex
+
+---
+
+## 8. Improvement Areas & Known Gaps
 
 | Area | Status | Notes |
 |------|--------|-------|

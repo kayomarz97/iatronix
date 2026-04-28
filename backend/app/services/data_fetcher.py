@@ -262,6 +262,9 @@ class FetchedData:
     comparative_evidence: Optional[EvidenceFetchResult] = None
     comparative_drug_data: list = field(default_factory=list)
     drug_interactions: list = field(default_factory=list)  # RxNorm DDI pairs for 2-drug queries
+    comorbidity_data: list = field(default_factory=list)  # list[DiseaseFetchResult] — one per comorbidity for query_type="complex"
+    evidence_tier: str = "unknown"  # "guideline" | "rct" | "review" | "case_report" | "drug_class" | "unknown"
+    cascade_log: list = field(default_factory=list)  # human-readable trace of which cascade tier produced abstracts
     total_fetch_time_ms: int = 0
     fallback_to_llm: bool = False
     data_sources: list = field(default_factory=list)
@@ -2076,6 +2079,84 @@ async def _fetch_pubmed_procedure_guidelines(
     return articles, sources
 
 
+async def _cascade_pubmed_for_complex(
+    drug: str,
+    primary_disease: str,
+    comorbidities: list[str],
+    extra_pubmed_terms: list[str] | None = None,
+    extra_journal_filter: str | None = None,
+) -> tuple[EvidenceFetchResult, str, list[str]]:
+    """Cascade PubMed queries from most-specific to drug-class-level.
+
+    Returns (EvidenceFetchResult, evidence_tier, cascade_log).
+    Guarantee: if PubMed has ANY content on the drug or its class, this returns at least one abstract.
+    The cascade order:
+        1. drug + primary_disease + ALL comorbidities                → tier "guideline" if ≥3 hits
+        2. drug + primary_disease + first comorbidity                → tier "rct"        if ≥3 hits
+        3. drug + primary_disease                                    → tier "review"     if ≥3 hits
+        4. drug + first comorbidity                                  → tier "case_report" if ≥1 hit
+        5. drug alone                                                → tier "case_report" if ≥1 hit
+        6. drug RxNorm class (already provided by fetch_drug_data)   → tier "drug_class"
+    Tier names are CONSUMED by the prompt builder to set `confidence` and to surface
+    a "Evidence is limited — based on …" prefix in the rendered section text.
+    """
+    cascade_log: list[str] = []
+    layers: list[tuple[str, str]] = [
+        ("guideline", " ".join([drug, primary_disease, *comorbidities]).strip()),
+        ("rct", " ".join([drug, primary_disease, comorbidities[0] if comorbidities else ""]).strip()),
+        ("review", f"{drug} {primary_disease}".strip()),
+        ("case_report", f"{drug} {comorbidities[0]}" if comorbidities else drug),
+        ("case_report", drug),
+    ]
+
+    last_result: EvidenceFetchResult | None = None
+    for tier, q in layers:
+        if not q:
+            continue
+        try:
+            ev = await fetch_evidence_data(
+                q,
+                extra_pubmed_terms=extra_pubmed_terms,
+                extra_journal_filter=extra_journal_filter,
+            )
+        except Exception as e:
+            cascade_log.append(f"{tier}:{q!r} → exception {e!s}")
+            continue
+        last_result = ev
+        hits = (
+            len(ev.clinical_trial_abstracts)
+            + len(ev.systematic_review_abstracts)
+            + len(ev.guideline_abstracts)
+        )
+        cascade_log.append(f"{tier}:{q!r} → {hits} abstracts")
+        # Acceptance threshold: 3 for high tiers, 1 for case_report tier.
+        if (tier in ("guideline", "rct", "review") and hits >= 3) or (tier == "case_report" and hits >= 1):
+            return ev, tier, cascade_log
+
+    # Final fall-through: return whatever the last attempt returned (may be empty).
+    # We deliberately do NOT raise — the caller will use drug_class abstracts as the safety net.
+    return (last_result or EvidenceFetchResult()), "drug_class", cascade_log
+
+
+async def _fetch_comorbidities(
+    comorbidities: list[str],
+    extra_pubmed_terms: list[str] | None = None,
+    extra_journal_filter: str | None = None,
+) -> list[DiseaseFetchResult]:
+    """Fetch one DiseaseFetchResult per comorbidity in parallel. Caps at 4 comorbidities to bound fan-out."""
+    if not comorbidities:
+        return []
+    capped = comorbidities[:4]
+    results = await asyncio.gather(
+        *[
+            fetch_disease_data(c, extra_pubmed_terms=extra_pubmed_terms, extra_journal_filter=extra_journal_filter)
+            for c in capped
+        ],
+        return_exceptions=True,
+    )
+    return [r for r in results if isinstance(r, DiseaseFetchResult)]
+
+
 async def fetch_evidence_data(query: str, *, extra_pubmed_terms: list[str] | None = None, extra_journal_filter: str | None = None) -> EvidenceFetchResult:
     """Fetch evidence for drug+condition questions (clinical trials + reviews).
 
@@ -2374,6 +2455,88 @@ async def fetch_data_for_query(
             fetched.evidence_data = await fetch_evidence_data(" ".join(entities), extra_pubmed_terms=_all_terms if pubmed_expansion_terms else None, extra_journal_filter=_llm_journal_filter)
             fetched.fallback_to_llm = not fetched.evidence_data.fetch_success
             _fire_and_forget_index(fetched.evidence_data.clinical_trial_abstracts)
+
+        elif query_type == "complex" and entities:
+            # entities[0] = drug/intervention; entities[1] = primary disease (when extractor found it).
+            drug_name = entities[0]
+            primary_disease = entities[1] if len(entities) >= 2 else (condition_context or "")
+            comorbidities: list[str] = []
+            # comorbidity_list is propagated through pubmed_expansion_terms by rag_pipeline.
+            if pubmed_expansion_terms and isinstance(pubmed_expansion_terms.get("comorbidity_list"), list):
+                comorbidities = [c for c in pubmed_expansion_terms["comorbidity_list"] if isinstance(c, str) and c.strip()]
+
+            drug_task = fetch_drug_data(
+                drug_name,
+                extra_pubmed_terms=_guideline_terms if pubmed_expansion_terms else None,
+                extra_journal_filter=_llm_journal_filter,
+            )
+            disease_task = (
+                fetch_disease_data(
+                    primary_disease,
+                    extra_pubmed_terms=(_guideline_terms + _review_terms) if pubmed_expansion_terms else None,
+                    extra_journal_filter=_llm_journal_filter,
+                )
+                if primary_disease
+                else asyncio.sleep(0, result=None)
+            )
+            comorbidity_task = _fetch_comorbidities(
+                comorbidities,
+                extra_pubmed_terms=(_guideline_terms + _review_terms) if pubmed_expansion_terms else None,
+                extra_journal_filter=_llm_journal_filter,
+            )
+            cascade_task = _cascade_pubmed_for_complex(
+                drug=drug_name,
+                primary_disease=primary_disease,
+                comorbidities=comorbidities,
+                extra_pubmed_terms=_all_terms if pubmed_expansion_terms else None,
+                extra_journal_filter=_llm_journal_filter,
+            )
+
+            drug_res, disease_res, comorbidity_res, cascade_res = await asyncio.gather(
+                drug_task, disease_task, comorbidity_task, cascade_task, return_exceptions=True,
+            )
+
+            fetched.drug_data = drug_res if isinstance(drug_res, DrugFetchResult) else DrugFetchResult()
+            if isinstance(disease_res, DiseaseFetchResult):
+                fetched.condition_data = disease_res
+            if isinstance(comorbidity_res, list):
+                fetched.comorbidity_data = comorbidity_res
+
+            if isinstance(cascade_res, tuple):
+                ev, tier, cascade_log = cascade_res
+                fetched.evidence_data = ev
+                fetched.evidence_tier = tier
+                fetched.cascade_log = cascade_log
+                # Merge cascade abstracts back into drug_data so existing prompt builders see them.
+                if fetched.drug_data and ev:
+                    fetched.drug_data.clinical_trial_abstracts = _cap_abstracts(
+                        (fetched.drug_data.clinical_trial_abstracts or []) + ev.clinical_trial_abstracts,
+                        5000,
+                    )
+                    fetched.drug_data.systematic_review_abstracts = _cap_abstracts(
+                        (fetched.drug_data.systematic_review_abstracts or []) + ev.systematic_review_abstracts,
+                        5000,
+                    )
+                    fetched.drug_data.guideline_abstracts = _cap_abstracts(
+                        (fetched.drug_data.guideline_abstracts or []) + ev.guideline_abstracts,
+                        5000,
+                    )
+
+            # Final safety net: if every fetch came back empty, mark fallback_to_llm so
+            # the legacy generate path takes over (it cites RxNorm class info instead of hallucinating).
+            any_evidence = (
+                (fetched.drug_data and fetched.drug_data.fetch_success)
+                or (fetched.condition_data and fetched.condition_data.fetch_success)
+                or any(c.fetch_success for c in fetched.comorbidity_data)
+                or (fetched.evidence_data and fetched.evidence_data.fetch_success)
+            )
+            fetched.fallback_to_llm = not any_evidence
+
+            _fire_and_forget_index((fetched.drug_data.guideline_abstracts if fetched.drug_data else []))
+            if fetched.condition_data:
+                _fire_and_forget_index(fetched.condition_data.guideline_abstracts)
+            for c in fetched.comorbidity_data:
+                _fire_and_forget_index(c.guideline_abstracts)
 
         else:
             fetched.fallback_to_llm = True

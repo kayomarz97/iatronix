@@ -76,13 +76,16 @@ def _is_approved_source(source: str) -> bool:
     return False
 
 
-def validate_citations(response_data: dict, query_type: str, fetched_data=None) -> list[str]:
+def validate_citations(response_data: dict, query_type: str, fetched_data=None, fetched_source_labels: set[str] | None = None) -> list[str]:
     """
     Validate citations in a response. Returns list of validation warnings.
     Non-blocking — warnings are informational, response is still returned.
+    For query_type='complex', enforces strict source validation against fetched_source_labels.
     """
     warnings = []
     claims = _extract_claims(response_data, query_type)
+    strict = (query_type == "complex")
+    fetched_labels_lower = {s.lower() for s in (fetched_source_labels or set())}
 
     low_confidence_count = 0
     missing_citation_count = 0
@@ -102,6 +105,15 @@ def validate_citations(response_data: dict, query_type: str, fetched_data=None) 
                 f"Missing citation for claim: '{_truncate(claim.get('value', ''))}'"
             )
             continue
+
+        # Strict-mode check for complex queries: source must match fetched data labels
+        if strict and fetched_labels_lower:
+            if not any(label in (source or "").lower() for label in fetched_labels_lower):
+                warnings.append(
+                    f"Strict-mode dropped claim with source '{source}' not in fetched data."
+                )
+                claim["__drop__"] = True
+                continue
 
         if not _is_approved_source(source) and source not in seen_unverified:
             seen_unverified.add(source)

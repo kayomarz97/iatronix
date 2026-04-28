@@ -14,7 +14,7 @@ class MedicalQueryAnalysis(dspy.Signature):
     )
 
     query_type: Literal[
-        "drug", "disease", "comparative", "procedure", "evidence", "general"
+        "drug", "disease", "comparative", "procedure", "evidence", "general", "complex"
     ] = dspy.OutputField()
     required_sections: list[str] = dspy.OutputField(
         desc="Only the sections relevant to this query"
@@ -25,6 +25,13 @@ class MedicalQueryAnalysis(dspy.Signature):
     entities: list[str] = dspy.OutputField()
     condition_context: str = dspy.OutputField(
         desc="If the query is about a drug or intervention in a specific disease/condition, return that condition; otherwise return an empty string."
+    )
+    comorbidity_list: list[str] = dspy.OutputField(
+        desc=(
+            "List of additional conditions / modifiers that further qualify the primary condition "
+            "(e.g. ['hepatic impairment', 'on fluconazole']). Empty list when query_type != 'complex'. "
+            "Each entry should be a SHORT human-readable label suitable as a PubMed search term."
+        )
     )
     response_focus: str = dspy.OutputField(
         desc="What the user actually wants to know in 1 sentence"
