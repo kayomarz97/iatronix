@@ -130,6 +130,15 @@ class Settings(BaseSettings):
     openrouter_gemma_fallback: str = "google/gemma-4-26b-a4b-it:free"
     openrouter_meta_fallback: str = "meta-llama/llama-3.3-70b-instruct:free"
 
+    # ── Cerebras BYOK (OpenAI-compatible, paid tier) ──────────────────────────────
+    # Paid tier llama3.1-8b: 32,768 context, 2,000 req/min, 2M tokens/min
+    # To change model if Cerebras updates: set CEREBRAS_DEFAULT_MODEL env var only
+    cerebras_api_base: str = "https://api.cerebras.ai/v1"
+    cerebras_default_model: str = "llama3.1-8b"    # ← one-line change if Cerebras changes model
+    # NOTE: No special token caps — paid tier 32,768 context fits full pipeline unchanged
+    # Future free-tier toggle will add: cerebras_free_max_output: int = 2048
+    #                                    cerebras_free_max_context_chars: int = 18000
+
     # BYOK-only: these fields are unused (kept for backward compat with .env files)
     # All LLM calls use the user's own key from the frontend Settings page
     anthropic_api_key: Optional[str] = None

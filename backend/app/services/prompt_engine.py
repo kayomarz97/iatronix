@@ -110,6 +110,14 @@ RESPOND WITH A SINGLE JSON OBJECT — no markdown fences, no prose outside the J
     "Section heading 1",
     "Section heading 2"
   ],
+  "references": [
+    {
+      "title": "Top-level article/guideline title from the data block",
+      "source": "PubMed | NICE | FDA | etc.",
+      "pmid": "12345678 or null",
+      "year": "2024 or null"
+    }
+  ],
   "response_focus": "Brief description of what this response focuses on",
   "related_topics": ["Related query 1", "Related query 2"],
   "flowcharts": [
@@ -141,6 +149,7 @@ RESPOND WITH A SINGLE JSON OBJECT — no markdown fences, no prose outside the J
 Generate 5-10 section_titles that cover the REQUIRED SECTIONS for this query type.
 Each title must be a short, clear heading (3-6 words).
 Do NOT generate section content — section_titles are plain strings only.
+references: list the key sources from the data block that best support this BLUF. Maximum 5.
 
 FLOWCHARTS: Include ONLY for clinical decision algorithms (e.g. PE workup, sepsis, ACLS, anaphylaxis, HF escalation). Build rich decision trees — decision nodes (is_decision: true) must list all clinically distinct branches (2–4 per node). Label every node. Include ≥6 steps for applicable pathways. Never produce a purely linear list when decision points exist. Use "steps": [] when no pathway applies.
 TABLES: Include ONLY for structured comparisons, diagnostic scoring, or drug dosing tables. Use "tables": [] if none apply."""
@@ -158,10 +167,19 @@ RESPOND WITH A SINGLE JSON OBJECT — no markdown fences, no prose outside the J
       "source": "[SOURCE: label from the data block — MUST match exactly]",
       "pmid": "12345678 or null"
     }}
+  ],
+  "references": [
+    {{
+      "title": "Exact article or guideline title from the data block",
+      "source": "PubMed | NICE | FDA OpenFDA | MedlinePlus | Clinical Consensus | etc.",
+      "pmid": "12345678 or null",
+      "year": "2024 or null"
+    }}
   ]
 }}
 
 EVERY content_item.source MUST cite a [SOURCE: ...] label from the fetched data block. Sources outside the block are FORBIDDEN.
+references MUST only list sources actually cited in content_items above. Do NOT invent references.
 Keep text length 100–200 words per item.
 """
 
@@ -418,7 +436,8 @@ def build_adaptive_messages(
         f"REQUIRED SECTION AREAS: {section_guidance}\n"
         f"{condition_block}{hint_section}"
         f"Return a JSON object with: bluf (headline, body, key_points, caveats), "
-        f"sections (list of section titles), related_topics (5-8 queries), response_focus, tables, flowcharts."
+        f"sections (list of section titles), related_topics (5-8 queries), response_focus, tables, flowcharts, "
+        f"references (list of sources cited — each with title, source, pmid or null, year or null)."
     )
     data_block = _build_adaptive_data_block(query_type, fetched_data, vector_results)
     user_text = f"Query: {query}"

@@ -18,6 +18,8 @@ def get_provider(model_id: str) -> str:
         return "gemini"
     if model_id.startswith("gpt-") or model_id.startswith("o1") or model_id.startswith("o3"):
         return "openai"
+    if model_id.startswith("llama") or model_id.startswith("qwen") or model_id.startswith("mistral"):
+        return "cerebras"
     return "anthropic"
 
 
@@ -43,7 +45,7 @@ def create_llm(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
             detail={
                 "error": "no_api_key",
-                "message": "No API key configured. Please add your Anthropic, OpenAI, or OpenRouter API key in Settings → LLM API Key.",
+                "message": "No API key configured. Please add your Cerebras, Anthropic, OpenAI, or OpenRouter API key in Settings → LLM API Key.",
                 "settings_url": "/settings",
             },
         )
@@ -89,12 +91,21 @@ def create_llm(
             max_tokens=effective_max_tokens,
             timeout=settings.llm_timeout_seconds,
         )
+    elif provider == "cerebras":
+        return ChatOpenAI(
+            model=settings.cerebras_default_model,  # always uses config — easy name change
+            api_key=api_key,
+            base_url=settings.cerebras_api_base,
+            max_tokens=effective_max_tokens,         # paid tier: no artificial cap needed
+            timeout=settings.llm_timeout_seconds,
+            max_retries=1,
+        )
     else:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={
                 "error": "unsupported_provider",
-                "message": f"Provider '{provider}' is not supported. Use 'anthropic', 'openai', or 'openrouter'.",
+                "message": f"Provider '{provider}' is not supported. Use 'anthropic', 'openai', 'cerebras', or 'openrouter'.",
             },
         )
 

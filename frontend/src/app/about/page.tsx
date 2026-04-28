@@ -11,7 +11,7 @@ const PIPELINE_STEPS = [
   {
     step: "2",
     title: "Classification",
-    desc: "Regex pattern scoring instantly classifies the query into one of five types: drug, disease, procedure, evidence (study), or comparative (drug vs. drug). For ambiguous phrasing, a lightweight Claude Haiku call resolves the type. The query type determines which APIs to call and which response schema to fill.",
+    desc: "Regex pattern scoring instantly classifies the query into one of five types: drug, disease, procedure, evidence (study), or comparative (drug vs. drug). For ambiguous phrasing, a lightweight LLM call (Cerebras Llama 3.1 8B by default) resolves the type. The query type determines which APIs to call and which response schema to fill.",
   },
   {
     step: "3",
@@ -31,7 +31,7 @@ const PIPELINE_STEPS = [
   {
     step: "6",
     title: "Adaptive LLM formatting",
-    desc: "The LLM receives only the fetched evidence — not its training knowledge. The prompt instructs it to fill specific schema fields (BLUF headline, summary, sections, citations) and explicitly prohibits inventing data not present in the sources. Each claim must cite its source by index. The model used scales with query complexity: Haiku for drug/procedure formats, Sonnet for disease queries requiring depth (pathophysiology, diagnostics, management, complications).",
+    desc: "The LLM receives only the fetched evidence — not its training knowledge. The prompt instructs it to fill specific schema fields (BLUF headline, summary, sections, citations) and explicitly prohibits inventing data not present in the sources. Each claim must cite its source by index. The model used is Llama 3.1 8B via Cerebras by default (or Claude if an Anthropic key is configured in Settings).",
   },
   {
     step: "7",
@@ -95,11 +95,18 @@ const LESSONS = [
 
 const API_SOURCES = [
   {
+    name: "Cerebras (Llama 3.1 8B)",
+    desc: "Default AI provider — powers evidence formatting, query classification, and section generation. Paid tier: 32,768 context, ~6× cheaper than Claude.",
+    url: "https://cloud.cerebras.ai",
+    label: "Get API key",
+    note: "Default",
+  },
+  {
     name: "Anthropic (Claude)",
-    desc: "Powers AI-formatted responses, evidence structuring, and medical image analysis in Waves.",
+    desc: "Alternative AI provider for users who prefer Claude. Required for Waves (medical image analysis via Claude vision).",
     url: "https://console.anthropic.com/",
     label: "Get API key",
-    note: "Required",
+    note: "Optional · Required for Waves",
   },
 ];
 
@@ -116,6 +123,18 @@ export default function AboutPage() {
           Iatronix is an evidence-based clinical reference built for medical professionals.
           It searches real-time data from FDA, PubMed, NICE, and your own documents, formats them with AI, and grades every claim by the evidence behind it.
           Your API key. Your data. Your control.
+        </p>
+        <p style={{ color: "var(--text-muted)", fontSize: "0.875rem", margin: "0.75rem 0 0", lineHeight: 1.6 }}>
+          Started in March 2026 as a personal side project by{" "}
+          <a href="https://kayomarz.com" target="_blank" rel="noopener noreferrer"
+             style={{ color: "var(--accent)", textDecoration: "underline" }}>
+            Kayomarz
+          </a>{" "}
+          — built for his own clinical use and made public. More at{" "}
+          <a href="https://kayomarz.com" target="_blank" rel="noopener noreferrer"
+             style={{ color: "var(--accent)", textDecoration: "underline" }}>
+            kayomarz.com
+          </a>.
         </p>
       </div>
 

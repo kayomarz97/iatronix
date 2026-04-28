@@ -224,7 +224,16 @@ function ReferenceRow({ ref: r, index }: { ref: AdaptiveReference; index: number
             {label}
           </a>
         ) : (
-          <span className="text-foreground">{label}</span>
+          <a
+            href={`https://pubmed.ncbi.nlm.nih.gov/?term=${encodeURIComponent(
+              [r.title, r.source, r.year?.toString()].filter(Boolean).join(" ")
+            )}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-blue-600 dark:text-blue-400 hover:underline"
+          >
+            {label}
+          </a>
         )}
         {meta && (
           <span className="text-muted-foreground ml-1">({meta})</span>
