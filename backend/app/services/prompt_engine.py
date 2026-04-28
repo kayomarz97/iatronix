@@ -189,7 +189,7 @@ RESPOND WITH A SINGLE JSON OBJECT — no markdown fences, no prose outside the J
 }}
 
 EVERY content_item.source MUST cite a [SOURCE: ...] label from the fetched data block. Sources outside the block are FORBIDDEN.
-references MUST only list sources actually cited in content_items above. Do NOT invent references.
+references: List ALL sources from the data block that informed this section. Include a reference for every [SOURCE: ...] label cited in content_items. If fetched data was provided, there MUST be at least 1 reference. Only omit if the data block contained no relevant entries for this section.
 Keep text length 100–200 words per item.
 """
 
@@ -219,7 +219,7 @@ RESPOND WITH A SINGLE JSON OBJECT — no markdown fences, no prose outside the J
 }
 
 EVERY content_item.source MUST cite a [SOURCE: ...] label from the fetched data block. Sources outside the block are FORBIDDEN.
-references MUST only list sources actually cited in content_items above. Do NOT invent references.
+references: List ALL sources from the data block that informed this section. Include a reference for every [SOURCE: ...] label cited in content_items. If fetched data was provided, there MUST be at least 1 reference. Only omit if the data block contained no relevant entries for this section.
 Keep text length 100–200 words per item.
 """
 
