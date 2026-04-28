@@ -1475,9 +1475,9 @@ async def _call_llm_simple(
         cache_read = _token_details.get("cache_read", 0)
         cache_write = _token_details.get("cache_creation", 0)
         if cache_read:
-            logger.debug("Prompt cache HIT: %d tokens saved", cache_read)
+            logger.info("Prompt cache HIT: %d tokens saved", cache_read)
         elif cache_write:
-            logger.debug("Prompt cache WRITE: %d tokens written", cache_write)
+            logger.info("Prompt cache WRITE: %d tokens written", cache_write)
         return (
             result.content if isinstance(result.content, str) else None,
             {
@@ -1509,14 +1509,39 @@ async def _run_parallel_pipeline(
     """Two-phase parallel generation. Returns parsed dict compatible with AdaptiveResponse or None."""
     provider = user_llm_provider or get_provider(effective_model)
 
-    bluf_system, bluf_data, bluf_user = build_bluf_only_messages(
-        query=query,
-        query_type=query_type,
-        fetched_data=fetched_data,
-        vector_results=vector_results,
-        condition_context=condition_context,
-        comparative_is_drug=comparative_is_drug,
-    )
+    if query_type == "complex":
+        from app.services.prompt_engine import (
+            build_complex_bluf_messages,
+            build_complex_section_messages,
+        )
+        # Resolve drug + primary disease from fetched_data (set by source_router).
+        drug = (fetched_data.drug_data.drug_name if fetched_data and fetched_data.drug_data else "")
+        primary_disease = (
+            fetched_data.condition_data.disease_name
+            if fetched_data and fetched_data.condition_data
+            else (condition_context or "")
+        )
+        comorbidity_list = [
+            getattr(c, "disease_name", "") for c in (getattr(fetched_data, "comorbidity_data", []) or [])
+            if getattr(c, "disease_name", "")
+        ]
+        bluf_system, bluf_data, bluf_user = build_complex_bluf_messages(
+            query=query,
+            drug=drug,
+            primary_disease=primary_disease,
+            comorbidity_list=comorbidity_list,
+            fetched_data=fetched_data,
+            vector_results=vector_results,
+        )
+    else:
+        bluf_system, bluf_data, bluf_user = build_bluf_only_messages(
+            query=query,
+            query_type=query_type,
+            fetched_data=fetched_data,
+            vector_results=vector_results,
+            condition_context=condition_context,
+            comparative_is_drug=comparative_is_drug,
+        )
     _is_fallback = False
     if use_chat_service and user_llm_provider == "openrouter":
         from app.services.chat_service import chat_with_fallback
@@ -1573,15 +1598,28 @@ async def _run_parallel_pipeline(
     _section_sem = asyncio.Semaphore(settings.parallel_sections_max_concurrent)
 
     async def _gen_one_section(title: str, idx: int) -> tuple[dict | None, dict]:
-        sec_system, sec_data, sec_user = build_section_messages(
-            section_title=title,
-            all_section_titles=section_titles,
-            bluf_text=bluf_text,
-            query=query,
-            query_type=query_type,
-            fetched_data=fetched_data,
-            vector_results=vector_results,
-        )
+        if query_type == "complex":
+            sec_system, sec_data, sec_user = build_complex_section_messages(
+                section_title=title,
+                all_section_titles=section_titles,
+                bluf_text=bluf_text,
+                query=query,
+                drug=drug,
+                primary_disease=primary_disease,
+                comorbidity_list=comorbidity_list,
+                fetched_data=fetched_data,
+                vector_results=vector_results,
+            )
+        else:
+            sec_system, sec_data, sec_user = build_section_messages(
+                section_title=title,
+                all_section_titles=section_titles,
+                bluf_text=bluf_text,
+                query=query,
+                query_type=query_type,
+                fetched_data=fetched_data,
+                vector_results=vector_results,
+            )
         sec_llm = create_llm(effective_model, max_tokens=settings.parallel_sections_max_tokens,
                              user_key=user_llm_key, user_provider=user_llm_provider)
         # Semaphore limits concurrent LLM calls to stay under token-per-minute limits.
@@ -2454,8 +2492,17 @@ async def process_query(
     validated_dict = adaptive_response.model_dump()
 
     # Citation validation
-    citation_warnings = validate_citations(validated_dict, query_type, fetched_data)
+    fetched_source_labels = set(fetched_data.data_sources) if fetched_data and fetched_data.data_sources else set()
+    citation_warnings = validate_citations(validated_dict, query_type, fetched_data, fetched_source_labels)
     validation_warnings.extend(citation_warnings)
+
+    # Remove claims marked with __drop__ flag from strict-mode validation
+    if query_type == "complex" and "sections" in validated_dict:
+        for section in validated_dict["sections"]:
+            section["content_items"] = [
+                item for item in section.get("content_items", [])
+                if not item.get("__drop__", False)
+            ]
 
     # Safety check
     safety_warnings = check_safety(request.query, validated_dict, query_type)

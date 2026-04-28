@@ -84,6 +84,18 @@ def extract_entities(query: str, query_type: str) -> list[str]:
     if query_type == "disease":
         cleaned = _DISEASE_PREFIX_RE.sub("", cleaned).strip()
 
+    if query_type == "complex":
+        # Anchor: drug name (or procedure / management noun) + primary disease.
+        # The remaining qualifiers go into condition_context / comorbidity_list (via DSPy).
+        condition_match = _CONDITION_RE.search(cleaned)
+        if condition_match:
+            left = cleaned[: condition_match.start()].strip()
+            right = condition_match.group(1).strip()
+            # `left` = the drug or intervention; `right` = primary disease (we keep both).
+            if left and right:
+                return [_normalize_entity_text(left), _normalize_entity_text(right)]
+        # Fall through to default cleanup below.
+
     collapsed = _STOPWORDS.sub(" ", cleaned)
     collapsed = re.sub(r"\s+", " ", collapsed).strip()
     return [collapsed] if collapsed else []
@@ -117,6 +129,7 @@ def route_query(
         "comparative",
         "procedure",
         "evidence",
+        "complex",
     } and bool(entities)
 
     requested_model = requested_model or settings.model_generate

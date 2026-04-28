@@ -6,7 +6,7 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-_VALID_TYPES = {"drug", "disease", "comparative", "procedure", "evidence", "general"}
+_VALID_TYPES = {"drug", "disease", "comparative", "procedure", "evidence", "general", "complex"}
 
 _HIGHLIGHTS_RE = re.compile(
     r"\b(?:surviving|approach to|initial management of|quick|highlights?|"
@@ -41,6 +41,22 @@ _DRUG_IN_CONDITION_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Complex = drug/procedure/management in a primary condition WITH comorbidities or modifiers.
+# Triggers on: ", with X", " and Y", "alongside", "comorbid", "complicated by",
+# multiple "in/with" clauses, or known modifier tokens (dialysis, hepatic impairment,
+# renal failure, pregnancy, paediatric, elderly, on warfarin / anticoagulants, etc.).
+_COMPLEX_RE = re.compile(
+    r"\b(?:"
+    r"with\s+(?:co-?morbid|comorbidity|comorbidities|complication|complicated\s+by)"
+    r"|alongside\s+\w+"
+    r"|(?:in|for)\s+[\w\s\-]{3,40}\s+(?:with|and|plus)\s+[\w\s\-]{3,80}"
+    r"|on\s+(?:dialysis|haemodialysis|hemodialysis|warfarin|doac|noac|anticoagulant|fluconazole|amiodarone)"
+    r"|(?:hepatic|renal|cardiac|kidney|liver)\s+(?:failure|impairment|dysfunction)"
+    r"|pregnan(?:t|cy)\s+(?:with|and|plus)"
+    r")\b",
+    re.IGNORECASE,
+)
+
 LLM_CLASSIFY_PROMPT = """Classify this medical query into exactly one type.
 Return ONLY valid JSON with no extra text: {{"type": "...", "confidence": 0.0}}
 
@@ -50,6 +66,7 @@ Types:
 - comparative = explicit comparison between drugs, diseases, or management options
 - procedure = how to perform, stepwise technique, insertion/removal, protocols
 - evidence = whether an intervention is safe/effective/appropriate in a condition, or evidence synthesis
+- complex = a drug/procedure/management question in a primary condition that is qualified by one or more comorbidities, organ-system impairments, pregnancy, age extremes, or concomitant drugs (e.g. "rivaroxaban dosing in afib with hepatic impairment on fluconazole")
 - general = broad clinical summary, quick pearls, or anything not clearly above
 
 Query: {query}"""
@@ -76,6 +93,8 @@ def classify_query(query: str, user_hint: str | None = None) -> tuple[str, float
 
     if _COMPARATIVE_RE.search(query):
         return "comparative", 0.9
+    if _COMPLEX_RE.search(query):
+        return "complex", 0.85
     if _PROCEDURE_RE.search(query):
         return "procedure", 0.85
     if _EVIDENCE_RE.search(query):

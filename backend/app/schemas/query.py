@@ -247,7 +247,7 @@ class TextNode(BaseModel):
 class QueryRequest(BaseModel):
     query: str = Field(max_length=settings.max_query_length)
     query_type: Optional[
-        Literal["drug", "disease", "comparative", "procedure", "evidence"]
+        Literal["drug", "disease", "comparative", "procedure", "evidence", "complex"]
     ] = None
     model_id: str = "claude-haiku-4-5-20251001"
     model_explicit: bool = (
@@ -275,7 +275,7 @@ class TokenUsage(BaseModel):
 
 class QueryResponse(BaseModel):
     query_type: Literal[
-        "drug", "disease", "comparative", "general", "procedure", "evidence", "adaptive"
+        "drug", "disease", "comparative", "general", "procedure", "evidence", "adaptive", "complex"
     ]
     model_used: str
     response: Union[AdaptiveResponse, DegradedResponse]
