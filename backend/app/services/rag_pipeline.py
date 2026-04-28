@@ -901,9 +901,14 @@ async def _call_llm(
                 else:
                     system_text = prompt
                     human_text = "Generate the response now."
+                use_cache_control = (provider == "anthropic")
                 messages = [
                     SystemMessage(content=[
-                        {"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}}
+                        {
+                            "type": "text",
+                            "text": system_text,
+                            **({"cache_control": {"type": "ephemeral"}} if use_cache_control else {}),
+                        }
                     ]),
                     HumanMessage(content=human_text),
                 ]
@@ -999,6 +1004,7 @@ _VALID_COR = {"I", "IIa", "IIb", "III-no-benefit", "III-harm"}
 _PRICING = {
     "claude-haiku-4-5-20251001": {"in": 0.80, "out": 4.00},
     "claude-sonnet-4-20250514": {"in": 3.00, "out": 15.00},
+    "llama3.1-8b": {"in": 0.10, "out": 0.10},   # Cerebras paid tier ($/1M)
 }
 
 
@@ -1378,7 +1384,8 @@ async def _analyze_and_expand_query(
         "2. pubmed_terms strings: valid PubMed queries using [MeSH], [Title/Abstract], AND/OR, [pt] filters\n"
         "3. journal_filter: 2–4 top peer-reviewed journals for this topic joined with OR — use exact journal names in quotes\n"
         "4. Do NOT include date ranges in pubmed_terms (added automatically)\n"
-        "5. Output ONLY JSON — no markdown, no backticks, no explanation\n"
+        "5. query_type classification: If the query describes a medical condition, disease, syndrome, disorder, symptom, or clinical finding — even without the explicit words 'management', 'treatment', or 'guideline' — classify it as 'disease'. When uncertain between 'general' and 'disease', always prefer 'disease'.\n"
+        "6. Output ONLY JSON — no markdown, no backticks, no explanation\n"
         "\n"
         f"Query: {query}"
     )
@@ -1457,12 +1464,23 @@ async def _call_llm_simple(
 
     try:
         if provider == "anthropic":
-            sys_content = [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
+            use_cache_control = (provider == "anthropic")
+            sys_content = [
+                {
+                    "type": "text",
+                    "text": system,
+                    **({"cache_control": {"type": "ephemeral"}} if use_cache_control else {}),
+                }
+            ]
             if data_block:
                 # Cache the data block when large enough (Anthropic minimum: 1024 tokens ≈ 4096 chars).
                 # Same data block is reused across all 5-6 section calls for one query — 73% token savings.
                 if len(data_block) > 4096:
-                    sys_content.append({"type": "text", "text": data_block, "cache_control": {"type": "ephemeral"}})
+                    sys_content.append({
+                        "type": "text",
+                        "text": data_block,
+                        **({"cache_control": {"type": "ephemeral"}} if use_cache_control else {}),
+                    })
                 else:
                     sys_content.append({"type": "text", "text": data_block})
             msgs = [SystemMessage(content=sys_content), HumanMessage(content=user_text)]
@@ -1471,6 +1489,13 @@ async def _call_llm_simple(
             msgs = [SystemMessage(content=combined), HumanMessage(content=user_text)]
         result = await llm.ainvoke(msgs)
         usage = getattr(result, "usage_metadata", None) or {}
+        if not usage:
+            # OpenAI-format (Cerebras, OpenAI, OpenRouter)
+            raw = getattr(result, "usage", None) or {}
+            usage = {
+                "input_tokens": raw.get("prompt_tokens", 0),
+                "output_tokens": raw.get("completion_tokens", 0),
+            }
         _token_details = usage.get("input_token_details") or {}
         cache_read = _token_details.get("cache_read", 0)
         cache_write = _token_details.get("cache_creation", 0)
@@ -1866,6 +1891,14 @@ async def process_query(
             )
             query_type, confidence = fallback_type, fallback_conf
 
+    # Item 19: disease safety net — if LLM found entities but classified as 'general', upgrade to 'disease'
+    if query_type == "general" and query_analysis and query_analysis.get("entities"):
+        logger.info(
+            "query_type upgraded 'general'→'disease': entities %s detected in query",
+            query_analysis["entities"],
+        )
+        query_type = "disease"
+
     if query_intent == "highlights" and query_type not in (
         "drug",
         "disease",
@@ -2248,12 +2281,21 @@ async def process_query(
             async def _invoke_adaptive():
                 nonlocal _gen_usage
                 if _gen_provider == "anthropic":
+                    use_cache_control = (_gen_provider == "anthropic")
                     _sys_content = [
-                        {"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}},
+                        {
+                            "type": "text",
+                            "text": system_text,
+                            **({"cache_control": {"type": "ephemeral"}} if use_cache_control else {}),
+                        },
                     ]
                     if data_block:
                         if len(data_block) > 4096:
-                            _sys_content.append({"type": "text", "text": data_block, "cache_control": {"type": "ephemeral"}})
+                            _sys_content.append({
+                                "type": "text",
+                                "text": data_block,
+                                **({"cache_control": {"type": "ephemeral"}} if use_cache_control else {}),
+                            })
                         else:
                             _sys_content.append({"type": "text", "text": data_block})
                     _msgs = [
@@ -2376,12 +2418,21 @@ async def process_query(
             @_gen_breaker
             async def _retry_adaptive():
                 if _gen_provider == "anthropic":
+                    use_cache_control = (_gen_provider == "anthropic")
                     _sys_content = [
-                        {"type": "text", "text": retry_static, "cache_control": {"type": "ephemeral"}},
+                        {
+                            "type": "text",
+                            "text": retry_static,
+                            **({"cache_control": {"type": "ephemeral"}} if use_cache_control else {}),
+                        },
                     ]
                     if data_block:
                         if len(data_block) > 4096:
-                            _sys_content.append({"type": "text", "text": data_block, "cache_control": {"type": "ephemeral"}})
+                            _sys_content.append({
+                                "type": "text",
+                                "text": data_block,
+                                **({"cache_control": {"type": "ephemeral"}} if use_cache_control else {}),
+                            })
                         else:
                             _sys_content.append({"type": "text", "text": data_block})
                     _msgs = [

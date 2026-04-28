@@ -16,25 +16,29 @@ import { API_KEY_STORAGE_KEY, LLM_PROVIDER_STORAGE_KEY } from "@/lib/constants";
 import type { QueryResponse, AdaptiveBLUF, AdaptiveSection, AdaptiveFlowchart, AdaptiveTable } from "@/lib/types";
 import { usePostHog } from "posthog-js/react";
 
-type LLMProvider = "anthropic" | "openai" | "openrouter";
+type LLMProvider = "cerebras" | "anthropic" | "openai" | "openrouter";
 
 const PROVIDER_DEFAULT_MODELS: Record<LLMProvider, string> = {
+  cerebras: process.env.NEXT_PUBLIC_CEREBRAS_MODEL ?? "llama3.1-8b",
   anthropic: "claude-haiku-4-5-20251001",
   openai: "gpt-4o-mini",
   openrouter: "google/gemma-4-31b-it",
 };
 
-const PROVIDER_DEFAULT_MODEL_NAMES: Record<LLMProvider, string> = {
-  anthropic: "Claude Haiku 4.5",
-  openai: "GPT-4o Mini",
-  openrouter: "Gemma 4",
-};
+function modelDisplayName(provider: string, modelId: string): string {
+  if (provider === "cerebras") return `Llama 3.1 8B (Cerebras)`;
+  if (modelId.includes("haiku")) return "Claude Haiku 4.5";
+  if (modelId.includes("sonnet")) return "Claude Sonnet 4";
+  if (modelId.includes("gemma")) return "Gemma 4";
+  return modelId;
+}
 
 function getProviderModel(provider: string): { id: string; name: string } {
   const p = (provider as LLMProvider) in PROVIDER_DEFAULT_MODELS
     ? (provider as LLMProvider)
-    : "anthropic";
-  return { id: PROVIDER_DEFAULT_MODELS[p], name: PROVIDER_DEFAULT_MODEL_NAMES[p] };
+    : "cerebras";
+  const id = PROVIDER_DEFAULT_MODELS[p];
+  return { id, name: modelDisplayName(p, id) };
 }
 
 interface QueryContextType {
@@ -72,12 +76,12 @@ export function QueryProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(false);
   const [loadingStage, setLoadingStage] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
-  const [activeModelName, setActiveModelName] = useState(PROVIDER_DEFAULT_MODEL_NAMES.anthropic);
+  const [activeModelName, setActiveModelName] = useState("Llama 3.1 8B (Cerebras)");
   const [isFallback, setIsFallback] = useState(false);
   const [fallbackModel, setFallbackModel] = useState<string | null>(null);
 
   useEffect(() => {
-    const provider = localStorage.getItem(LLM_PROVIDER_STORAGE_KEY) || "anthropic";
+    const provider = localStorage.getItem(LLM_PROVIDER_STORAGE_KEY) || "cerebras";
     setActiveModelName(getProviderModel(provider).name);
   }, []);
 
@@ -89,7 +93,7 @@ export function QueryProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    const provider = localStorage.getItem(LLM_PROVIDER_STORAGE_KEY) || "anthropic";
+    const provider = localStorage.getItem(LLM_PROVIDER_STORAGE_KEY) || "cerebras";
     const { id: modelId, name: modelName } = getProviderModel(provider);
     setActiveModelName(modelName);
 

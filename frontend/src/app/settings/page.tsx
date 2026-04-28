@@ -17,11 +17,16 @@ const GENDERS = ["Male", "Female", "Non-binary", "Prefer not to say", "Other"];
 
 export default function SettingsPage() {
   const [llmKey, setLlmKey] = useState("");
-  const [provider, setProvider] = useState<"anthropic">("anthropic");
+  const [provider, setProvider] = useState<"anthropic" | "cerebras">("cerebras");
   const [llmStatus, setLlmStatus] = useState<{ provider: string; is_set: boolean } | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [email, setEmail] = useState("");
+
+  const [cerebrasKey, setCerebrasKey] = useState("");
+  const [cerebrasStatus, setCerebrasStatus] = useState<{ is_set: boolean } | null>(null);
+  const [cerebrasMessage, setCerebrasMessage] = useState<string | null>(null);
+  const [cerebrasLoading, setCerebrasLoading] = useState(false);
 
   const [ncbiKey, setNcbiKey] = useState("");
   const [ncbiStatus, setNcbiStatus] = useState<{ is_set: boolean } | null>(null);
@@ -216,6 +221,50 @@ export default function SettingsPage() {
       setMessage("Network error");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const saveCerebrasKey = async () => {
+    setCerebrasLoading(true);
+    setCerebrasMessage(null);
+    try {
+      const res = await fetch("/api/v1/auth/llm-key", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", ...authHeader() },
+        body: JSON.stringify({ key: cerebrasKey, provider: "cerebras" }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setCerebrasMessage(data.detail || "Failed to save key");
+      } else {
+        setCerebrasMessage("Cerebras key saved successfully");
+        setCerebrasKey("");
+        localStorage.setItem(LLM_PROVIDER_STORAGE_KEY, "cerebras");
+        fetchLlmStatus();
+      }
+    } catch {
+      setCerebrasMessage("Network error");
+    } finally {
+      setCerebrasLoading(false);
+    }
+  };
+
+  const removeCerebrasKey = async () => {
+    setCerebrasLoading(true);
+    setCerebrasMessage(null);
+    try {
+      const res = await fetch("/api/v1/auth/llm-key", {
+        method: "DELETE",
+        headers: authHeader(),
+      });
+      if (res.ok) {
+        setCerebrasMessage("Cerebras key removed");
+        fetchLlmStatus();
+      }
+    } catch {
+      setCerebrasMessage("Network error");
+    } finally {
+      setCerebrasLoading(false);
     }
   };
 
@@ -476,104 +525,173 @@ export default function SettingsPage() {
         {message && <p className="text-sm" style={{ color: message.includes("saved") || message.includes("removed") ? "var(--success)" : "var(--text-secondary)" }}>{message}</p>}
       </section>
 
-      {/* ── OpenRouter OAuth ── */}
+      {/* ── Cerebras API Key ── */}
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold">OpenRouter (Gemma 4)</h2>
+        <h2 className="text-lg font-semibold">Cerebras API Key (BYOK)</h2>
         <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
-          Connect your OpenRouter account to use Gemma 4 as the AI engine. Your credits are used directly — no server-side key stored in plaintext.
+          Default AI provider. Uses Llama 3.1 8B — fast, accurate, and ~6× cheaper than Claude for most queries. Your key is encrypted — never stored in plaintext server-side.
         </p>
 
-        <div className="p-3 rounded-md text-sm" style={{ background: "var(--bg-elevated)", border: "1px solid var(--border)" }}>
-          <span className="font-medium">Status: </span>
-          {openrouterConnected === null ? (
-            <span style={{ color: "var(--text-muted)" }}>Loading…</span>
-          ) : openrouterConnected ? (
-            <span style={{ color: "var(--success)" }}>Connected</span>
-          ) : (
-            <span style={{ color: "var(--danger)" }}>Not connected</span>
-          )}
+        {llmStatus && (
+          <div className="p-3 rounded-md text-sm" style={{ background: "var(--bg-elevated)", border: "1px solid var(--border)" }}>
+            <span className="font-medium">Current: </span>
+            {llmStatus.provider === "cerebras" && llmStatus.is_set ? (
+              <span style={{ color: "var(--success)" }}>Cerebras key active · llama3.1-8b</span>
+            ) : (
+              <span style={{ color: "var(--text-muted)" }}>No key set</span>
+            )}
+          </div>
+        )}
+
+        <div className="space-y-2">
+          <input
+            type="password"
+            value={cerebrasKey}
+            onChange={(e) => setCerebrasKey(e.target.value)}
+            placeholder="csk-..."
+            className="w-full px-3 py-2 rounded-md border border-border bg-surface text-sm min-h-[44px]"
+          />
+          <div className="flex gap-2">
+            <button
+              onClick={saveCerebrasKey}
+              disabled={cerebrasLoading || !cerebrasKey}
+              className="px-4 py-2 bg-primary text-white rounded-md text-sm min-h-[44px] disabled:opacity-50"
+            >
+              {cerebrasLoading ? "Saving..." : "Save Key"}
+            </button>
+            {llmStatus?.provider === "cerebras" && llmStatus?.is_set && (
+              <button
+                onClick={removeCerebrasKey}
+                disabled={cerebrasLoading}
+                className="px-4 py-2 rounded-md border border-border text-sm min-h-[44px]"
+              >
+                Remove Key
+              </button>
+            )}
+          </div>
         </div>
 
-        <div className="flex gap-2">
-          {!openrouterConnected && (
-            <button
-              onClick={async () => {
-                try {
-                  const res = await fetch("/api/v1/auth/openrouter/login", {
-                    method: "POST",
-                    headers: authHeader(),
-                  });
-                  if (res.ok) {
-                    const { redirect_url } = await res.json();
-                    window.location.href = redirect_url;
-                  } else {
-                    setOpenrouterMessage("Failed to start OpenRouter login");
-                  }
-                } catch {
-                  setOpenrouterMessage("Network error — try again");
-                }
-              }}
-              className="px-4 py-2 bg-primary rounded-md text-sm min-h-[44px] inline-flex items-center"
-              style={{ color: "white" }}
-            >
-              Connect OpenRouter →
-            </button>
-          )}
-          {openrouterConnected && (
-            <button
-              onClick={disconnectOpenrouter}
-              disabled={openrouterLoading}
-              className="px-4 py-2 rounded-md border border-border text-sm min-h-[44px] disabled:opacity-50"
-            >
-              {openrouterLoading ? "Disconnecting…" : "Disconnect"}
-            </button>
-          )}
+        <div className="flex gap-2 items-center text-xs">
+          <span style={{ color: "var(--text-muted)" }}>Get free API key at</span>
+          <a
+            href="https://cloud.cerebras.ai"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-blue-600 dark:text-blue-400 hover:underline"
+          >
+            cloud.cerebras.ai
+          </a>
         </div>
-        {openrouterMessage && (
-          <p className="text-sm" style={{ color: openrouterMessage.includes("disconnected") ? "var(--success)" : "var(--danger)" }}>
-            {openrouterMessage}
-          </p>
-        )}
+
+        {cerebrasMessage && <p className="text-sm" style={{ color: cerebrasMessage.includes("saved") || cerebrasMessage.includes("removed") ? "var(--success)" : "var(--text-secondary)" }}>{cerebrasMessage}</p>}
       </section>
 
-      {/* ── Engine Toggle ── */}
-      <section className="space-y-3">
-        <h2 className="text-lg font-semibold">Search Engine</h2>
-        <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
-          Choose which AI model powers your medical queries.
-        </p>
-        <div className="flex gap-2">
-          <button
-            onClick={() => handleEngineToggle("anthropic")}
-            className="flex-1 px-4 py-3 rounded-md border text-sm min-h-[44px]"
-            style={{
-              background: enginePref === "anthropic" ? "var(--primary)" : "var(--bg-elevated)",
-              borderColor: enginePref === "anthropic" ? "var(--primary)" : "var(--border)",
-              color: enginePref === "anthropic" ? "#fff" : "var(--text-primary)",
-            }}
-          >
-            <div className="font-medium">Claude Haiku</div>
-            <div className="text-xs opacity-70 mt-0.5">Your Anthropic key</div>
-          </button>
-          <button
-            onClick={() => handleEngineToggle("openrouter")}
-            className="flex-1 px-4 py-3 rounded-md border text-sm min-h-[44px]"
-            style={{
-              background: enginePref === "openrouter" ? "var(--primary)" : "var(--bg-elevated)",
-              borderColor: enginePref === "openrouter" ? "var(--primary)" : "var(--border)",
-              color: enginePref === "openrouter" ? "#fff" : "var(--text-primary)",
-            }}
-          >
-            <div className="font-medium">Gemma 4</div>
-            <div className="text-xs opacity-70 mt-0.5">Your OpenRouter credits</div>
-          </button>
-        </div>
-        {enginePref === "openrouter" && !openrouterConnected && (
-          <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-            Connect OpenRouter above to enable Gemma 4.
-          </p>
-        )}
-      </section>
+      {false && (
+        <>
+          {/* ── OpenRouter OAuth ── */}
+          <section className="space-y-3">
+            <h2 className="text-lg font-semibold">OpenRouter (Gemma 4)</h2>
+            <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
+              Connect your OpenRouter account to use Gemma 4 as the AI engine. Your credits are used directly — no server-side key stored in plaintext.
+            </p>
+
+            <div className="p-3 rounded-md text-sm" style={{ background: "var(--bg-elevated)", border: "1px solid var(--border)" }}>
+              <span className="font-medium">Status: </span>
+              {openrouterConnected === null ? (
+                <span style={{ color: "var(--text-muted)" }}>Loading…</span>
+              ) : openrouterConnected ? (
+                <span style={{ color: "var(--success)" }}>Connected</span>
+              ) : (
+                <span style={{ color: "var(--danger)" }}>Not connected</span>
+              )}
+            </div>
+
+            <div className="flex gap-2">
+              {!openrouterConnected && (
+                <button
+                  onClick={async () => {
+                    try {
+                      const res = await fetch("/api/v1/auth/openrouter/login", {
+                        method: "POST",
+                        headers: authHeader(),
+                      });
+                      if (res.ok) {
+                        const { redirect_url } = await res.json();
+                        window.location.href = redirect_url;
+                      } else {
+                        setOpenrouterMessage("Failed to start OpenRouter login");
+                      }
+                    } catch {
+                      setOpenrouterMessage("Network error — try again");
+                    }
+                  }}
+                  className="px-4 py-2 bg-primary rounded-md text-sm min-h-[44px] inline-flex items-center"
+                  style={{ color: "white" }}
+                >
+                  Connect OpenRouter →
+                </button>
+              )}
+              {openrouterConnected && (
+                <button
+                  onClick={disconnectOpenrouter}
+                  disabled={openrouterLoading}
+                  className="px-4 py-2 rounded-md border border-border text-sm min-h-[44px] disabled:opacity-50"
+                >
+                  {openrouterLoading ? "Disconnecting…" : "Disconnect"}
+                </button>
+              )}
+            </div>
+            {openrouterMessage && (
+              <p className="text-sm" style={{ color: openrouterMessage.includes("disconnected") ? "var(--success)" : "var(--danger)" }}>
+                {openrouterMessage}
+              </p>
+            )}
+          </section>
+        </>
+      )}
+
+      {false && (
+        <>
+          {/* ── Engine Toggle ── */}
+          <section className="space-y-3">
+            <h2 className="text-lg font-semibold">Search Engine</h2>
+            <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
+              Choose which AI model powers your medical queries.
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => handleEngineToggle("anthropic")}
+                className="flex-1 px-4 py-3 rounded-md border text-sm min-h-[44px]"
+                style={{
+                  background: enginePref === "anthropic" ? "var(--primary)" : "var(--bg-elevated)",
+                  borderColor: enginePref === "anthropic" ? "var(--primary)" : "var(--border)",
+                  color: enginePref === "anthropic" ? "#fff" : "var(--text-primary)",
+                }}
+              >
+                <div className="font-medium">Claude Haiku</div>
+                <div className="text-xs opacity-70 mt-0.5">Your Anthropic key</div>
+              </button>
+              <button
+                onClick={() => handleEngineToggle("openrouter")}
+                className="flex-1 px-4 py-3 rounded-md border text-sm min-h-[44px]"
+                style={{
+                  background: enginePref === "openrouter" ? "var(--primary)" : "var(--bg-elevated)",
+                  borderColor: enginePref === "openrouter" ? "var(--primary)" : "var(--border)",
+                  color: enginePref === "openrouter" ? "#fff" : "var(--text-primary)",
+                }}
+              >
+                <div className="font-medium">Gemma 4</div>
+                <div className="text-xs opacity-70 mt-0.5">Your OpenRouter credits</div>
+              </button>
+            </div>
+            {enginePref === "openrouter" && !openrouterConnected && (
+              <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                Connect OpenRouter above to enable Gemma 4.
+              </p>
+            )}
+          </section>
+        </>
+      )}
 
       {/* ── NCBI API Key ── */}
       <section className="space-y-3">
