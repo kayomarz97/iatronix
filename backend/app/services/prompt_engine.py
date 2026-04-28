@@ -12,7 +12,7 @@ import logging
 import re
 from typing import TYPE_CHECKING, Any, Optional
 
-from langchain.schema import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import JsonOutputParser
 from pydantic import BaseModel, ValidationError
 
