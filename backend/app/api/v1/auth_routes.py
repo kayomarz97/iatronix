@@ -164,9 +164,9 @@ async def set_llm_key(
     """Store user's own LLM API key (encrypted)."""
     user = _get_authenticated_user(request)
 
-    if req.provider not in ("anthropic", "openai", "openrouter"):
+    if req.provider not in ("anthropic", "openai", "openrouter", "cerebras"):
         raise HTTPException(
-            400, "Provider must be 'anthropic', 'openai', or 'openrouter'"
+            400, "Provider must be 'anthropic', 'openai', 'openrouter', or 'cerebras'"
         )
 
     validation_result = await validate_user_key(req.key, req.provider)
