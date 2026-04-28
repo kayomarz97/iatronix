@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, EmailStr
 
@@ -81,6 +81,22 @@ class UserProfileResponse(BaseModel):
 
 class LlmKeyRequest(BaseModel):
     provider: str  # 'anthropic', 'openai', 'openrouter', or 'cerebras'
+    key: str
+
+
+class ProviderKeyStatus(BaseModel):
+    provider: Literal["anthropic", "cerebras", "openai", "openrouter"]
+    is_set: bool
+    masked: Optional[str] = None  # e.g. "sk-••••••rT9k"
+
+
+class LLMKeysResponse(BaseModel):
+    providers: list[ProviderKeyStatus]
+    active_provider: Optional[str] = None
+
+
+class SaveLLMKeyRequest(BaseModel):
+    provider: Literal["anthropic", "cerebras", "openai", "openrouter"]
     key: str
 
 

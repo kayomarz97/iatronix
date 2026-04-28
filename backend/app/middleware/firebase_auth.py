@@ -31,6 +31,8 @@ EXEMPT_PATHS = {
     "/api/v1/health/",
     # /login is now authenticated (POST with Bearer token) — only callback stays exempt
     "/api/v1/auth/openrouter/callback",
+    # Public model config — frontend reads on page load before auth
+    "/api/v1/config/llm",
 }
 
 _USER_CACHE_TTL = 300  # seconds

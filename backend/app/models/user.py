@@ -47,11 +47,12 @@ class User(TimestampMixin, Base):
     encrypted_llm_key: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     llm_provider: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     
-    # Specific API keys
+    # Specific API keys (per-provider, independent)
     openai_api_key: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     gemini_api_key: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     anthropic_api_key: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     openrouter_key: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    cerebras_api_key: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
     # Profile (for personalisation and future monetisation analytics)
     username: Mapped[Optional[str]] = mapped_column(

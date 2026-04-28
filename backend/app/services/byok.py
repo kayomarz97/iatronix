@@ -58,6 +58,13 @@ def decrypt_key(encrypted_key: str) -> Optional[str]:
         return None
 
 
+def mask_key(plaintext_key: str) -> str:
+    """Return a masked preview like 'sk-t••••••rT9k'. Never reveals the middle."""
+    if len(plaintext_key) < 12:
+        return "••••••"
+    return plaintext_key[:4] + "••••••" + plaintext_key[-4:]
+
+
 def validate_key_format(key: str, provider: str) -> bool:
     """Synchronous version of key format validation."""
     key = key.strip()

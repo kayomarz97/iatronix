@@ -85,6 +85,21 @@ function EvidenceBadge({
   );
 }
 
+// ── Soft markdown normalizer (safety net when LLM ignores formatting rules) ──
+function normalizeMd(text: string): string {
+  if (!text) return text;
+  // Convert * bullets to - bullets
+  let out = text.replace(/^\* /gm, "- ");
+  // If text is wall-of-prose (many sentences, no bullets/headings), convert to bullets
+  const sentenceCount = (out.match(/\. /g) || []).length;
+  const hasBullets = /\n[-*1]/.test(out);
+  const hasHeadings = /\n#+/.test(out);
+  if (sentenceCount > 4 && !hasBullets && !hasHeadings) {
+    out = out.replace(/([^.!?]+[.!?])\s+/g, "- $1\n");
+  }
+  return out;
+}
+
 // ── Single claim row ─────────────────────────────────────────────────────────
 function ClaimRow({ item }: { item: AdaptiveContentItem }) {
   const sourceHref = item.url
@@ -111,8 +126,8 @@ function ClaimRow({ item }: { item: AdaptiveContentItem }) {
   return (
     <div className="py-3 border-b border-border/40 last:border-0">
       <div className="flex gap-2 items-start">
-        <div className="flex-1 text-sm prose prose-sm max-w-none prose-p:my-2 prose-ul:my-2 prose-ul:list-disc prose-ul:pl-5 prose-li:block prose-li:my-1.5 prose-table:text-xs prose-strong:font-bold prose-em:italic" style={{ color: "var(--text-primary)" }}>
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.text}</ReactMarkdown>
+        <div className="flex-1 text-sm prose prose-sm max-w-none prose-p:my-2 prose-ul:my-2 prose-ul:list-disc prose-ul:pl-5 prose-li:my-1 prose-li:leading-relaxed prose-table:text-xs prose-strong:font-bold prose-em:italic prose-headings:font-semibold prose-headings:mt-3 prose-blockquote:border-l-4 prose-blockquote:pl-3 prose-blockquote:italic" style={{ color: "var(--text-primary)" }}>
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{normalizeMd(item.text)}</ReactMarkdown>
         </div>
         {/* Badge beside text on sm+ screens */}
         <div className="hidden sm:flex flex-col items-end gap-1 shrink-0 pt-0.5">
@@ -382,7 +397,11 @@ export function AdaptiveResultRenderer({ data, fetchSources, hideEvidenceBar, is
           { label: "references", value: data.references.length },
           { label: "depth", value: data.depth },
         ]}
-        directAnswer={data.bluf.body ?? data.bluf.headline}
+        directAnswer={
+          <ReactMarkdown remarkPlugins={[remarkGfm]} className="prose prose-sm max-w-none prose-p:my-1 prose-ul:my-1 prose-ul:list-disc prose-ul:pl-5 prose-li:my-0.5 prose-strong:font-bold">
+            {data.bluf.body ?? data.bluf.headline}
+          </ReactMarkdown>
+        }
         context={
           <>
             {data.bluf.key_points.length > 0 && (

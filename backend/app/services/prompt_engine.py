@@ -45,6 +45,16 @@ EVIDENCE-BASED CLAIMS:
 - Avoid speculative claims about off-label use without citing trial data or expert guidance.
 """
 
+FORMATTING_RULES = """
+FORMATTING RULES — write the `text` field of every content_item as Markdown:
+- Use bullet lists (`- `) when listing more than 2 items (doses, adverse effects, criteria).
+- Use **bold** for drug names, dose values, and red-flag warnings.
+- Use `>` blockquote for direct guideline excerpts.
+- Use sub-headings (`#### `) when a single content_item naturally contains multiple sub-topics.
+- Numbered lists (`1.`) only for stepwise procedures.
+- Keep paragraphs to 3 sentences or fewer. Break long prose into bullets.
+"""
+
 _SECTION_GUIDANCE: dict[str, str] = {
     "drug": (
         "Mechanism of Action · Indications · Dosing (all routes/regimens) · "
@@ -102,7 +112,7 @@ RESPOND WITH A SINGLE JSON OBJECT — no markdown fences, no prose outside the J
 {
   "bluf": {
     "headline": "One sentence directly answering the query",
-    "body": "2-4 sentence elaboration with the key clinical bottom line",
+    "body": "2-5 sentences directly answering the query. May use Markdown bullets (`- `) or **bold** when listing items or highlighting key values. Do NOT restate the headline.",
     "key_points": ["Actionable bullet 1", "Actionable bullet 2", "Actionable bullet 3"],
     "caveats": ["Safety or evidence caveat 1"]
   },
@@ -183,6 +193,46 @@ references MUST only list sources actually cited in content_items above. Do NOT 
 Keep text length 100–200 words per item.
 """
 
+# Static schema without any format placeholders — used as the caching-stable system prefix.
+_STATIC_SECTION_SCHEMA = """\
+
+RESPOND WITH A SINGLE JSON OBJECT — no markdown fences, no prose outside the JSON:
+{
+  "title": "<the section title stated in your instructions>",
+  "content_items": [
+    {
+      "text": "Evidence-based claim in GFM markdown. Use **bold** for key terms, tables for structured data, bullets for multi-part claims.",
+      "loe": "I | II | III | null",
+      "cor": "I | IIa | IIb | III-no-benefit | III-harm | null",
+      "source": "[SOURCE: label from the data block — MUST match exactly]",
+      "pmid": "12345678 or null"
+    }
+  ],
+  "references": [
+    {
+      "title": "Exact article or guideline title from the data block",
+      "source": "PubMed | NICE | FDA OpenFDA | MedlinePlus | Clinical Consensus | etc.",
+      "pmid": "12345678 or null",
+      "year": "2024 or null"
+    }
+  ]
+}
+
+EVERY content_item.source MUST cite a [SOURCE: ...] label from the fetched data block. Sources outside the block are FORBIDDEN.
+references MUST only list sources actually cited in content_items above. Do NOT invent references.
+Keep text length 100–200 words per item.
+"""
+
+# Byte-identical static prefix for all section agent calls — used for prompt cache hits.
+_STATIC_SECTION_SYSTEM = (
+    "You are a clinical reference assistant generating one section of a structured medical response.\n"
+    + APPROVED_SOURCES
+    + "\n"
+    + EVIDENCE_RULES
+    + FORMATTING_RULES
+    + _STATIC_SECTION_SCHEMA
+)
+
 
 def _format_drug_block(drug_result: Any) -> str:
     """Format a drug result object into a readable text block."""
@@ -217,12 +267,21 @@ def _format_drug_block(drug_result: Any) -> str:
 
 
 def _format_abstracts(abstracts: list[dict | str]) -> str:
-    """Format PubMed abstracts into a readable block."""
+    """Format PubMed abstracts into a readable block. Sorted by PMID for cache-key stability."""
+    def _sort_key(a: dict | str) -> str:
+        if isinstance(a, dict):
+            return str(a.get("pmid") or a.get("title") or "")
+        return str(a)
+
+    sorted_abstracts = sorted(abstracts, key=_sort_key)
     formatted = []
-    for a in abstracts:
+    for a in sorted_abstracts:
         if isinstance(a, dict):
             title = a.get("title", "No Title")
-            text = a.get("abstract", "") or ""
+            text = a.get("abstract", "")
+            if isinstance(text, (dict, list)):
+                text = str(text)
+            text = text or ""
             source = a.get("journal") or a.get("collective_name") or "PubMed"
             year = a.get("year", "n.d.")
             pmid = a.get("pmid", "")
@@ -456,6 +515,18 @@ def build_adaptive_messages(
     return system, data_block, user_text
 
 
+_STATIC_BLUF_SYSTEM = (
+    "You are a clinical reference assistant.\n"
+    + APPROVED_SOURCES
+    + "\n"
+    + EVIDENCE_RULES
+    + FORMATTING_RULES
+    + "Generate a concise BLUF (bottom-line up front) and a list of section titles "
+    + "that a comprehensive answer to this query should contain."
+    + _BLUF_ONLY_SCHEMA
+)
+
+
 def build_bluf_only_messages(
     query: str,
     query_type: str,
@@ -463,8 +534,8 @@ def build_bluf_only_messages(
     vector_results: "list[SearchResult] | None" = None,
     condition_context: "str | None" = None,
     comparative_is_drug: bool = False,
-) -> tuple[str, str, str]:
-    """Return (system, data_block, user_text) for the Phase-1 BLUF+titles call."""
+) -> tuple[str, str, str, str]:
+    """Return (static_system, dynamic_system, data_block, user_text) for the Phase-1 BLUF+titles call."""
     guidance_key = "comparative_drug" if (query_type == "comparative" and comparative_is_drug) else query_type
     section_guidance = _SECTION_GUIDANCE.get(guidance_key, _SECTION_GUIDANCE.get(query_type, ""))
 
@@ -475,20 +546,15 @@ def build_bluf_only_messages(
             f'"{condition_context}".\n\n'
         )
 
-    system = (
-        f"You are a clinical reference assistant.\n"
-        f"{APPROVED_SOURCES}\n"
-        f"{EVIDENCE_RULES}\n\n"
+    dynamic_system = (
         f"QUERY TYPE: {query_type}\n"
         f"REQUIRED SECTION AREAS: {section_guidance}\n"
         f"{condition_block}"
-        f"Generate a concise BLUF (bottom-line up front) and a list of section titles "
-        f"that a comprehensive answer to this query should contain."
-        + _BLUF_ONLY_SCHEMA
     )
+
     data_block = _build_adaptive_data_block(query_type, fetched_data, vector_results)
     user_text = f"Query: {query}"
-    return system, data_block, user_text
+    return _STATIC_BLUF_SYSTEM, dynamic_system, data_block, user_text
 
 
 def build_section_messages(
@@ -499,25 +565,39 @@ def build_section_messages(
     query_type: str,
     fetched_data: "FetchedData | None" = None,
     vector_results: "list[SearchResult] | None" = None,
-) -> tuple[str, str, str]:
-    """Return (system, data_block, user_text) for one Phase-2 section agent call."""
+) -> tuple[str, str, str, str]:
+    """Return (static_system, dynamic_system, data_block, user_text) for one Phase-2 section agent call."""
     other_titles = [t for t in all_section_titles if t != section_title]
     other_str = ", ".join(f'"{t}"' for t in other_titles) if other_titles else "none"
 
-    system = (
-        f"You are a clinical reference assistant generating one section of a structured medical response.\n"
-        f"{APPROVED_SOURCES}\n"
-        f"{EVIDENCE_RULES}\n\n"
+    dynamic_system = (
         f"QUERY TYPE: {query_type}\n"
         f"SECTION TO GENERATE: \"{section_title}\"\n"
         f"OTHER SECTIONS IN THIS RESPONSE (do NOT duplicate their content): {other_str}\n"
         f"ALIGNMENT — keep content consistent with this clinical summary: {bluf_text}\n\n"
         f"Generate ONLY the content for the section \"{section_title}\"."
-        + _SECTION_AGENT_SCHEMA.format(section_title=section_title)
     )
+
     data_block = _build_adaptive_data_block(query_type, fetched_data, vector_results)
     user_text = f"Query: {query}\nSection to generate: {section_title}"
-    return system, data_block, user_text
+    return _STATIC_SECTION_SYSTEM, dynamic_system, data_block, user_text
+
+
+_STATIC_COMPLEX_BLUF_SYSTEM = (
+    "You are a clinical reference assistant for complex multi-condition medical queries.\n"
+    + APPROVED_SOURCES
+    + "\n"
+    + EVIDENCE_RULES
+    + FORMATTING_RULES
+    + "HARD RULES — read carefully:\n"
+    "  1. EVERY claim must trace to a [SOURCE: ...] block in the user-provided data.\n"
+    "  2. NEVER write 'no evidence found', 'insufficient evidence', or any equivalent.\n"
+    "     If retrieved data is sparse for a comorbidity, write a SHORT BLUF that says\n"
+    "     'Limited to case reports / drug-class data — see Conflict section for details'\n"
+    "     and let the per-section agent expand.\n"
+    "  4. Output JSON only — schema below."
+    + _BLUF_ONLY_SCHEMA
+)
 
 
 def build_complex_bluf_messages(
@@ -527,15 +607,8 @@ def build_complex_bluf_messages(
     comorbidity_list: list[str],
     fetched_data: "FetchedData | None" = None,
     vector_results: "list[SearchResult] | None" = None,
-) -> tuple[str, str, str]:
-    """Phase-1 BLUF for complex multi-condition queries.
-
-    Returned section_titles MUST include exactly:
-        - "Baseline Rule for {drug} in {primary_disease}"
-        - one "Conflict with <c>" per comorbidity (capped to 4)
-        - "Synthesised Recommendation"
-        - "Monitoring & Red Flags"
-    """
+) -> tuple[str, str, str, str]:
+    """Phase-1 BLUF for complex multi-condition queries. Returns (static_system, dynamic_system, data_block, user_text)."""
     section_guidance = _SECTION_GUIDANCE["complex"]
     co_capped = (comorbidity_list or [])[:4]
     forced_titles = (
@@ -545,26 +618,35 @@ def build_complex_bluf_messages(
     )
     forced_block = "REQUIRED section_titles (return EXACTLY these, in this order): " + " | ".join(forced_titles)
 
-    system = (
-        f"You are a clinical reference assistant for complex multi-condition medical queries.\n"
-        f"{APPROVED_SOURCES}\n"
-        f"{EVIDENCE_RULES}\n\n"
+    dynamic_system = (
         f"QUERY TYPE: complex\n"
         f"REQUIRED SECTION AREAS: {section_guidance}\n"
         f"{forced_block}\n\n"
-        f"HARD RULES — read carefully:\n"
-        f"  1. EVERY claim must trace to a [SOURCE: ...] block in the user-provided data.\n"
-        f"  2. NEVER write 'no evidence found', 'insufficient evidence', or any equivalent.\n"
-        f"     If retrieved data is sparse for a comorbidity, write a SHORT BLUF that says\n"
-        f"     'Limited to case reports / drug-class data — see Conflict section for details'\n"
-        f"     and let the per-section agent expand.\n"
         f"  3. Comorbidities to address: {co_capped}.\n"
-        f"  4. Output JSON only — schema below."
-        + _BLUF_ONLY_SCHEMA
     )
     data_block = _build_adaptive_data_block("complex", fetched_data, vector_results)
     user_text = f"Query: {query}\nPrimary drug/intervention: {drug}\nPrimary disease: {primary_disease}\nComorbidities: {co_capped}"
-    return system, data_block, user_text
+    return _STATIC_COMPLEX_BLUF_SYSTEM, dynamic_system, data_block, user_text
+
+
+_STATIC_COMPLEX_SECTION_SYSTEM = (
+    "You are a clinical reference assistant generating ONE section of a complex multi-condition response.\n"
+    + APPROVED_SOURCES
+    + "\n"
+    + EVIDENCE_RULES
+    + FORMATTING_RULES
+    + "\nHARD RULES:\n"
+    "  1. EVERY content_item.source MUST match a [SOURCE: ...] label in the data block. "
+    "     Sources outside the data block are FORBIDDEN.\n"
+    "  2. content_item.confidence MUST be one of high|moderate|low, assigned based on SOURCE QUALITY:\n"
+    "     - 'high' for guideline/clinical practice standard sources\n"
+    "     - 'moderate' for RCTs, systematic reviews, meta-analyses\n"
+    "     - 'low' for case reports, observational studies, animal studies, extrapolation\n"
+    "  4. NEVER write 'no evidence' or 'insufficient evidence'. If fetched data is thin, cite the "
+    "     drug class entry (RxNorm) or generic FDA label warnings — never invent.\n"
+    "  5. Output JSON only."
+    + _STATIC_SECTION_SCHEMA
+)
 
 
 def build_complex_section_messages(
@@ -577,13 +659,12 @@ def build_complex_section_messages(
     comorbidity_list: list[str],
     fetched_data: "FetchedData | None" = None,
     vector_results: "list[SearchResult] | None" = None,
-) -> tuple[str, str, str]:
-    """Phase-2 section agent for complex queries. Each section MUST cite ≥1 source from fetched data."""
+) -> tuple[str, str, str, str]:
+    """Phase-2 section agent for complex queries. Returns (static_system, dynamic_system, data_block, user_text)."""
     other_titles = [t for t in all_section_titles if t != section_title]
     other_str = ", ".join(f'"{t}"' for t in other_titles) if other_titles else "none"
     tier = getattr(fetched_data, "evidence_tier", "unknown") if fetched_data else "unknown"
 
-    # Evidence tier is passed for context, but per-claim confidence is determined by source, not tier
     tier_description = {
         "guideline": "guidelines and clinical practice standards",
         "rct": "randomized controlled trials and systematic reviews",
@@ -593,37 +674,24 @@ def build_complex_section_messages(
         "unknown": "unverified sources",
     }.get(tier, "limited sources")
 
-    # If this is a per-comorbidity section, identify which comorbidity it covers.
     target_comorbidity = None
     for c in comorbidity_list or []:
         if c.lower() in section_title.lower():
             target_comorbidity = c
             break
 
-    system = (
-        f"You are a clinical reference assistant generating ONE section of a complex multi-condition response.\n"
-        f"{APPROVED_SOURCES}\n"
-        f"{EVIDENCE_RULES}\n\n"
+    dynamic_system = (
         f"QUERY TYPE: complex\n"
         f"SECTION TO GENERATE: \"{section_title}\"\n"
         f"OTHER SECTIONS (do NOT duplicate): {other_str}\n"
         f"ALIGNMENT — keep consistent with this BLUF: {bluf_text}\n"
         f"AVAILABLE EVIDENCE: {tier_description}\n"
         + (f"FOCUS COMORBIDITY: {target_comorbidity}\n" if target_comorbidity else "")
-        + f"\nHARD RULES:\n"
-        f"  1. EVERY content_item.source MUST match a [SOURCE: ...] label in the data block. "
-        f"     Sources outside the data block are FORBIDDEN.\n"
-        f"  2. content_item.confidence MUST be one of high|moderate|low, assigned based on SOURCE QUALITY:\n"
-        f"     - 'high' for guideline/clinical practice standard sources\n"
-        f"     - 'moderate' for RCTs, systematic reviews, meta-analyses\n"
-        f"     - 'low' for case reports, observational studies, animal studies, extrapolation\n"
-        f"  3. If evidence is from lower tiers (case_report/drug_class), note it in the text:\n"
-        f"     'Based on limited evidence from {tier.replace('_', ' ')}. Verify against local guidelines.'\n"
-        f"  4. NEVER write 'no evidence' or 'insufficient evidence'. If fetched data is thin, cite the "
-        f"     drug class entry (RxNorm) or generic FDA label warnings — never invent.\n"
-        f"  5. Output JSON only."
-        + _SECTION_AGENT_SCHEMA.format(section_title=section_title)
+        + (f"  3. If evidence is from lower tiers (case_report/drug_class), note it in the text:\n"
+           f"     'Based on limited evidence from {tier.replace('_', ' ')}. Verify against local guidelines.'\n"
+           if tier in ("case_report", "drug_class") else "")
     )
+
     data_block = _build_adaptive_data_block("complex", fetched_data, vector_results)
     user_text = f"Query: {query}\nSection to generate: {section_title}"
-    return system, data_block, user_text
+    return _STATIC_COMPLEX_SECTION_SYSTEM, dynamic_system, data_block, user_text

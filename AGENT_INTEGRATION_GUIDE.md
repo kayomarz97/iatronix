@@ -202,7 +202,22 @@ Then add it to the `asyncio.gather()` call in `data_fetcher.py`'s main fetch fun
 
 ### 6.3 Add a New LLM Provider
 
-In `llm_factory.py`, add a new branch to the provider switch. The factory returns an object with a `.complete(prompt, max_tokens)` interface. Follow the existing Anthropic/OpenAI pattern.
+**Step 1 — Register in the model registry (required):**
+Edit `backend/app/services/model_registry.py` and add one entry to `_REGISTRY`:
+```python
+"your-model-id": {"provider": "yourprovider", "display": "Your Model Name", "input": 0.50, "output": 1.00},
+```
+This automatically propagates pricing, display names, and frontend labels everywhere.
+
+**Step 2 — Add to the BYOK key column map (if adding a new provider type):**
+- Add `your_provider_api_key` column to `backend/app/models/user.py`
+- Add migration in `backend/app/main.py` lifespan startup (ALTER TABLE IF NOT EXISTS)
+- Add to `_PROVIDER_COLUMN_MAP` in `backend/app/api/v1/auth_routes.py`
+- Add to `_provider_col_map` in `backend/app/services/rag_pipeline.py` LLM key resolution
+
+**Step 3 — Add to `llm_factory.py`:** add a new branch to the provider switch. The factory returns an object with a `.complete(prompt, max_tokens)` interface. Follow the existing Anthropic/OpenAI pattern.
+
+**No frontend changes needed** — the engine toggle reads provider list from `GET /api/v1/config/llm`, which is built from `model_registry.py`. The new provider appears automatically.
 
 ### 6.5 OpenRouter OAuth + ChatService (added 2026-04)
 
