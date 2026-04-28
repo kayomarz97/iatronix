@@ -552,15 +552,15 @@ def build_complex_section_messages(
     other_str = ", ".join(f'"{t}"' for t in other_titles) if other_titles else "none"
     tier = getattr(fetched_data, "evidence_tier", "unknown") if fetched_data else "unknown"
 
-    # Confidence floor by cascade tier — passed into the prompt as a hint.
-    confidence_hint = {
-        "guideline": "high",
-        "rct": "high",
-        "review": "moderate",
-        "case_report": "low",
-        "drug_class": "low",
-        "unknown": "low",
-    }.get(tier, "low")
+    # Evidence tier is passed for context, but per-claim confidence is determined by source, not tier
+    tier_description = {
+        "guideline": "guidelines and clinical practice standards",
+        "rct": "randomized controlled trials and systematic reviews",
+        "review": "systematic reviews and meta-analyses",
+        "case_report": "case reports and observational studies",
+        "drug_class": "drug class data (RxNorm, FDA labels)",
+        "unknown": "unverified sources",
+    }.get(tier, "limited sources")
 
     # If this is a per-comorbidity section, identify which comorbidity it covers.
     target_comorbidity = None
@@ -577,17 +577,19 @@ def build_complex_section_messages(
         f"SECTION TO GENERATE: \"{section_title}\"\n"
         f"OTHER SECTIONS (do NOT duplicate): {other_str}\n"
         f"ALIGNMENT — keep consistent with this BLUF: {bluf_text}\n"
-        f"CASCADE EVIDENCE TIER: {tier} (confidence floor for this section: {confidence_hint})\n"
+        f"AVAILABLE EVIDENCE: {tier_description}\n"
         + (f"FOCUS COMORBIDITY: {target_comorbidity}\n" if target_comorbidity else "")
         + f"\nHARD RULES:\n"
         f"  1. EVERY content_item.source MUST match a [SOURCE: ...] label in the data block. "
         f"     Sources outside the data block are FORBIDDEN.\n"
-        f"  2. content_item.confidence MUST be one of high|moderate|low and MUST NOT exceed '{confidence_hint}' "
-        f"     unless the specific claim cites a guideline source.\n"
-        f"  3. If the cascade tier is case_report or drug_class, START the section text with: "
-        f"     'Evidence is limited — based on {tier.replace('_', ' ')}. Verify against local guidelines.'\n"
-        f"  4. NEVER write 'no evidence' or 'insufficient evidence'. If the fetched data on this "
-        f"     comorbidity is thin, cite the drug class entry (RxNorm) or generic FDA label warnings — never invent.\n"
+        f"  2. content_item.confidence MUST be one of high|moderate|low, assigned based on SOURCE QUALITY:\n"
+        f"     - 'high' for guideline/clinical practice standard sources\n"
+        f"     - 'moderate' for RCTs, systematic reviews, meta-analyses\n"
+        f"     - 'low' for case reports, observational studies, animal studies, extrapolation\n"
+        f"  3. If evidence is from lower tiers (case_report/drug_class), note it in the text:\n"
+        f"     'Based on limited evidence from {tier.replace('_', ' ')}. Verify against local guidelines.'\n"
+        f"  4. NEVER write 'no evidence' or 'insufficient evidence'. If fetched data is thin, cite the "
+        f"     drug class entry (RxNorm) or generic FDA label warnings — never invent.\n"
         f"  5. Output JSON only."
         + _SECTION_AGENT_SCHEMA.format(section_title=section_title)
     )

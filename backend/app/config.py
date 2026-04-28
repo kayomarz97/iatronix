@@ -83,7 +83,7 @@ class Settings(BaseSettings):
     proxy_timeout_seconds: int = 130
 
     # Cache TTL (seconds)
-    cache_ttl_structured: int = 2592000  # 30 days
+    cache_ttl_structured: int = 604800  # 7 days (reduced from 30 for medical data freshness)
     cache_ttl_general: int = 86400  # 24 hours
 
     # Circuit breaker

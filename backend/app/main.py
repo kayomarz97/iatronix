@@ -71,6 +71,13 @@ async def lifespan(app: FastAPI):
     # Log queue
     await init_log_queue()
 
+    # NICE API key warning (UK/EU guidelines require API key for best results)
+    if not settings.nice_api_key:
+        logger.warning(
+            "NICE_API_KEY not set — UK/EU clinical guidelines will have reduced coverage. "
+            "Set NICE_API_KEY in .env to enable full guideline data."
+        )
+
     # Expired document cleanup task
     async def _cleanup_expired_documents():
         """Background task: delete expired non-approved documents every N minutes."""

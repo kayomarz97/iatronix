@@ -254,6 +254,7 @@ class QueryRequest(BaseModel):
         False  # True when user explicitly chose a model (not just default)
     )
     source_mode: Literal["ai", "scraping", "pdfs"] = "ai"
+    force_refresh: bool = False  # Force bypass all cache layers
 
 
 class ModelCost(BaseModel):
@@ -284,6 +285,7 @@ class QueryResponse(BaseModel):
     validation_warnings: list[str] = []
     disclaimer: str = ""
     cached: bool = False
+    cached_at: Optional[str] = None
     truncated: bool = False
     latency_ms: int = 0
     recommendation_level: Optional[str] = None
