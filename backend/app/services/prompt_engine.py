@@ -216,9 +216,21 @@ def _format_drug_block(drug_result: Any) -> str:
     return "\n".join(lines)
 
 
-def _format_abstracts(abstracts: list[str]) -> str:
+def _format_abstracts(abstracts: list[dict | str]) -> str:
     """Format PubMed abstracts into a readable block."""
-    return "\n\n".join(abstracts)
+    formatted = []
+    for a in abstracts:
+        if isinstance(a, dict):
+            title = a.get("title", "No Title")
+            text = a.get("abstract", "") or ""
+            source = a.get("journal") or a.get("collective_name") or "PubMed"
+            year = a.get("year", "n.d.")
+            pmid = a.get("pmid", "")
+            label = f"[SOURCE: {title}]"
+            formatted.append(f"{label}\nTitle: {title}\nSource: {source} ({year})\nPMID: {pmid}\nAbstract: {text}")
+        else:
+            formatted.append(str(a))
+    return "\n\n".join(formatted)
 
 
 def _format_nice_recs(recs: list[dict]) -> str:
