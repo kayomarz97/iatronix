@@ -529,14 +529,14 @@ export default function SettingsPage() {
       <section className="space-y-3">
         <h2 className="text-lg font-semibold">Cerebras API Key (BYOK)</h2>
         <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
-          Default AI provider. Uses Llama 3.1 8B — fast, accurate, and ~6× cheaper than Claude for most queries. Your key is encrypted — never stored in plaintext server-side.
+          Default AI provider. Uses GPT-OSS 120B — state-of-the-art open source reasoning, fast, and highly accurate for complex medical queries. Your key is encrypted — never stored in plaintext server-side.
         </p>
 
         {llmStatus && (
           <div className="p-3 rounded-md text-sm" style={{ background: "var(--bg-elevated)", border: "1px solid var(--border)" }}>
             <span className="font-medium">Current: </span>
             {llmStatus.provider === "cerebras" && llmStatus.is_set ? (
-              <span style={{ color: "var(--success)" }}>Cerebras key active · llama3.1-8b</span>
+              <span style={{ color: "var(--success)" }}>Cerebras key active · gpt-oss-120b</span>
             ) : (
               <span style={{ color: "var(--text-muted)" }}>No key set</span>
             )}
@@ -642,7 +642,7 @@ export default function SettingsPage() {
               )}
             </div>
             {openrouterMessage && (
-              <p className="text-sm" style={{ color: openrouterMessage.includes("disconnected") ? "var(--success)" : "var(--danger)" }}>
+              <p className="text-sm" style={{ color: openrouterMessage?.includes("disconnected") ? "var(--success)" : "var(--danger)" }}>
                 {openrouterMessage}
               </p>
             )}

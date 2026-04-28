@@ -134,7 +134,7 @@ class Settings(BaseSettings):
     # Paid tier llama3.1-8b: 32,768 context, 2,000 req/min, 2M tokens/min
     # To change model if Cerebras updates: set CEREBRAS_DEFAULT_MODEL env var only
     cerebras_api_base: str = "https://api.cerebras.ai/v1"
-    cerebras_default_model: str = "llama3.1-8b"    # ← one-line change if Cerebras changes model
+    cerebras_default_model: str = "gpt-oss-120b"    # ← one-line change if Cerebras changes model
     # NOTE: No special token caps — paid tier 32,768 context fits full pipeline unchanged
     # Future free-tier toggle will add: cerebras_free_max_output: int = 2048
     #                                    cerebras_free_max_context_chars: int = 18000
