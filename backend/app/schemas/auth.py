@@ -80,7 +80,7 @@ class UserProfileResponse(BaseModel):
 
 
 class LlmKeyRequest(BaseModel):
-    provider: str  # 'anthropic', 'openai', or 'openrouter'
+    provider: str  # 'anthropic', 'openai', 'openrouter', or 'cerebras'
     key: str
 
 

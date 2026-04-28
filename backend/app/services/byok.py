@@ -23,6 +23,7 @@ _KEY_PATTERNS = {
     "anthropic": re.compile(r"^.+$"),
     "openai": re.compile(r"^.+$"),
     "openrouter": re.compile(r"^.+$"),
+    "cerebras": re.compile(r"^.+$"),
 }
 
 
@@ -86,7 +87,7 @@ async def validate_user_key(key: str, provider: str) -> dict:
     try:
         if provider == "anthropic":
             return await _validate_anthropic_key(key)
-        elif provider in ("openai", "openrouter"):
+        elif provider in ("openai", "openrouter", "cerebras"):
             return await _validate_openai_key(key, provider)
         else:
             return {
@@ -164,6 +165,8 @@ async def _validate_openai_key(key: str, provider: str) -> dict:
     try:
         if provider == "openrouter":
             base_url = "https://openrouter.ai/api/v1"
+        elif provider == "cerebras":
+            base_url = "https://api.cerebras.ai/v1"
         else:
             base_url = "https://api.openai.com/v1"
 
