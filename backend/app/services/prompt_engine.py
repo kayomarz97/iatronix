@@ -111,7 +111,7 @@ _BLUF_ONLY_SCHEMA = """\
 RESPOND WITH A SINGLE JSON OBJECT — no markdown fences, no prose outside the JSON:
 {
   "bluf": {
-    "headline": "One sentence directly answering the query",
+    "headline": "One sentence that names the specific topic/drug/condition being asked about AND directly answers the question. Format: '[Topic] — [Answer]'. Example: 'Metformin in Type 2 Diabetes — first-line agent that lowers HbA1c by ~1–1.5% with cardiovascular benefit and low hypoglycemia risk.'",
     "body": "2-5 sentences directly answering the query. May use Markdown bullets (`- `) or **bold** when listing items or highlighting key values. Do NOT restate the headline.",
     "key_points": ["Actionable bullet 1", "Actionable bullet 2", "Actionable bullet 3"],
     "caveats": ["Safety or evidence caveat 1"]
@@ -189,6 +189,7 @@ RESPOND WITH A SINGLE JSON OBJECT — no markdown fences, no prose outside the J
 }}
 
 EVERY content_item.source MUST cite a [SOURCE: ...] label from the fetched data block. Sources outside the block are FORBIDDEN.
+If loe and cor are both null (evidence not gradeable), source is EVEN MORE critical — it is the only attribution the reader has. Never leave source null or empty.
 references: List ALL sources from the data block that informed this section. Include a reference for every [SOURCE: ...] label cited in content_items. If fetched data was provided, there MUST be at least 1 reference. Only omit if the data block contained no relevant entries for this section.
 Keep text length 100–200 words per item.
 """
@@ -219,6 +220,7 @@ RESPOND WITH A SINGLE JSON OBJECT — no markdown fences, no prose outside the J
 }
 
 EVERY content_item.source MUST cite a [SOURCE: ...] label from the fetched data block. Sources outside the block are FORBIDDEN.
+If loe and cor are both null (evidence not gradeable), source is EVEN MORE critical — it is the only attribution the reader has. Never leave source null or empty.
 references: List ALL sources from the data block that informed this section. Include a reference for every [SOURCE: ...] label cited in content_items. If fetched data was provided, there MUST be at least 1 reference. Only omit if the data block contained no relevant entries for this section.
 Keep text length 100–200 words per item.
 """
