@@ -101,8 +101,9 @@ def validate_citations(response_data: dict, query_type: str, fetched_data=None, 
 
         if not source:
             missing_citation_count += 1
+            claim_text = claim.get("value") or claim.get("text") or ""
             warnings.append(
-                f"Missing citation for claim: '{_truncate(claim.get('value', ''))}'"
+                f"Missing citation for claim: '{_truncate(claim_text)}'"
             )
             continue
 
@@ -164,26 +165,26 @@ def validate_citations(response_data: dict, query_type: str, fetched_data=None, 
             if pmid and str(pmid) not in valid_pmids:
                 warnings.append(f"Removed hallucinated reference with unverified PMID: {pmid}")
                 continue
-                
+
         url = ref.get("url")
-        if url is None:
-            continue
-        if not url.startswith("https://"):
-            ref["url"] = None
-            warnings.append(
-                f"Reference URL uses non-HTTPS scheme (insecure) — removed: '{url[:80]}'"
-            )
-        elif not is_safe_url(url):
-            try:
-                domain = urlparse(url).netloc
-            except Exception:
-                domain = url[:40]
-            ref["url"] = None
-            warnings.append(
-                f"Reference URL domain not in approved list — removed: '{domain}'"
-            )
+        if url is not None:
+            if not url.startswith("https://"):
+                ref["url"] = None
+                warnings.append(
+                    f"Reference URL uses non-HTTPS scheme (insecure) — removed: '{url[:80]}'"
+                )
+            elif not is_safe_url(url):
+                try:
+                    domain = urlparse(url).netloc
+                except Exception:
+                    domain = url[:40]
+                ref["url"] = None
+                warnings.append(
+                    f"Reference URL domain not in approved list — removed: '{domain}'"
+                )
+        # url=None is fine — frontend builds PubMed link from PMID when url is absent.
         valid_refs.append(ref)
-        
+
     response_data["references"] = valid_refs
 
     return warnings
@@ -195,7 +196,14 @@ def _extract_claims(data: dict, query_type: str) -> list[dict]:
 
     def _walk(obj):
         if isinstance(obj, dict):
-            if "loe" in obj and "value" in obj:
+            is_value_claim = ("value" in obj) and (
+                "loe" in obj or "source" in obj or "confidence" in obj
+            )
+            # Adaptive schema uses content_items[].text instead of value.
+            is_adaptive_claim = ("text" in obj) and any(
+                k in obj for k in ("source", "loe", "cor", "pmid")
+            )
+            if is_value_claim or is_adaptive_claim:
                 claims.append(obj)
             elif "evidence" in obj and isinstance(obj["evidence"], dict):
                 claims.append(obj["evidence"])

@@ -18,35 +18,53 @@ def _fernet() -> Fernet:
     return Fernet(key)
 
 class ServiceKeyIn(BaseModel):
-    service: str  # e.g. "ncbi", "europe_pmc", "openfda"
-    api_key: str
+    # Canonical shape
+    service: Optional[str] = None  # e.g. "ncbi", "europe_pmc", "openfda"
+    api_key: Optional[str] = None
+    # Backward-compatible aliases (kept for one release)
+    service_name: Optional[str] = None
+    key_value: Optional[str] = None
 
 class ServiceKeyOut(BaseModel):
     id: int
     service_name: str
 
+
+def _resolve_payload(body: ServiceKeyIn) -> tuple[str, str]:
+    service = (body.service or body.service_name or "").strip()
+    api_key = (body.api_key or body.key_value or "").strip()
+    if not service:
+        raise HTTPException(status_code=422, detail="Missing service name")
+    if not api_key:
+        raise HTTPException(status_code=422, detail="Missing API key")
+    return service, api_key
+
+
 @router.post("/service_keys", response_model=ServiceKeyOut, status_code=201)
+@router.post("/service-keys", response_model=ServiceKeyOut, status_code=201)
 async def upsert_service_key(body: ServiceKeyIn, request: Request):
     user = getattr(request.state, "user", None)
     if not user:
         raise HTTPException(status_code=401, detail="Authentication required")
+    service, api_key = _resolve_payload(body)
     f = _fernet()
-    encrypted = f.encrypt(body.api_key.encode()).decode()
+    encrypted = f.encrypt(api_key.encode()).decode()
     async with async_session() as session:
         # Upsert: delete existing for this service then insert
         await session.execute(
             delete(ServiceKey).where(
                 ServiceKey.user_id == user.id,
-                ServiceKey.service_name == body.service,
+                ServiceKey.service_name == service,
             )
         )
-        sk = ServiceKey(user_id=user.id, service_name=body.service, encrypted_key=encrypted)
+        sk = ServiceKey(user_id=user.id, service_name=service, encrypted_key=encrypted)
         session.add(sk)
         await session.commit()
         await session.refresh(sk)
     return ServiceKeyOut(id=sk.id, service_name=sk.service_name)
 
 @router.get("/service_keys", response_model=list[ServiceKeyOut])
+@router.get("/service-keys", response_model=list[ServiceKeyOut])
 async def list_service_keys(request: Request):
     user = getattr(request.state, "user", None)
     if not user:
@@ -59,6 +77,7 @@ async def list_service_keys(request: Request):
     return [ServiceKeyOut(id=k.id, service_name=k.service_name) for k in keys]
 
 @router.delete("/service_keys/{service_name}", status_code=204)
+@router.delete("/service-keys/{service_name}", status_code=204)
 async def delete_service_key(service_name: str, request: Request):
     user = getattr(request.state, "user", None)
     if not user:

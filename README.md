@@ -10,7 +10,7 @@ Evidence-based medical reference for clinical professionals. Search real-time da
 
 You type a clinical question. Iatronix fetches live data from 8+ authoritative sources in parallel, scores it for evidence quality, then uses your LLM key to format the result into structured sections with Level of Evidence (LOE I–III) and Class of Recommendation (COR I–IIb) on every claim.
 
-No static knowledge base. No training data answers. Every response is grounded in data retrieved at query time.
+No static knowledge base. Responses are grounded in data retrieved at query time whenever retrieval succeeds. If external fetch times out, the system can fall back to an explicit low-confidence model-generated response.
 
 ---
 
@@ -30,7 +30,7 @@ Query
   ├─ 3. Semantic cache lookup
   │     Query embedded → cosine similarity against past answers (threshold: 0.92)
   │     Hit + fresh → return immediately
-  │     Hit + stale → return immediately + revalidate in background (SWR)
+  │     Hit + stale → bypass cache and run fresh pipeline (medical-safety first)
   │     Miss → continue pipeline
   │
   ├─ 4. Parallel data fetch (zero LLM tokens here)
@@ -45,7 +45,7 @@ Query
   │     "Not enough data" is always safer than a confident hallucination
   │
   ├─ 6. Adaptive LLM formatting
-  │     LLM receives only the fetched evidence — not its training knowledge
+  │     LLM is prompted to use fetched evidence first; if fetch timed out, fallback generation is allowed with warnings
   │     Prompt: fill schema fields, cite sources by index, no invented data
   │     Model routing: Haiku for drug/procedure, Sonnet for disease (higher depth)
   │     Token budget scales per query type (2048–8192 tokens)
@@ -64,7 +64,7 @@ Query
 Five mechanisms prevent the LLM from inventing clinical facts:
 
 **1. Evidence grounding**
-The LLM receives only the retrieved article text. The prompt explicitly prohibits using training knowledge. Every claim must cite a source index.
+The LLM is instructed to ground claims in retrieved evidence and cite source indices. If retrieval times out, fallback generation is allowed but clearly flagged for manual verification.
 
 **2. Fail-closed design**
 If retrieved evidence is insufficient, the pipeline stops and returns a `DegradedResponse` explaining what was found. Generation does not proceed.
@@ -87,7 +87,7 @@ PubMed is searched with standardized MeSH-matched terms, not freeform prose. Dat
 | Frontend | Next.js 14 (App Router), TypeScript, Tailwind CSS |
 | Backend | FastAPI (Python), async throughout |
 | Database | PostgreSQL + pgvector (semantic cache, user data, PDF chunks) |
-| Cache | Redis (24h exact-match cache) + pgvector (7-day semantic SWR cache) |
+| Cache | Redis (24h exact-match cache) + pgvector (7-day semantic cache freshness window) |
 | LLM | BYOK — user's own Anthropic / OpenAI / OpenRouter key |
 | Embeddings | Voyage AI (Anthropic users), OpenAI text-embedding-3-small, Google |
 | Auth | Firebase Auth |
@@ -127,7 +127,7 @@ This means:
 Cache hits return in ~200ms. The pipeline uses two cache layers:
 
 - **Redis** — 24h exact-match cache on normalized query strings
-- **pgvector semantic cache** — cosine similarity >= 0.92 against all past queries. Stale-while-revalidate: entries older than 7 days trigger a background pipeline run while the cached response is returned immediately.
+- **pgvector semantic cache** — cosine similarity >= 0.92 against all past queries. Entries older than 7 days are treated as stale and skipped; the pipeline runs fresh retrieval/generation instead of returning stale medical content.
 
 The `last_verified_at` timestamp from the DB row is used for staleness checks — not a field from the JSON payload, which would always be `None` after deserialization.
 
@@ -163,7 +163,7 @@ Give the model structured evidence and a schema to fill, and it produces clean, 
 
 ### Cache design has a correctness problem, not just a performance one
 
-Semantic caching at 0.92 cosine similarity means "scabies management" and "scabies treatment guidelines" return the same cached response — usually correct. But a cache hit from 10 days ago may miss a guideline update. The SWR pattern solves latency. The harder unsolved problem is knowing when a fresh result is meaningfully different from the cached version without reading both.
+Semantic caching at 0.92 cosine similarity means "scabies management" and "scabies treatment guidelines" can map to the same cached response — usually correct. But old cache can miss guideline updates. Current behavior skips stale semantic hits and runs a fresh pipeline; the harder unsolved problem is detecting meaningful guideline deltas automatically.
 
 ---
 

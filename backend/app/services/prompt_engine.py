@@ -237,34 +237,92 @@ _STATIC_SECTION_SYSTEM = (
 
 
 def _format_drug_block(drug_result: Any) -> str:
-    """Format a drug result object into a readable text block."""
-    lines = []
-    if drug_result.drug_name:
-        lines.append(f"Drug: {drug_result.drug_name}")
-    if drug_result.drug_class:
-        lines.append(f"Class: {drug_result.drug_class}")
-    if drug_result.mechanism_of_action and hasattr(drug_result.mechanism_of_action, "value"):
-        lines.append(f"Mechanism: {drug_result.mechanism_of_action.value}")
-    if drug_result.indications:
+    """Format a drug result object into a readable text block.
+
+    Supports both legacy response objects and current DrugFetchResult shapes.
+    """
+    lines: list[str] = []
+
+    drug_name = (
+        getattr(drug_result, "drug_name", None)
+        or getattr(drug_result, "generic_name", None)
+        or getattr(drug_result, "brand_name", None)
+    )
+    if drug_name:
+        lines.append(f"Drug: {drug_name}")
+
+    drug_class = getattr(drug_result, "drug_class", None)
+    if drug_class:
+        lines.append(f"Class: {drug_class}")
+
+    mechanism = None
+    mechanism_obj = getattr(drug_result, "mechanism_of_action", None)
+    if mechanism_obj is not None and hasattr(mechanism_obj, "value"):
+        mechanism = mechanism_obj.value
+    mechanism = mechanism or getattr(drug_result, "mechanism_raw", None)
+    if mechanism:
+        lines.append(f"Mechanism: {mechanism}")
+
+    indications = getattr(drug_result, "indications", None)
+    if indications:
         lines.append("Indications:")
-        for ind in drug_result.indications[:3]:
-            lines.append(f"  - {ind.value}")
-    if drug_result.dosing:
+        for ind in indications[:3]:
+            value = getattr(ind, "value", None) or str(ind)
+            if value:
+                lines.append(f"  - {value}")
+    else:
+        indications_raw = getattr(drug_result, "indications_raw", None)
+        if indications_raw:
+            lines.append(f"Indications: {indications_raw}")
+
+    dosing = getattr(drug_result, "dosing", None)
+    if dosing:
         lines.append("Dosing:")
-        for dose in drug_result.dosing[:3]:
-            lines.append(f"  - {dose.value}")
-    if drug_result.contraindications:
+        for dose in dosing[:3]:
+            value = getattr(dose, "value", None) or str(dose)
+            if value:
+                lines.append(f"  - {value}")
+    else:
+        dosing_raw = getattr(drug_result, "dosing_raw", None)
+        if dosing_raw:
+            lines.append(f"Dosing: {dosing_raw}")
+
+    contraindications = getattr(drug_result, "contraindications", None)
+    if contraindications:
         lines.append("Contraindications:")
-        for contra in drug_result.contraindications[:2]:
-            lines.append(f"  - {contra.value}")
-    if drug_result.side_effects:
+        for contra in contraindications[:2]:
+            value = getattr(contra, "value", None) or str(contra)
+            if value:
+                lines.append(f"  - {value}")
+    else:
+        contraindications_raw = getattr(drug_result, "contraindications_raw", None)
+        if contraindications_raw:
+            lines.append(f"Contraindications: {contraindications_raw}")
+
+    side_effects = getattr(drug_result, "side_effects", None)
+    if side_effects:
         lines.append("Side Effects:")
-        for se in drug_result.side_effects[:4]:
-            lines.append(f"  - {se.value}")
-    if drug_result.interactions:
+        for se in side_effects[:4]:
+            value = getattr(se, "value", None) or str(se)
+            if value:
+                lines.append(f"  - {value}")
+    else:
+        adverse_raw = getattr(drug_result, "adverse_reactions_raw", None)
+        if adverse_raw:
+            lines.append(f"Adverse reactions: {adverse_raw}")
+
+    interactions = getattr(drug_result, "interactions", None)
+    if interactions:
         lines.append("Interactions:")
-        for inter in drug_result.interactions[:3]:
-            lines.append(f"  - {inter.drug}: {inter.description}")
+        for inter in interactions[:3]:
+            drug = getattr(inter, "drug", None) or "Drug"
+            description = getattr(inter, "description", None) or str(inter)
+            lines.append(f"  - {drug}: {description}")
+    else:
+        interactions_raw = getattr(drug_result, "drug_interactions_raw", None)
+        if interactions_raw:
+            lines.append(f"Interactions: {interactions_raw}")
+
     return "\n".join(lines)
 
 
@@ -442,18 +500,23 @@ def _build_adaptive_data_block(
                 parts.append("=== DRUG DATA (FDA/RxNorm) ===\n" + _format_drug_block(fetched_data.drug_data))
             if fetched_data.condition_data and fetched_data.condition_data.fetch_success:
                 cd = fetched_data.condition_data
-                if hasattr(cd, "guideline_abstracts") and cd.guideline_abstracts:
+                if getattr(cd, "guideline_abstracts", None):
+                    primary_name = getattr(cd, "disease_name", None) or "Primary disease"
                     parts.append(
-                        f"=== PRIMARY DISEASE GUIDELINES — {cd.disease_name} ===\n"
+                        f"=== PRIMARY DISEASE GUIDELINES — {primary_name} ===\n"
                         + _format_abstracts(cd.guideline_abstracts[:3])
                     )
             if getattr(fetched_data, "comorbidity_data", None):
                 for cd in fetched_data.comorbidity_data:
                     if cd and cd.fetch_success:
+                        comorbidity_name = getattr(cd, "disease_name", None) or "Comorbidity"
+                        summary = (getattr(cd, "guideline_summary", None) or "").strip()
+                        abstracts = getattr(cd, "guideline_abstracts", None) or []
+                        abstract_block = _format_abstracts(abstracts[:3]) if abstracts else ""
+                        combined = "\n\n".join(x for x in (summary, abstract_block) if x)
                         parts.append(
-                            f"[SOURCE: COMORBIDITY GUIDELINES — {cd.disease_name}]\n"
-                            + (cd.guideline_summary or "")
-                            + ("\n\n" + "\n\n".join(cd.guideline_abstracts[:3]) if cd.guideline_abstracts else "")
+                            f"[SOURCE: COMORBIDITY GUIDELINES — {comorbidity_name}]\n"
+                            + (combined or "No comorbidity guideline abstract available.")
                         )
             # Evidence tier hint for the LLM to set confidence appropriately
             tier = getattr(fetched_data, "evidence_tier", None)

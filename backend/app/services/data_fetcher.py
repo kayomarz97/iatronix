@@ -265,7 +265,9 @@ class DrugFetchResult:
 
 @dataclass
 class DiseaseFetchResult:
+    disease_name: Optional[str] = None
     guideline_abstracts: list = field(default_factory=list)
+    guideline_summary: Optional[str] = None
     systematic_review_abstracts: list = field(default_factory=list)
     nice_recommendations: list = field(default_factory=list)
     medlineplus_summary: Optional[str] = None
@@ -1064,7 +1066,10 @@ async def _fetch_pubmed_classification(client: httpx.AsyncClient, entity: str) -
 
     Returns: (articles, sources_used)
     """
-    term = f"{entity} classification[Title/Abstract] AND 2010:2026[dp]"
+    from datetime import datetime
+
+    current_year = datetime.now().year
+    term = f"{entity} classification[Title/Abstract] AND 2010:{current_year}[dp]"
     ids = await _pubmed_esearch_throttled(client, term, 4)
     articles, sources = await _pubmed_efetch(client, ids)
     return articles, sources
@@ -2028,7 +2033,7 @@ async def fetch_disease_data(disease_name: str, *, extra_pubmed_terms: list[str]
     (Phase 1), then batches all PMIDs into a single efetch call (Phase 2).
     This cuts 3 sequential efetch calls down to 1.
     """
-    result = DiseaseFetchResult()
+    result = DiseaseFetchResult(disease_name=disease_name)
 
     from datetime import datetime as _dt
     cur_year = _dt.now().year
@@ -2138,6 +2143,14 @@ async def fetch_disease_data(disease_name: str, *, extra_pubmed_terms: list[str]
 
         result.guideline_abstracts = _cap_abstracts(guideline_abstracts, 12000)
         result.systematic_review_abstracts = _cap_abstracts(review_abstracts, 7000)
+        if result.guideline_abstracts:
+            guideline_titles = [
+                str(a.get("title", "")).strip()
+                for a in result.guideline_abstracts[:3]
+                if isinstance(a, dict) and str(a.get("title", "")).strip()
+            ]
+            if guideline_titles:
+                result.guideline_summary = "\n".join(f"- {title}" for title in guideline_titles)
         if result.guideline_abstracts or result.systematic_review_abstracts:
             if "PubMed" not in result.data_sources:
                 result.data_sources.append("PubMed")
@@ -2278,10 +2291,13 @@ async def _fetch_pubmed_procedure_guidelines(
 
     Returns: (articles, sources_used)
     """
+    from datetime import datetime
+
+    current_year = datetime.now().year
     term = (
         f"{entity}[Title/Abstract] AND "
         "(Practice Guideline[pt] OR Consensus Development Conference[pt]) "
-        "AND 2015:2025[dp]"
+        f"AND 2015:{current_year}[dp]"
     )
     ids = await _pubmed_esearch_throttled(client, term, 5)
     articles, sources = await _pubmed_efetch(client, ids)
@@ -2375,16 +2391,18 @@ async def fetch_evidence_data(query: str, *, extra_pubmed_terms: list[str] | Non
     Speed optimization: parallel esearch → single batch efetch.
     """
     result = EvidenceFetchResult()
+    import datetime as _dt
+    current_year = _dt.datetime.now().year
 
     trial_term = (
         f"{query}[Title/Abstract] AND "
         "(Clinical Trial[pt] OR Randomized Controlled Trial[pt]) "
-        "AND 2010:2026[dp]"
+        f"AND 2010:{current_year}[dp]"
     )
-    review_term = f"{query}[Title/Abstract] AND (Systematic Review[pt] OR Meta-Analysis[pt]) AND 2010:2026[dp]"
-    guideline_term = f"{query}[Title/Abstract] AND (Practice Guideline[pt] OR Guideline[pt]) AND 2010:2026[dp]"
+    review_term = f"{query}[Title/Abstract] AND (Systematic Review[pt] OR Meta-Analysis[pt]) AND 2010:{current_year}[dp]"
+    guideline_term = f"{query}[Title/Abstract] AND (Practice Guideline[pt] OR Guideline[pt]) AND 2010:{current_year}[dp]"
     broad_evidence_term = (
-        f"{query}[Title/Abstract] AND (guideline OR review OR trial OR consensus OR recommendation) AND 2010:2026[dp]"
+        f"{query}[Title/Abstract] AND (guideline OR review OR trial OR consensus OR recommendation) AND 2010:{current_year}[dp]"
     )
 
     async with _make_client() as client:
@@ -2398,9 +2416,7 @@ async def fetch_evidence_data(query: str, *, extra_pubmed_terms: list[str] | Non
 
         # LLM-expanded MeSH terms — additive on top of hardcoded searches above
         if extra_pubmed_terms:
-            import datetime as _dt
-            _cur_year = _dt.datetime.now().year
-            _date_suffix = f" AND 2010:{_cur_year}[dp]"
+            _date_suffix = f" AND 2010:{current_year}[dp]"
             for _t in extra_pubmed_terms[:3]:  # cap at 3 extra terms per call
                 if _t and len(_t) > 10 and "[dp]" not in _t:  # skip empty/malformed/already-dated
                     _tasks.append(
@@ -2474,10 +2490,13 @@ async def _fetch_pubmed_clinical_trials(client: httpx.AsyncClient, query: str) -
 
     Returns: (articles, sources_used)
     """
+    from datetime import datetime
+
+    current_year = datetime.now().year
     term = (
         f"{query}[Title/Abstract] AND "
         "(Clinical Trial[pt] OR Randomized Controlled Trial[pt]) "
-        "AND 2010:2026[dp]"
+        f"AND 2010:{current_year}[dp]"
     )
     ids = await _pubmed_esearch_throttled(client, term, 8)
     articles, sources = await _pubmed_efetch(client, ids)

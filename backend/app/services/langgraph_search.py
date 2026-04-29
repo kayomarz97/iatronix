@@ -100,6 +100,9 @@ async def semantic_cache_node(state: SearchState) -> dict:
             state["original_query"],
             state["query_type"],
             state["normalized_model"],
+            provider=state.get("user_llm_provider"),
+            api_key=state.get("user_llm_key"),
+            voyage_api_key=state.get("user_voyage_key"),
         )
         return {"sem_result": result}
     except Exception as exc:
