@@ -101,14 +101,15 @@ function normalizeMd(text: string): string {
 }
 
 // ── Single claim row ─────────────────────────────────────────────────────────
-function ClaimRow({ item }: { item: AdaptiveContentItem }) {
+function ClaimRow({ item, fetchSources }: { item: AdaptiveContentItem; fetchSources?: string[] }) {
   const sourceHref = item.url
     ?? (item.pmid ? `https://pubmed.ncbi.nlm.nih.gov/${item.pmid}/` : null);
 
   const badgeAndSource = (
     <>
       <EvidenceBadge loe={item.loe ?? undefined} cor={item.cor ?? undefined} compact />
-      {item.source && (
+      {/* Source: always show something so user knows data origin */}
+      {item.source ? (
         sourceHref ? (
           <a href={sourceHref} target="_blank" rel="noopener noreferrer"
              className="text-[10px] text-blue-400 hover:underline max-w-[120px] text-right leading-tight">
@@ -119,6 +120,10 @@ function ClaimRow({ item }: { item: AdaptiveContentItem }) {
             {item.source}
           </span>
         )
+      ) : (
+        <span className="text-[10px] text-muted-foreground/60 max-w-[120px] text-right leading-tight italic">
+          {fetchSources?.[0] ?? "Medical database"}
+        </span>
       )}
     </>
   );
@@ -178,7 +183,7 @@ function EvidenceQualityBar({ sections }: { sections: AdaptiveSection[] }) {
 }
 
 // ── Section card ─────────────────────────────────────────────────────────────
-function SectionCard({ section, index }: { section: AdaptiveSection; index: number }) {
+function SectionCard({ section, index, fetchSources }: { section: AdaptiveSection; index: number; fetchSources?: string[] }) {
   const hasItems =
     Array.isArray(section.content_items) && section.content_items.length > 0;
 
@@ -191,7 +196,7 @@ function SectionCard({ section, index }: { section: AdaptiveSection; index: numb
       {hasItems ? (
         <div className="divide-y divide-border/30">
           {section.content_items.map((item, i) => (
-            <ClaimRow key={i} item={item} />
+            <ClaimRow key={i} item={item} fetchSources={fetchSources} />
           ))}
         </div>
       ) : section.content ? (
@@ -430,7 +435,7 @@ export function AdaptiveResultRenderer({ data, fetchSources, hideEvidenceBar, is
       {data.sections
         .filter(s => (s.content_items?.length ?? 0) > 0 || s.content)
         .map((section, i) => (
-          <SectionCard key={i} section={section} index={i} />
+          <SectionCard key={i} section={section} index={i} fetchSources={fetchSources} />
         ))}
 
       {!hideEvidenceBar && <EvidenceQualityBar sections={data.sections} />}

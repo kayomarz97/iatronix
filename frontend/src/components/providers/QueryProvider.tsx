@@ -13,7 +13,7 @@ import { submitQueryStream } from "@/lib/api";
 import type { FetchedArticle } from "@/lib/api";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { API_KEY_STORAGE_KEY, LLM_PROVIDER_STORAGE_KEY } from "@/lib/constants";
-import type { QueryResponse, AdaptiveBLUF, AdaptiveSection, AdaptiveFlowchart, AdaptiveTable } from "@/lib/types";
+import type { QueryResponse, AdaptiveBLUF, AdaptiveSection, AdaptiveFlowchart, AdaptiveTable, AdaptiveResponse } from "@/lib/types";
 import { usePostHog } from "posthog-js/react";
 import { getLLMConfig, displayFor, type LLMConfig } from "@/lib/modelRegistry";
 
@@ -104,6 +104,12 @@ export function QueryProvider({ children }: { children: ReactNode }) {
 
     const queryStart = Date.now();
 
+    posthog?.capture("query_started", {
+      query_text: query,
+      model_id: modelId,
+      provider,
+    });
+
     const runStream = async (key: string) => {
       for await (const event of submitQueryStream(query, modelId, key)) {
         if (event.type === "stage") {
@@ -136,12 +142,85 @@ export function QueryProvider({ children }: { children: ReactNode }) {
           setStreamingFlowcharts([]);
           setStreamingTables([]);
           setResult(response);
+          const adaptiveResp = response.response as AdaptiveResponse;
           posthog?.capture("query_submitted", {
+            // Query identity
+            query_text: query,
             query_type: response.query_type,
-            cached: response.cached,
+            rewritten_query: response.rewritten_query ?? null,
+            audit_id: response.audit_id ?? null,
+
+            // Model info
             model_id: modelId,
+            model_used: response.model_used,
+            provider,
+            cached: response.cached,
+
+            // Performance
             response_time_ms: Date.now() - queryStart,
+            latency_ms: response.latency_ms,
+
+            // Data sources (which APIs were searched)
+            fetch_sources: response.fetch_sources ?? [],
+            fetch_sources_count: (response.fetch_sources ?? []).length,
+
+            // Answer summary
+            bluf_headline: adaptiveResp?.bluf?.headline ?? null,
+            sections_count: adaptiveResp?.sections?.length ?? 0,
+            references_count: adaptiveResp?.references?.length ?? 0,
           });
+
+          // Separate full-answer event — for browsing exactly what users received
+          posthog?.capture("answer_viewed", {
+            query_text: query,
+            query_type: response.query_type,
+            model_used: response.model_used,
+            fetch_sources: response.fetch_sources ?? [],
+            bluf_headline: adaptiveResp?.bluf?.headline ?? null,
+            bluf_body: adaptiveResp?.bluf?.body ?? null,
+            bluf_key_points: adaptiveResp?.bluf?.key_points ?? [],
+            bluf_caveats: adaptiveResp?.bluf?.caveats ?? [],
+            section_titles: adaptiveResp?.sections?.map((s) => s.title) ?? [],
+            references_count: adaptiveResp?.references?.length ?? 0,
+            cached: response.cached,
+            audit_id: response.audit_id ?? null,
+          });
+
+          // PostHog native LLM analytics — only emit when LLM was actually called
+          if (!response.cached) {
+            const providerDisplay: Record<string, string> = {
+              cerebras: "Cerebras",
+              anthropic: "Anthropic",
+              openai: "OpenAI",
+              openrouter: "OpenRouter",
+            };
+
+            posthog?.capture("$ai_generation", {
+              // Required PostHog LLM properties
+              $ai_model: response.model_used,
+              $ai_provider: providerDisplay[provider] ?? provider,
+              $ai_input_tokens: response.token_usage?.total_input_tokens ?? 0,
+              $ai_output_tokens: response.token_usage?.total_output_tokens ?? 0,
+              $ai_total_cost_usd: response.token_usage?.total_cost_usd ?? undefined,
+
+              // Trace grouping — links LLM call to the query in PostHog
+              $ai_trace_id: response.audit_id?.toString() ?? undefined,
+              $ai_span_name: `medical_query_${response.query_type}`,
+
+              // Input/output content (for PostHog Generations viewer)
+              $ai_input: [{ role: "user", content: query }],
+              $ai_output_choices: [{
+                role: "assistant",
+                content: (response.response as AdaptiveResponse)?.bluf?.headline ?? "",
+              }],
+
+              // Custom context properties (filterable in PostHog dashboard)
+              query_type: response.query_type,
+              fetch_sources: response.fetch_sources ?? [],
+              sections_count: adaptiveResp?.sections?.length ?? 0,
+              latency_ms: response.latency_ms,
+            });
+          }
         } else if (event.type === "error") {
           const detail = event.payload.detail ?? "An error occurred";
           const err = new Error(detail);
@@ -166,18 +245,18 @@ export function QueryProvider({ children }: { children: ReactNode }) {
             await runStream(retryApiKey);
             return;
           } catch {
-            posthog?.capture("query_error", { error_type: "auth", model_id: modelId });
+            posthog?.capture("query_error", { error_type: "auth", model_id: modelId, query_text: query });
             setError("Session expired. Please sign in again.");
             return;
           }
         }
-        posthog?.capture("query_error", { error_type: "auth", model_id: modelId });
+        posthog?.capture("query_error", { error_type: "auth", model_id: modelId, query_text: query });
         setError("Session expired. Please sign in again.");
       } else if (errType === "rate_limit" || msg.includes("429") || msg.toLowerCase().includes("rate limit")) {
-        posthog?.capture("query_error", { error_type: "rate_limit", model_id: modelId });
+        posthog?.capture("query_error", { error_type: "rate_limit", model_id: modelId, query_text: query });
         setError("Service temporarily busy. Please try again.");
       } else {
-        posthog?.capture("query_error", { error_type: errType ?? "other", model_id: modelId });
+        posthog?.capture("query_error", { error_type: errType ?? "other", model_id: modelId, query_text: query });
         setError(msg);
       }
     } finally {
