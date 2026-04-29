@@ -46,6 +46,10 @@ async def semantic_cache_get(
     query: str,
     query_type: str,
     model_id: str,
+    *,
+    provider: str | None = None,
+    api_key: str | None = None,
+    voyage_api_key: str | None = None,
 ) -> tuple[Optional[dict], Optional[int], Optional[datetime]]:
     """
     Look up a semantically similar cached response.
@@ -55,18 +59,28 @@ async def semantic_cache_get(
     whether to trigger background revalidation.
     """
     if not settings.semantic_cache_enabled:
-        return None, None
+        return None, None, None
 
     try:
-        import asyncio as _asyncio
         from sqlalchemy import select
 
         from app.db.session import async_session as session_factory
         from app.models.query_cache import QueryCache
-        from app.services.embedder import Embedder
+        from app.services.embedder import embed_query
+        from app.services.llm_factory import get_provider
 
-        embedder = Embedder.get_instance()
-        embedding = await embedder.embed_text_async(query)
+        resolved_provider = provider or get_provider(model_id)
+        if not api_key:
+            return None, None, None
+
+        embedding = await embed_query(
+            query,
+            resolved_provider,
+            api_key,
+            voyage_api_key=voyage_api_key,
+        )
+        if embedding is None:
+            return None, None, None
 
         async with session_factory() as session:
             # pgvector cosine distance: 1 - cosine_similarity
@@ -86,7 +100,7 @@ async def semantic_cache_get(
             row = result.first()
 
             if row is None:
-                return None, None
+                return None, None, None
 
             entry, similarity = row
             logger.debug(
@@ -107,6 +121,10 @@ async def semantic_cache_set(
     query_type: str,
     model_id: str,
     response: dict,
+    *,
+    provider: str | None = None,
+    api_key: str | None = None,
+    voyage_api_key: str | None = None,
 ) -> None:
     """
     Store a query response in the semantic cache (fire-and-forget safe).
@@ -116,14 +134,23 @@ async def semantic_cache_set(
         return
 
     try:
-        import asyncio as _asyncio
-
         from app.db.session import async_session as session_factory
         from app.models.query_cache import QueryCache
-        from app.services.embedder import Embedder
+        from app.services.embedder import embed_query
+        from app.services.llm_factory import get_provider
 
-        embedder = Embedder.get_instance()
-        embedding = await embedder.embed_text_async(query)
+        resolved_provider = provider or get_provider(model_id)
+        if not api_key:
+            return
+
+        embedding = await embed_query(
+            query,
+            resolved_provider,
+            api_key,
+            voyage_api_key=voyage_api_key,
+        )
+        if embedding is None:
+            return
 
         async with session_factory() as session:
             entry = QueryCache(

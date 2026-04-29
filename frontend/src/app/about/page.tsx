@@ -11,12 +11,12 @@ const PIPELINE_STEPS = [
   {
     step: "2",
     title: "Classification",
-    desc: "Regex pattern scoring instantly classifies the query into one of five types: drug, disease, procedure, evidence (study), or comparative (drug vs. drug). For ambiguous phrasing, a lightweight LLM call (Cerebras Llama 3.1 8B by default) resolves the type. The query type determines which APIs to call and which response schema to fill.",
+    desc: "Regex pattern scoring instantly classifies the query into one of five types: drug, disease, procedure, evidence (study), or comparative (drug vs. drug). For ambiguous phrasing, a lightweight LLM call (GPT-OSS 120B via Cerebras by default) resolves the type. The query type determines which APIs to call and which response schema to fill.",
   },
   {
     step: "3",
     title: "Semantic cache lookup",
-    desc: "Before any API call, the query is embedded into a vector and compared against all previously answered queries using cosine similarity (threshold: 0.92). If a semantically identical past answer exists and is less than 7 days old, it is returned immediately. If it is older, the cached response is returned instantly while a fresh pipeline run happens in the background — this is stale-while-revalidate (SWR). Cache misses proceed to the full pipeline.",
+    desc: "Before any API call, the query is embedded into a vector and compared against all previously answered queries using cosine similarity (threshold: 0.92). If a semantically identical past answer exists and is less than 7 days old, it is returned immediately. If the hit is older than 7 days, stale cache is skipped and a fresh pipeline run is executed to avoid serving outdated clinical content.",
   },
   {
     step: "4",
@@ -31,7 +31,7 @@ const PIPELINE_STEPS = [
   {
     step: "6",
     title: "Adaptive LLM formatting",
-    desc: "The LLM receives only the fetched evidence — not its training knowledge. The prompt instructs it to fill specific schema fields (BLUF headline, summary, sections, citations) and explicitly prohibits inventing data not present in the sources. Each claim must cite its source by index. The model used is Llama 3.1 8B via Cerebras by default (or Claude if an Anthropic key is configured in Settings).",
+    desc: "The LLM is prompted to prioritize fetched evidence and fill specific schema fields (BLUF headline, summary, sections, citations) without inventing data. Each claim must cite its source by index. If retrieval times out, a guarded fallback response may be generated with explicit validation warnings. The default model is GPT-OSS 120B via Cerebras (or Claude if an Anthropic key is configured in Settings).",
   },
   {
     step: "7",
@@ -43,7 +43,7 @@ const PIPELINE_STEPS = [
 const HALLUCINATION_PREVENTION = [
   {
     label: "Evidence grounding",
-    desc: "The LLM is given only the fetched article text. It cannot use training knowledge to fill in gaps — any claim it makes must exist in the provided sources. The prompt states this explicitly.",
+    desc: "The LLM is instructed to anchor claims to fetched article text and cite each claim. If retrieval fails or times out, the system allows guarded fallback generation and surfaces warnings so unsupported claims are treated cautiously.",
   },
   {
     label: "Fail-closed design",
@@ -89,14 +89,14 @@ const LESSONS = [
   },
   {
     title: "Cache design has a correctness problem, not just a performance one",
-    desc: "Semantic caching at 0.92 cosine similarity means 'scabies management' and 'scabies treatment guidelines' return the same cached response. That is usually correct — but a cache hit from 10 days ago may miss a guideline update. The SWR pattern (return stale immediately, revalidate in background) solves the latency problem. The harder unsolved problem is knowing when a guideline is meaningfully different from its cached version without reading it.",
+    desc: "Semantic caching at 0.92 cosine similarity means 'scabies management' and 'scabies treatment guidelines' can map to the same cached response. That is usually correct — but old cache can miss guideline updates. The current policy is safety-first: stale semantic hits are skipped and the full pipeline reruns. The harder unsolved problem is detecting meaningful guideline deltas automatically.",
   },
 ];
 
 const API_SOURCES = [
   {
-    name: "Cerebras (Llama 3.1 8B)",
-    desc: "Default AI provider — powers evidence formatting, query classification, and section generation. Paid tier: 32,768 context, ~6× cheaper than Claude.",
+    name: "Cerebras (GPT-OSS 120B)",
+    desc: "Default AI provider — powers evidence formatting, query classification, and section generation.",
     url: "https://cloud.cerebras.ai",
     label: "Get API key",
     note: "Default",

@@ -143,7 +143,8 @@ export interface QueryResponse {
     | "general"
     | "procedure"
     | "evidence"
-    | "adaptive";
+    | "adaptive"
+    | "complex";
   model_used: string;
   response: AdaptiveResponse | DegradedResponse;
   text_nodes: TextNode[];

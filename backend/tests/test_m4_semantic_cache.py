@@ -137,7 +137,7 @@ class TestSemanticCacheServiceDisabled:
             result = asyncio.get_event_loop().run_until_complete(
                 semantic_cache_get("metformin for diabetes", "drug", "claude-haiku")
             )
-        assert result == (None, None)
+        assert result == (None, None, None)
 
     def test_set_noop_when_disabled(self):
         import asyncio

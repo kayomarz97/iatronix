@@ -122,6 +122,7 @@ _EXEMPT_PATHS: frozenset[str] = frozenset({
     "/api/v1/auth/llm-key",
     "/api/v1/auth/openrouter/status",
     "/api/v1/service-keys",
+    "/api/v1/service_keys",
 })
 
 

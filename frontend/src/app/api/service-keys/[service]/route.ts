@@ -10,7 +10,7 @@ export async function DELETE(
   const { service } = await context.params;
   const auth = request.headers.get("authorization");
   const res = await fetch(
-    `${INTERNAL_API_URL}/api/v1/service-keys/${service}`,
+    `${INTERNAL_API_URL}/api/v1/service_keys/${service}`,
     {
       method: "DELETE",
       headers: auth ? { "Authorization": auth } : {},

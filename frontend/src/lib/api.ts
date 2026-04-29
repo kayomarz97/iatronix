@@ -97,7 +97,14 @@ export async function submitQuery(
 }
 
 export async function fetchModels(apiKey: string): Promise<ModelInfo[]> {
-  return [];
+  const res = await fetch("/api/v1/models", {
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+    },
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  return Array.isArray(data?.models) ? data.models : [];
 }
 
 export async function listServiceKeys(apiKey: string): Promise<ServiceKeyInfo[]> {
@@ -119,7 +126,7 @@ export async function saveServiceKey(
       "Content-Type": "application/json",
       "Authorization": `Bearer ${apiKey}`,
     },
-    body: JSON.stringify({ service_name: serviceName, key_value: serviceKey }),
+    body: JSON.stringify({ service: serviceName, api_key: serviceKey }),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();

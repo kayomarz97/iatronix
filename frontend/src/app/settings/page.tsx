@@ -64,6 +64,10 @@ export default function SettingsPage() {
   const [editing, setEditing] = useState(false);
   const [editForm, setEditForm] = useState<typeof profile>({});
   const [profileMsg, setProfileMsg] = useState<string | null>(null);
+  const openRouterOAuthEnabled =
+    process.env.NEXT_PUBLIC_ENABLE_OPENROUTER_OAUTH === "true";
+  const legacyEngineToggleEnabled =
+    process.env.NEXT_PUBLIC_ENABLE_LEGACY_ENGINE_TOGGLE === "true";
 
   const { theme, toggle, resetToSystem } = useTheme();
   const [themeMode, setThemeMode] = useState<"system" | "dark" | "light">(
@@ -691,78 +695,82 @@ export default function SettingsPage() {
         );
       })}
 
-      {false && (
-        <>
-          {/* ── OpenRouter OAuth ── */}
-          <section className="space-y-3">
-            <h2 className="text-lg font-semibold">OpenRouter (Gemma 4)</h2>
-            <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
-              Connect your OpenRouter account to use Gemma 4 as the AI engine. Your credits are used directly — no server-side key stored in plaintext.
-            </p>
+      {/* ── OpenRouter OAuth ── */}
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold">OpenRouter (Gemma 4)</h2>
+        <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
+          Connect your OpenRouter account to use Gemma 4 as the AI engine. Your credits are used directly — no server-side key stored in plaintext.
+        </p>
 
-            <div className="p-3 rounded-md text-sm" style={{ background: "var(--bg-elevated)", border: "1px solid var(--border)" }}>
-              <span className="font-medium">Status: </span>
-              {openrouterConnected === null ? (
-                <span style={{ color: "var(--text-muted)" }}>Loading…</span>
-              ) : openrouterConnected ? (
-                <span style={{ color: "var(--success)" }}>Connected</span>
-              ) : (
-                <span style={{ color: "var(--danger)" }}>Not connected</span>
-              )}
-            </div>
+        <div className="p-3 rounded-md text-sm" style={{ background: "var(--bg-elevated)", border: "1px solid var(--border)" }}>
+          <span className="font-medium">Status: </span>
+          {!openRouterOAuthEnabled ? (
+            <span style={{ color: "var(--text-muted)" }}>Disabled by deployment feature flag</span>
+          ) : openrouterConnected === null ? (
+            <span style={{ color: "var(--text-muted)" }}>Loading…</span>
+          ) : openrouterConnected ? (
+            <span style={{ color: "var(--success)" }}>Connected</span>
+          ) : (
+            <span style={{ color: "var(--danger)" }}>Not connected</span>
+          )}
+        </div>
 
-            <div className="flex gap-2">
-              {!openrouterConnected && (
-                <button
-                  onClick={async () => {
-                    try {
-                      const res = await fetch("/api/v1/auth/openrouter/login", {
-                        method: "POST",
-                        headers: authHeader(),
-                      });
-                      if (res.ok) {
-                        const { redirect_url } = await res.json();
-                        window.location.href = redirect_url;
-                      } else {
-                        setOpenrouterMessage("Failed to start OpenRouter login");
-                      }
-                    } catch {
-                      setOpenrouterMessage("Network error — try again");
-                    }
-                  }}
-                  className="px-4 py-2 bg-primary rounded-md text-sm min-h-[44px] inline-flex items-center"
-                  style={{ color: "white" }}
-                >
-                  Connect OpenRouter →
-                </button>
-              )}
-              {openrouterConnected && (
-                <button
-                  onClick={disconnectOpenrouter}
-                  disabled={openrouterLoading}
-                  className="px-4 py-2 rounded-md border border-border text-sm min-h-[44px] disabled:opacity-50"
-                >
-                  {openrouterLoading ? "Disconnecting…" : "Disconnect"}
-                </button>
-              )}
-            </div>
-            {openrouterMessage && (
-              <p className="text-sm" style={{ color: openrouterMessage?.includes("disconnected") ? "var(--success)" : "var(--danger)" }}>
-                {openrouterMessage}
-              </p>
-            )}
-          </section>
-        </>
-      )}
+        <div className="flex gap-2">
+          {!openrouterConnected && (
+            <button
+              disabled={!openRouterOAuthEnabled}
+              onClick={async () => {
+                try {
+                  const res = await fetch("/api/v1/auth/openrouter/login", {
+                    method: "POST",
+                    headers: authHeader(),
+                  });
+                  if (res.ok) {
+                    const { redirect_url } = await res.json();
+                    window.location.href = redirect_url;
+                  } else {
+                    setOpenrouterMessage("Failed to start OpenRouter login");
+                  }
+                } catch {
+                  setOpenrouterMessage("Network error — try again");
+                }
+              }}
+              className="px-4 py-2 bg-primary rounded-md text-sm min-h-[44px] inline-flex items-center disabled:opacity-50"
+              style={{ color: "white" }}
+            >
+              Connect OpenRouter →
+            </button>
+          )}
+          {openrouterConnected && (
+            <button
+              onClick={disconnectOpenrouter}
+              disabled={openrouterLoading || !openRouterOAuthEnabled}
+              className="px-4 py-2 rounded-md border border-border text-sm min-h-[44px] disabled:opacity-50"
+            >
+              {openrouterLoading ? "Disconnecting…" : "Disconnect"}
+            </button>
+          )}
+        </div>
+        {!openRouterOAuthEnabled && (
+          <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+            Set `NEXT_PUBLIC_ENABLE_OPENROUTER_OAUTH=true` to enable this section.
+          </p>
+        )}
+        {openrouterMessage && (
+          <p className="text-sm" style={{ color: openrouterMessage?.includes("disconnected") ? "var(--success)" : "var(--danger)" }}>
+            {openrouterMessage}
+          </p>
+        )}
+      </section>
 
-      {false && (
-        <>
-          {/* ── Engine Toggle ── */}
-          <section className="space-y-3">
-            <h2 className="text-lg font-semibold">Search Engine</h2>
-            <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
-              Choose which AI model powers your medical queries.
-            </p>
+      {/* ── Engine Toggle (Legacy) ── */}
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold">Search Engine (Legacy)</h2>
+        <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
+          Legacy engine switch for Anthropic vs OpenRouter credentials.
+        </p>
+        {legacyEngineToggleEnabled ? (
+          <>
             <div className="flex gap-2">
               <button
                 onClick={() => handleEngineToggle("anthropic")}
@@ -794,9 +802,13 @@ export default function SettingsPage() {
                 Connect OpenRouter above to enable Gemma 4.
               </p>
             )}
-          </section>
-        </>
-      )}
+          </>
+        ) : (
+          <div className="p-3 rounded-md text-sm" style={{ background: "var(--bg-elevated)", border: "1px solid var(--border)", color: "var(--text-muted)" }}>
+            Disabled by deployment feature flag. Use the “AI Engine” section above.
+          </div>
+        )}
+      </section>
 
       {/* ── NCBI API Key ── */}
       <section className="space-y-3">

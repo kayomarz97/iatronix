@@ -10,7 +10,7 @@ function authHeader(request: NextRequest): Record<string, string> {
 
 export async function GET(request: NextRequest) {
   try {
-    const res = await fetch(`${INTERNAL_API_URL}/api/v1/service-keys`, {
+    const res = await fetch(`${INTERNAL_API_URL}/api/v1/service_keys`, {
       headers: authHeader(request),
     });
     const data = await res.json();
@@ -24,7 +24,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const res = await fetch(`${INTERNAL_API_URL}/api/v1/service-keys`, {
+    const res = await fetch(`${INTERNAL_API_URL}/api/v1/service_keys`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
