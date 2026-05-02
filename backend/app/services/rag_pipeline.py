@@ -2864,12 +2864,14 @@ async def process_query(
     if vector_results:
         fetch_sources.append("Vector DB (your PDFs)")
 
-    # Fill null sources in adaptive content_items — source must always be attributed
+    # Fill null/NA sources in adaptive content_items — source must always be attributed with real value
     if "sections" in validated_dict:
         _source_fallback = fetch_sources[0] if fetch_sources else "Medical literature"
+        _na_literals = {"na", "n/a", "n.a.", "not available", "unknown", "none"}
         for _sec in validated_dict.get("sections", []):
             for _item in _sec.get("content_items", []):
-                if not _item.get("source"):
+                source_val = _item.get("source", "")
+                if not source_val or (isinstance(source_val, str) and source_val.strip().lower() in _na_literals):
                     _item["source"] = _source_fallback
 
     # Keep returned response aligned with strict-mode citation drops and URL sanitization.
