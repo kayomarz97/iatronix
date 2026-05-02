@@ -66,6 +66,7 @@ from app.services.query_classifier import classify_query, classify_query_llm, de
 from app.services.safety_checker import check_safety
 from app.services.url_builder import enrich_references
 from app.services.source_router import route_query
+from app.services.ranking import rank_article_list
 
 # PMID/DOI hyperlinking patterns
 
@@ -550,6 +551,153 @@ def _retrieval_assessment(
     if query_type in {"drug", "disease", "procedure", "evidence", "comparative"}:
         return 0, False, ["data fetch timed out — no retrieval data available"]
     return 0, False, ["unsupported query type"]
+
+
+def compute_evidence_confidence(
+    fetched_data: "FetchedData | None",
+    query_type: str,
+) -> dict:
+    """Return structured confidence level replacing binary 'insufficient evidence'.
+
+    Returns dict with keys: confidence_level, evidence_count,
+    top_study_types (list[str]), explanation (str).
+    """
+    if not fetched_data:
+        return {
+            "confidence_level": "low",
+            "evidence_count": 0,
+            "top_study_types": [],
+            "explanation": "No data was retrieved for this query.",
+        }
+
+    def _count_study_types(abstracts: list) -> tuple[int, int, int, int]:
+        """Return (guideline_count, review_count, rct_count, other_count)."""
+        g = r = rc = other = 0
+        for a in (abstracts or []):
+            if not isinstance(a, dict):
+                continue
+            types_joined = " ".join(
+                str(pt).lower()
+                for pt in (a.get("pub_types") or a.get("publication_types") or [])
+            )
+            title_lower = (a.get("title") or "").lower()
+            combined = types_joined + " " + title_lower
+            if "guideline" in combined:
+                g += 1
+            elif "systematic review" in combined or "meta-analysis" in combined:
+                r += 1
+            elif "randomized controlled trial" in combined or " rct" in combined:
+                rc += 1
+            else:
+                other += 1
+        return g, r, rc, other
+
+    g = r = rc = other = 0
+
+    if query_type == "drug" and fetched_data.drug_data:
+        d = fetched_data.drug_data
+        all_abs = (d.guideline_abstracts or []) + (d.systematic_review_abstracts or []) + (d.clinical_trial_abstracts or [])
+        g, r, rc, other = _count_study_types(all_abs)
+    elif query_type == "disease" and fetched_data.disease_data:
+        d = fetched_data.disease_data
+        all_abs = (d.guideline_abstracts or []) + (d.systematic_review_abstracts or [])
+        g, r, rc, other = _count_study_types(all_abs)
+    elif query_type in {"evidence", "comparative"}:
+        ev = fetched_data.evidence_data or fetched_data.comparative_evidence
+        if ev:
+            all_abs = (ev.guideline_abstracts or []) + (ev.systematic_review_abstracts or []) + (ev.clinical_trial_abstracts or [])
+            g, r, rc, other = _count_study_types(all_abs)
+    elif query_type == "procedure" and fetched_data.procedure_data:
+        d = fetched_data.procedure_data
+        all_abs = (d.guideline_abstracts or []) + (d.practice_guideline_abstracts or [])
+        g, r, rc, other = _count_study_types(all_abs)
+
+    total = g + r + rc + other
+    strong = g + r + rc
+
+    top_study_types: list[str] = []
+    if g:
+        top_study_types.append(f"{g} guideline(s)")
+    if r:
+        top_study_types.append(f"{r} systematic review(s)/meta-analysis")
+    if rc:
+        top_study_types.append(f"{rc} RCT(s)")
+    if other:
+        top_study_types.append(f"{other} other study(ies)")
+
+    if total == 0:
+        level = "low"
+        explanation = "No relevant studies were retrieved for this query."
+    elif total <= 2 and strong == 0:
+        level = "low"
+        explanation = f"Only {total} weak or non-specific study(ies) found."
+    elif g >= 1 and strong >= 3:
+        level = "strong"
+        explanation = f"Supported by {', '.join(top_study_types)}."
+    elif strong >= 1 and total >= 3:
+        level = "high"
+        explanation = f"Good evidence base: {', '.join(top_study_types)}."
+    else:
+        level = "moderate"
+        explanation = f"Moderate evidence from {', '.join(top_study_types) or str(total) + ' studies'}."
+
+    return {
+        "confidence_level": level,
+        "evidence_count": total,
+        "top_study_types": top_study_types,
+        "explanation": explanation,
+    }
+
+
+def _rank_fetched_abstracts(
+    fetched_data: "FetchedData",
+    entities: list[str],
+    query_text: str,
+) -> None:
+    """Re-order all abstract lists in FetchedData by evidence quality score.
+
+    Mutates fetched_data in-place. Called after fetch, before LLM synthesis.
+    Ranking happens before _cap_abstracts budget limits, so best articles survive.
+    Silent on any failure — pipeline continues with original ordering.
+    """
+    def _rerank(lst: list | None) -> list:
+        if not lst:
+            return lst or []
+        try:
+            return rank_article_list(lst, entities, query_text)
+        except Exception:
+            return lst
+
+    try:
+        if fetched_data.drug_data:
+            d = fetched_data.drug_data
+            d.guideline_abstracts = _rerank(d.guideline_abstracts)
+            d.systematic_review_abstracts = _rerank(d.systematic_review_abstracts)
+            d.clinical_trial_abstracts = _rerank(d.clinical_trial_abstracts)
+        if fetched_data.disease_data:
+            d = fetched_data.disease_data
+            d.guideline_abstracts = _rerank(d.guideline_abstracts)
+            d.systematic_review_abstracts = _rerank(d.systematic_review_abstracts)
+        if fetched_data.condition_data:
+            d = fetched_data.condition_data
+            d.guideline_abstracts = _rerank(d.guideline_abstracts)
+            d.systematic_review_abstracts = _rerank(d.systematic_review_abstracts)
+        if fetched_data.evidence_data:
+            ev = fetched_data.evidence_data
+            ev.guideline_abstracts = _rerank(ev.guideline_abstracts)
+            ev.systematic_review_abstracts = _rerank(ev.systematic_review_abstracts)
+            ev.clinical_trial_abstracts = _rerank(ev.clinical_trial_abstracts)
+        if fetched_data.comparative_evidence:
+            ev = fetched_data.comparative_evidence
+            ev.guideline_abstracts = _rerank(ev.guideline_abstracts)
+            ev.systematic_review_abstracts = _rerank(ev.systematic_review_abstracts)
+            ev.clinical_trial_abstracts = _rerank(ev.clinical_trial_abstracts)
+        if fetched_data.procedure_data:
+            d = fetched_data.procedure_data
+            d.guideline_abstracts = _rerank(d.guideline_abstracts)
+            d.practice_guideline_abstracts = _rerank(d.practice_guideline_abstracts)
+    except Exception:
+        logger.warning("_rank_fetched_abstracts failed", exc_info=True)
 
 
 async def _expand_retrieval_if_needed(
@@ -1366,41 +1514,58 @@ async def _analyze_and_expand_query(
     import json as _json
 
     _prompt = (
-        "You are a medical PubMed search specialist. Return ONLY valid JSON — no markdown fences, no explanation.\n"
+        "You are a medical search specialist and clinical query analyst. "
+        "Return ONLY valid JSON — no markdown fences, no explanation.\n"
         "\n"
-        "EXAMPLE INPUT: gynecomastia\n"
+        "EXAMPLE INPUT: metformin ckd dose\n"
         "EXAMPLE OUTPUT:\n"
         "{\n"
-        '  "rewritten_query": "gynecomastia",\n'
-        '  "query_type": "disease",\n'
-        '  "entities": ["gynecomastia"],\n'
-        '  "condition_context": "",\n'
-        '  "response_focus": "etiology, diagnosis, and management of gynecomastia",\n'
-        '  "related_topics": ["male breast tissue", "testosterone", "estrogen imbalance", "puberty", "drug-induced gynecomastia"],\n'
+        '  "rewritten_query": "metformin chronic kidney disease dosing",\n'
+        '  "query_type": "drug",\n'
+        '  "intent": "drug_dosing",\n'
+        '  "entities": ["metformin", "chronic kidney disease"],\n'
+        '  "condition_context": "chronic kidney disease",\n'
+        '  "response_focus": "metformin dosing adjustments and safety in chronic kidney disease",\n'
+        '  "related_topics": ["GFR thresholds", "lactic acidosis risk", "KDIGO guidelines", "renal dose adjustment"],\n'
+        '  "search_variants": [\n'
+        '    "metformin chronic kidney disease dosing",\n'
+        '    "metformin CKD renal dose adjustment",\n'
+        '    "metformin kidney disease"\n'
+        '  ],\n'
         '  "pubmed_terms": {\n'
         '    "guideline": [\n'
-        '      "Gynecomastia[MeSH] AND (Practice Guideline[pt] OR Guideline[pt])",\n'
-        '      "gynecomastia[Title/Abstract] AND (guideline OR consensus OR recommendation)"\n'
+        '      "Metformin[MeSH] AND Renal Insufficiency, Chronic[MeSH] AND (Practice Guideline[pt] OR Guideline[pt])",\n'
+        '      "metformin[Title/Abstract] AND chronic kidney disease[Title/Abstract] AND (guideline OR recommendation)"\n'
         '    ],\n'
         '    "review": [\n'
-        '      "Gynecomastia[MeSH] AND (Systematic Review[pt] OR Meta-Analysis[pt])",\n'
-        '      "gynecomastia[Title/Abstract] AND (systematic review OR meta-analysis)"\n'
+        '      "Metformin[MeSH] AND Renal Insufficiency, Chronic[MeSH] AND (Systematic Review[pt] OR Meta-Analysis[pt])",\n'
+        '      "metformin[Title/Abstract] AND CKD[Title/Abstract] AND (systematic review OR meta-analysis)"\n'
         '    ],\n'
         '    "trial": [\n'
-        '      "Gynecomastia[MeSH] AND (Randomized Controlled Trial[pt] OR clinical trial[pt])",\n'
-        '      "gynecomastia[Title/Abstract] AND (treatment OR therapy OR management)"\n'
+        '      "Metformin[MeSH] AND Renal Insufficiency, Chronic[MeSH] AND (Randomized Controlled Trial[pt])",\n'
+        '      "metformin[Title/Abstract] AND kidney disease[Title/Abstract] AND (dose OR dosing OR safety)"\n'
         '    ],\n'
-        '    "journal_filter": "\\"Journal of Clinical Endocrinology and Metabolism\\"[Journal] OR \\"Clinical Endocrinology\\"[Journal] OR \\"Endocrine Reviews\\"[Journal]"\n'
+        '    "journal_filter": "\\"Kidney International\\"[Journal] OR \\"American Journal of Kidney Diseases\\"[Journal] OR \\"Clinical Journal of the American Society of Nephrology\\"[Journal]"\n'
         '  }\n'
         "}\n"
         "\n"
         "RULES (follow exactly):\n"
-        "1. entities: SHORT CLINICAL TERMS ONLY — e.g. [\"gynecomastia\"], never a sentence or description\n"
-        "2. pubmed_terms strings: valid PubMed queries using [MeSH], [Title/Abstract], AND/OR, [pt] filters\n"
-        "3. journal_filter: 2–4 top peer-reviewed journals for this topic joined with OR — use exact journal names in quotes\n"
-        "4. Do NOT include date ranges in pubmed_terms (added automatically)\n"
-        "5. query_type classification: If the query describes a medical condition, disease, syndrome, disorder, symptom, or clinical finding — even without the explicit words 'management', 'treatment', or 'guideline' — classify it as 'disease'. When uncertain between 'general' and 'disease', always prefer 'disease'.\n"
-        "6. Output ONLY JSON — no markdown, no backticks, no explanation\n"
+        "1. rewritten_query: Fix all typos, expand all medical abbreviations (CKD→chronic kidney disease, "
+        "HTN→hypertension, HF→heart failure, MI→myocardial infarction, T2DM→type 2 diabetes mellitus, "
+        "COPD→chronic obstructive pulmonary disease, SGLT2→sodium-glucose cotransporter-2, etc.), "
+        "keep clinical intent exactly the same.\n"
+        "2. intent: classify as ONE of: treatment | diagnosis | drug_dosing | drug_safety | "
+        "drug_comparison | guideline | side_effect | contraindication | prognosis | general. "
+        "Use drug_dosing when dose/dosing/mg is mentioned. Use drug_comparison for vs/versus/compare. "
+        "Use guideline when guidelines/recommendations/protocol is mentioned. Default to treatment.\n"
+        "3. entities: SHORT CLINICAL TERMS ONLY — e.g. [\"metformin\", \"chronic kidney disease\"], never a full sentence.\n"
+        "4. search_variants: exactly 3 strings — [full rewritten query, abbreviated keyword form, shortest entity-only form].\n"
+        "5. pubmed_terms strings: valid PubMed queries using [MeSH], [Title/Abstract], AND/OR, [pt] filters.\n"
+        "6. journal_filter: 2-4 top peer-reviewed journals for this topic joined with OR.\n"
+        "7. Do NOT include date ranges in pubmed_terms (added automatically).\n"
+        "8. query_type: if query describes a medical condition/disease/symptom → 'disease'. "
+        "When uncertain between 'general' and 'disease', always prefer 'disease'.\n"
+        "9. Output ONLY JSON — no markdown, no backticks, no explanation.\n"
         "\n"
         f"Query: {query}"
     )
@@ -1442,6 +1607,21 @@ async def _analyze_and_expand_query(
         data["entities"] = _sanitize_entities(data.get("entities") or [])
         # Normalize condition_context: empty string → None
         data["condition_context"] = (data.get("condition_context") or "").strip() or None
+
+        # New fields — safe defaults if LLM omits them
+        valid_intents = {
+            "treatment", "diagnosis", "drug_dosing", "drug_safety", "drug_comparison",
+            "guideline", "side_effect", "contraindication", "prognosis", "general",
+        }
+        raw_intent = str(data.get("intent") or "general").strip().lower()
+        data["intent"] = raw_intent if raw_intent in valid_intents else "general"
+
+        raw_variants = data.get("search_variants")
+        if isinstance(raw_variants, list) and raw_variants:
+            data["search_variants"] = [str(v).strip() for v in raw_variants if str(v).strip()][:4]
+        else:
+            # Safe fallback: use rewritten_query as only variant
+            data["search_variants"] = [data["rewritten_query"]]
 
         return data
 
@@ -1895,11 +2075,15 @@ async def process_query(
         rewritten_query = combined.get("rewritten_query") or request.query
         query_analysis = combined  # contains entities, condition_context, query_type etc.
         pubmed_expansion_terms = combined.get("pubmed_terms")
+        _query_intent = combined.get("intent") or "general"
+        _search_variants = combined.get("search_variants") or []
         if rewritten_query != request.query:
             logger.info("Query rewritten: %r → %r", request.query, rewritten_query)
     else:
         # Legacy fallback — exact same behaviour as before this change
         logger.info("_analyze_and_expand_query failed — falling back to legacy DSPy + rewrite")
+        _query_intent = "general"
+        _search_variants = []
         _dspy_result, _rewritten = await asyncio.gather(
             _analyze_query_with_dspy(
                 request.query,
@@ -2060,6 +2244,7 @@ async def process_query(
             user_provider=user_llm_provider,
             model_explicit=request.model_explicit,
             condition_context=condition_context,
+            intent=_query_intent,
         )
 
     # Parallel fetch: data API + vector search + semantic cache via LangGraph
@@ -2131,6 +2316,9 @@ async def process_query(
                         )
                     return _sem_hit_resp
 
+    # Initialize evidence confidence with default value
+    _evidence_confidence = compute_evidence_confidence(fetched_data, query_type)
+
     if use_api_fetch and fetched_data is not None and not fetched_data.fallback_to_llm:
         fetched_data, retrieval_notes = await _expand_retrieval_if_needed(
             query=request.query,
@@ -2140,6 +2328,16 @@ async def process_query(
             condition_context=condition_context,
             response_focus=(query_analysis or {}).get("response_focus") if query_analysis else None,
         )
+
+        # Rank retrieved articles by evidence quality before LLM synthesis
+        if fetched_data and not fetched_data.fallback_to_llm:
+            _rank_fetched_abstracts(
+                fetched_data,
+                entities=routing.entities if routing else (analysis_entities or []),
+                query_text=rewritten_query,
+            )
+            # Update evidence confidence after ranking
+            _evidence_confidence = compute_evidence_confidence(fetched_data, query_type)
 
     prompt_mode = (
         "format" if (fetched_data and not fetched_data.fallback_to_llm) else "generate"
@@ -2769,10 +2967,17 @@ async def process_query(
     await _enqueue_log(
         {
             "query": request.query,
+            "original_query": request.query,
+            "rewritten_query": rewritten_query,
+            "intent": _query_intent,
+            "search_variants": _search_variants,
             "query_type": query_type,
             "model_used": effective_model,
             "effective_model": effective_model,
             "prompt_mode": prompt_mode,
+            "evidence_confidence": _evidence_confidence.get("confidence_level", "unknown"),
+            "evidence_count": _evidence_confidence.get("evidence_count", 0),
+            "top_study_types": _evidence_confidence.get("top_study_types", []),
             "fetch_latency_ms": fetch_latency_ms,
             "response_json": cache_data,
             "latency_ms": latency_ms,

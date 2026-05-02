@@ -53,6 +53,7 @@ class RoutingDecision:
     preferred_model: str
     fallback_model: str
     condition_context: str | None = None
+    intent: str = "general"
 
 
 def extract_entities(query: str, query_type: str) -> list[str]:
@@ -120,6 +121,7 @@ def route_query(
     user_provider: str | None = None,
     model_explicit: bool = False,
     condition_context: str | None = None,
+    intent: str = "general",
 ) -> RoutingDecision:
     entities = entities if entities is not None else extract_entities(query, query_type)
     condition_context = condition_context or extract_condition_context(query, query_type)
@@ -148,4 +150,5 @@ def route_query(
         preferred_model=preferred,
         fallback_model=fallback,
         condition_context=condition_context,
+        intent=intent,
     )
