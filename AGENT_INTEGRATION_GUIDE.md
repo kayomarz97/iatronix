@@ -9,9 +9,11 @@
 Iatronix is a **BYOK (Bring Your Own Key) medical AI reference platform**. Users authenticate, supply their own LLM API key (Anthropic, OpenAI, or OpenRouter), and ask clinical questions. The system:
 
 1. Classifies the query type (drug / disease / comparative / procedure / evidence / general)
-2. Fetches live data from 8 free medical APIs in parallel
-3. Routes to the appropriate LLM prompt and model tier
-4. Returns a **typed, evidence-graded JSON response** that the frontend renders in a structured UI
+2. Fetches live data from 10+ free medical APIs in parallel
+3. Ranks retrieved articles by evidence quality (study type, recency, relevance, fulltext availability)
+4. Routes to the appropriate LLM prompt and model tier
+5. Computes structured confidence levels (low/moderate/high/strong) based on guideline + RCT counts
+6. Returns a **typed, evidence-graded JSON response** with confidence metadata
 
 No server-side API keys are used for LLMs — all inference cost is borne by the user.
 
@@ -36,12 +38,14 @@ Next.js Proxy  →  FastAPI Backend (port 8000)
   │  1. Query Classification               │
   │  2. Redis Cache Check                  │
   │  3. Circuit Breaker Check              │
-  │  4. Source Routing + Entity Extraction │
-  │  5. Parallel API Fetch (8 sources)     │
-  │  6. Optional Vector Search (pgvector)  │
-  │  7. LLM Call (DSPy or format-mode)     │
-  │  8. Post-processing (validate, repair) │
-  │  9. Cache Write + Async DB Log         │
+  │  4. Source Routing + LLM Intent        │
+  │  5. Parallel API Fetch (10+ sources)   │
+  │  6. Evidence Ranking by Quality        │
+  │  7. Confidence Engine (guideline/RCT)  │
+  │  8. Optional Vector Search (pgvector)  │
+  │  9. LLM Call (DSPy or format-mode)     │
+  │  10. Post-processing (validate, repair)│
+  │  11. Cache Write + Async DB Log        │
   └────────────────────────────────────────┘
             │
   PostgreSQL (pgvector) + Redis
@@ -54,7 +58,8 @@ Next.js Proxy  →  FastAPI Backend (port 8000)
 | File | Role |
 |------|------|
 | `backend/app/services/rag_pipeline.py` | **Main orchestrator** — `process_query()` is the entry point for all queries |
-| `backend/app/services/data_fetcher.py` | Fetches from all 8 medical APIs; each source is an async function |
+| `backend/app/services/data_fetcher.py` | Fetches from 10+ medical APIs in parallel; includes new NCBI Books + ClinicalTrials.gov sources |
+| `backend/app/services/ranking.py` | Ranks articles by multi-factor evidence score (study type, relevance, recency, fulltext, citations) — NEW |
 | `backend/app/services/prompt_engine.py` | Builds prompts for each query type (format-mode and generate-mode) |
 | `backend/app/services/llm_factory.py` | Instantiates LLM clients (Claude, OpenAI, OpenRouter) from the user's BYOK key |
 | `backend/app/services/dspy_modules.py` | DSPy adaptive pipeline — analysis + generation signatures |
@@ -80,29 +85,58 @@ Redis key format: `v{prompt_version}:{model_id}:{query_type}:{md5(normalized_que
 - Hit → return immediately, skip all downstream work
 - Miss → continue
 
-### 4.3 Source Routing
-`source_router.py` extracts drug/disease entities and selects the model tier:
-- Drug queries → Haiku (fast, cheap)
-- Disease / comparative / procedure → Sonnet (powerful, slow)
-- Condition context is extracted for "drug in condition" queries (e.g., "metformin in CKD")
+### 4.3 Source Routing & LLM Intent Extraction
+`source_router.py` extracts drug/disease entities, determines clinical intent, and selects the model tier:
+- **Intent classification:** 10 clinical intents (treatment, diagnosis, drug_dosing, drug_safety, drug_comparison, guideline, side_effect, contraindication, prognosis, general) — enables intent-aware routing and search refinement
+- **Entity extraction:** Drug/disease terms for guideline/trial filtering
+- **Model selection:** Drug queries → Haiku (fast, cheap); Disease/comparative/procedure → Sonnet (powerful, slow)
+- **Condition context:** Extracted for "drug in condition" queries (e.g., "metformin in CKD")
 
 ### 4.4 Parallel Data Fetch
 `data_fetcher.py` fires all API calls concurrently with `asyncio.gather`. Each source is independent and fails silently. Results are merged into a `FetchedData` dataclass.
 
-**Sources:**
+**Sources (10+):**
 
 | Source | What It Provides |
 |--------|-----------------|
 | OpenFDA | Drug labels, adverse events |
-| PubMed/NCBI | Guideline abstracts, PMC full text |
-| RxNorm | Drug names, interactions |
+| PubMed/NCBI | Guideline abstracts, PMC full text, clinical trials |
+| RxNorm | Drug names, interactions, drug class |
 | DailyMed | Full FDA drug labels |
 | MedlinePlus | Patient-friendly summaries |
 | Semantic Scholar | Research paper metadata |
 | StatPearls/NCBI Bookshelf | Medical monographs |
-| MedIndia | Indian drug info (fallback) |
+| NCBI Books | Broader medical handbooks (GeneReviews, Harrison's) — NEW |
+| ClinicalTrials.gov | Completed trial summaries with outcomes — NEW |
+| NICE | UK/EU clinical guidelines |
+| ChEMBL | Drug mechanism, drug class, pharmacology |
 
-### 4.5 LLM Call
+### 4.5 Evidence Ranking & Confidence Engine
+`ranking.py` scores and re-ranks all retrieved articles **before** LLM synthesis to ensure the strongest evidence survives the abstract budget:
+
+**Scoring factors:**
+- Study type (guideline: 10, systematic review: 8, RCT: 7, cohort: 5, case report: 1, etc.)
+- Relevance (entity matches in title +3, abstract +2, capped at 6)
+- Recency (≤5y: 2.0, 6-15y: 1.0, 16-25y: 0.5, >25y: 0.0) — preserves landmark trials (HOPE 2000, ALLHAT 2002, etc.)
+- Fulltext availability (1.0 if PMCID present, 0.0 otherwise)
+- Citation count (1.0 if ≥100 citations, 0.0 otherwise)
+- Penalties (-3.0 for animal-only, -2.0 for off-population)
+
+**Implementation:** `rank_article_list()` in `rag_pipeline.py` calls `_rank_fetched_abstracts()` after fetch, before `_cap_abstracts()` budget limits. Each article gets `_rank_score` and `_rank_breakdown` metadata for observability.
+
+### 4.6 Confidence Engine
+Replaces binary insufficient/sufficient with structured confidence levels based on evidence quality:
+
+| Level | Condition | Usage |
+|-------|-----------|-------|
+| **strong** | ≥1 guideline + ≥3 total strong studies | Actionable recommendations |
+| **high** | ≥1 strong study + ≥3 total studies | Good evidence base |
+| **moderate** | Other combinations | Emerging/mixed evidence |
+| **low** | ≤2 weak studies or 0 studies | Insufficient data |
+
+**Fields in audit log:** `evidence_confidence` (level), `evidence_count` (total articles), `top_study_types` (breakdown).
+
+### 4.7 LLM Call
 Three modes depending on feature flags:
 
 - **Parallel agent mode** (`PARALLEL_SECTIONS_ENABLED=true`): Two-phase pipeline:
@@ -117,14 +151,14 @@ Token budgets (single-call path):
 - Generate fallback: 4096 tokens
 - Parallel BLUF: 1024 tokens / section: 1200 tokens
 
-### 4.6 Post-Processing
+### 4.8 Post-Processing
 1. JSON repair (LLM output is often malformed)
 2. Citation validation (sources must be in the approved whitelist)
 3. Drug name normalization (fuzzy match + metaphone)
 4. Safety checking
 5. Rich hyperlinking (PMID/DOI → URLs)
 
-### 4.7 Response Shape
+### 4.9 Response Shape
 
 Every response carries per-claim evidence grades:
 ```json
