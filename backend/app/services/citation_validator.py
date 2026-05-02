@@ -84,7 +84,7 @@ def validate_citations(response_data: dict, query_type: str, fetched_data=None, 
     """
     warnings = []
     claims = _extract_claims(response_data, query_type)
-    strict = (query_type == "complex")
+    strict = query_type in ("complex", "procedure")
     fetched_labels_lower = {s.lower() for s in (fetched_source_labels or set())}
 
     low_confidence_count = 0

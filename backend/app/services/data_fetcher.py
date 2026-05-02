@@ -498,11 +498,12 @@ async def _fetch_fda_label(client: httpx.AsyncClient, drug_name: str) -> dict | 
         return {"results": [results[0]]}
 
     # Try generic name search first (fetch 3 to find best match)
+    # Filter for actively marketed drugs: HUMAN PRESCRIPTION DRUG or OTC DRUG
     data = await _safe_get(
         client,
         base_url,
         params={
-            "search": f'openfda.generic_name:"{drug_name}"',
+            "search": f'openfda.generic_name:"{drug_name}" AND (openfda.product_type:"HUMAN+PRESCRIPTION+DRUG" OR openfda.product_type:"OTC+DRUG")',
             "limit": 10,
             **extra,
         },
@@ -511,12 +512,12 @@ async def _fetch_fda_label(client: httpx.AsyncClient, drug_name: str) -> dict | 
     if best:
         return best
 
-    # Fallback: brand name
+    # Fallback: brand name (with same product type filter)
     data = await _safe_get(
         client,
         base_url,
         params={
-            "search": f'openfda.brand_name:"{drug_name}"',
+            "search": f'openfda.brand_name:"{drug_name}" AND (openfda.product_type:"HUMAN+PRESCRIPTION+DRUG" OR openfda.product_type:"OTC+DRUG")',
             "limit": 1,
             **extra,
         },
@@ -524,12 +525,12 @@ async def _fetch_fda_label(client: httpx.AsyncClient, drug_name: str) -> dict | 
     if data and data.get("results"):
         return data
 
-    # Fallback: free text
+    # Fallback: free text (with same product type filter)
     data = await _safe_get(
         client,
         base_url,
         params={
-            "search": f'"{drug_name}"',
+            "search": f'"{drug_name}" AND (openfda.product_type:"HUMAN+PRESCRIPTION+DRUG" OR openfda.product_type:"OTC+DRUG")',
             "limit": 1,
             **extra,
         },
@@ -826,13 +827,13 @@ async def _resolve_drug_name_online(client: httpx.AsyncClient, drug_name: str) -
     resolved_name = await _fetch_rxnorm_name(client, final_rxcui) if final_rxcui else None
     confidence = 0.95 if exact_rxcui else (0.75 if approx_rxcui else 0.0)
 
-    # Fallback: OpenFDA brand search → extract generic_name directly
+    # Fallback: OpenFDA brand search → extract generic_name directly (filter for marketed drugs)
     if not resolved_name or resolved_name.lower() == drug_name.lower():
         fda_data = await _safe_get(
             client,
             "https://api.fda.gov/drug/label.json",
             params={
-                "search": f'openfda.brand_name:"{drug_name}"',
+                "search": f'openfda.brand_name:"{drug_name}" AND (openfda.product_type:"HUMAN+PRESCRIPTION+DRUG" OR openfda.product_type:"OTC+DRUG")',
                 "limit": 1,
                 **({"api_key": settings.openfda_api_key} if settings.openfda_api_key else {}),
             },
@@ -2936,6 +2937,27 @@ async def fetch_data_for_query(
     except Exception:
         logger.error("Data fetch orchestration failed", exc_info=True)
         fetched.fallback_to_llm = True
+
+    # Roll up data_sources from sub-results into top-level FetchedData
+    _all_srcs: list[str] = []
+    for _sub in (
+        fetched.drug_data,
+        fetched.disease_data,
+        fetched.condition_data,
+        fetched.procedure_data,
+        fetched.evidence_data,
+        fetched.comparative_evidence,
+    ):
+        if _sub and hasattr(_sub, "data_sources") and _sub.data_sources:
+            for s in _sub.data_sources:
+                if s not in _all_srcs:
+                    _all_srcs.append(s)
+    for _cdr in fetched.comparative_drug_data:
+        if hasattr(_cdr, "data_sources") and _cdr.data_sources:
+            for s in _cdr.data_sources:
+                if s not in _all_srcs:
+                    _all_srcs.append(s)
+    fetched.data_sources = _all_srcs
 
     fetched.total_fetch_time_ms = int((time.time() - start) * 1000)
     return fetched
