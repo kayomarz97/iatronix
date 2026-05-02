@@ -43,6 +43,10 @@ _PUBMED_LAST_REQUEST: float = 0.0
 _PUBMED_MIN_GAP_NO_KEY = 0.4
 _PUBMED_MIN_GAP_WITH_KEY = 0.1
 
+# Evidence search start year — 25-year window to capture foundational landmark trials
+# (HOPE 2000, ALLHAT 2002, ADVANCE 2008, ACCORD 2008, early KDIGO editions, etc.)
+_EVIDENCE_SEARCH_START_YEAR: int = 2000
+
 # ------------------------------------------------------------------
 # Journal registry (loaded once at import time)
 # ------------------------------------------------------------------
@@ -903,7 +907,7 @@ async def _fetch_pubmed_abstracts(
         retmax = 16
         broad_fallback = (
             f"{entity}[Title/Abstract] AND (guideline OR consensus OR recommendation) "
-            f"AND 2010:{cur_year}[dp]"
+            f"AND {_EVIDENCE_SEARCH_START_YEAR}:{cur_year}[dp]"
         )
     else:
         pt_filter = "(Systematic Review[pt] OR Meta-Analysis[pt])"
@@ -913,10 +917,10 @@ async def _fetch_pubmed_abstracts(
             f"AND 2010:{cur_year}[dp]"
         )
 
-    term = f"{entity}[Title/Abstract] AND {pt_filter} AND 2010:{cur_year}[dp]"
+    term = f"{entity}[Title/Abstract] AND {pt_filter} AND {_EVIDENCE_SEARCH_START_YEAR}:{cur_year}[dp]"
     journal_filter = extra_journal_filter or _get_journal_filter(entity)
     journal_term = (
-        f"{entity}[Title/Abstract] AND {journal_filter} AND 2010:{cur_year}[dp]"
+        f"{entity}[Title/Abstract] AND {journal_filter} AND {_EVIDENCE_SEARCH_START_YEAR}:{cur_year}[dp]"
         if journal_filter
         else None
     )
@@ -1696,6 +1700,119 @@ async def _fetch_ncbi_disease_structured(
         pass
     return None
 
+
+async def _fetch_ncbi_books(
+    client: httpx.AsyncClient,
+    query: str,
+    max_results: int = 3,
+) -> str | None:
+    """Fetch relevant content from NCBI Books (StatPearls, Harrison's, GeneReviews, etc).
+
+    Uses NCBI eUtils esearch on db=books, then efetch to retrieve text sections.
+    Complements _fetch_ncbi_disease_structured (which uses db=pmc) with
+    broader NCBI book content. Returns truncated text or None on any failure.
+    """
+    try:
+        search_data = await _safe_get(
+            client,
+            "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi",
+            params={
+                "db": "books",
+                "term": query,
+                "retmax": max_results,
+                "retmode": "json",
+                **({"api_key": settings.pubmed_api_key} if settings.pubmed_api_key else {}),
+            },
+        )
+        if not search_data:
+            return None
+        ids = search_data.get("esearchresult", {}).get("idlist", [])
+        if not ids:
+            return None
+
+        fetch_text = await _safe_get_text(
+            client,
+            "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi",
+            params={
+                "db": "books",
+                "id": ",".join(ids[:max_results]),
+                "rettype": "abstract",
+                "retmode": "text",
+                **({"api_key": settings.pubmed_api_key} if settings.pubmed_api_key else {}),
+            },
+        )
+        if fetch_text and len(fetch_text.strip()) > 50:
+            return fetch_text.strip()[:2000]
+        return None
+    except Exception:
+        logger.debug("_fetch_ncbi_books failed for %r", query, exc_info=True)
+        return None
+
+
+async def _fetch_clinicaltrials(
+    client: httpx.AsyncClient,
+    query: str,
+    max_results: int = 5,
+) -> list[dict] | None:
+    """Fetch recent completed clinical trial summaries from ClinicalTrials.gov v2 API.
+
+    ClinicalTrials.gov is in ALLOWED_DOMAINS. Returns a list of study summary
+    dicts or None on failure. Each dict has: nct_id, title, summary, conditions,
+    interventions, status, source='clinicaltrials.gov'.
+    """
+    try:
+        data = await _safe_get(
+            client,
+            "https://clinicaltrials.gov/api/v2/studies",
+            params={
+                "query.term": query,
+                "pageSize": max_results,
+                "filter.overallStatus": "COMPLETED",
+                "fields": "NCTId,BriefTitle,BriefSummary,Condition,InterventionName,OverallStatus",
+            },
+        )
+        if not data:
+            return None
+        studies = data.get("studies") or []
+        results: list[dict] = []
+        for s in studies:
+            proto = s.get("protocolSection") or {}
+            id_mod = proto.get("identificationModule") or {}
+            desc_mod = proto.get("descriptionModule") or {}
+            cond_mod = proto.get("conditionsModule") or {}
+            arms_mod = proto.get("armsInterventionsModule") or {}
+            status_mod = proto.get("statusModule") or {}
+            nct_id = id_mod.get("nctId") or ""
+            title = id_mod.get("briefTitle") or ""
+            summary = (desc_mod.get("briefSummary") or "")[:600]
+            conditions = cond_mod.get("conditions") or []
+            interventions = [
+                i.get("name") or ""
+                for i in (arms_mod.get("interventions") or [])
+                if isinstance(i, dict)
+            ]
+            status = status_mod.get("overallStatus") or ""
+            if title:
+                results.append({
+                    "pmid": None,
+                    "title": title,
+                    "abstract": summary,
+                    "year": None,
+                    "journal": "ClinicalTrials.gov",
+                    "doi": None,
+                    "pmcid": None,
+                    "nct_id": nct_id,
+                    "conditions": conditions,
+                    "interventions": interventions,
+                    "status": status,
+                    "pub_types": ["Clinical Trial"],
+                    "source": "clinicaltrials.gov",
+                })
+        return results if results else None
+    except Exception:
+        logger.debug("_fetch_clinicaltrials failed for %r", query, exc_info=True)
+        return None
+
 # ------------------------------------------------------------------
 # ChEMBL — additional drug pharmacology source
 # ------------------------------------------------------------------
@@ -1856,13 +1973,14 @@ async def fetch_drug_data(drug_name: str, *, extra_pubmed_terms: list[str] | Non
             _fetch_medlineplus(client, search_name),
             _fetch_pmc_statpearls(client, search_name),
             _fetch_chembl(client, search_name),
+            _fetch_ncbi_books(client, search_name + " pharmacology dosing"),
         ]
 
         # LLM-expanded MeSH terms — additive on top of hardcoded searches above
         if extra_pubmed_terms:
             import datetime as _dt
             _cur_year = _dt.datetime.now().year
-            _date_suffix = f" AND 2010:{_cur_year}[dp]"
+            _date_suffix = f" AND {_EVIDENCE_SEARCH_START_YEAR}:{_cur_year}[dp]"
             for _t in extra_pubmed_terms[:3]:  # cap at 3 extra terms per call
                 if _t and len(_t) > 10 and "[dp]" not in _t:  # skip empty/malformed/already-dated
                     _tasks.append(
@@ -1880,6 +1998,7 @@ async def fetch_drug_data(drug_name: str, *, extra_pubmed_terms: list[str] | Non
             medlineplus_drug,
             statpearls_text,
             chembl_data,
+            ncbi_books_drug,
             *_extra_esearch_results,
         ) = await asyncio.gather(*_tasks, return_exceptions=True)
 
@@ -1972,6 +2091,15 @@ async def fetch_drug_data(drug_name: str, *, extra_pubmed_terms: list[str] | Non
             if "PMC (full text)" not in result.data_sources:
                 result.data_sources.append("PMC (full text)")
 
+        # NCBI Books drug content — append to StatPearls if available
+        if isinstance(ncbi_books_drug, str) and ncbi_books_drug.strip():
+            if result.mechanism_raw:
+                result.mechanism_raw = result.mechanism_raw + "\n\n[NCBI Books]\n" + ncbi_books_drug[:600]
+            else:
+                result.mechanism_raw = "[NCBI Books]\n" + ncbi_books_drug[:600]
+            if "NCBI Books" not in result.data_sources:
+                result.data_sources.append("NCBI Books")
+
         # ChEMBL: enrich mechanism and drug class
         if isinstance(chembl_data, dict) and chembl_data:
             if chembl_data.get("mechanism") and not result.mechanism_raw:
@@ -2040,19 +2168,19 @@ async def fetch_disease_data(disease_name: str, *, extra_pubmed_terms: list[str]
     journal_filter = extra_journal_filter or _get_journal_filter(disease_name)
 
     # Build PubMed search terms
-    guideline_term = f"{disease_name}[Title/Abstract] AND (Practice Guideline[pt] OR Guideline[pt]) AND 2010:{cur_year}[dp]"
-    review_term = f"{disease_name}[Title/Abstract] AND (Systematic Review[pt] OR Meta-Analysis[pt]) AND 2010:{cur_year}[dp]"
+    guideline_term = f"{disease_name}[Title/Abstract] AND (Practice Guideline[pt] OR Guideline[pt]) AND {_EVIDENCE_SEARCH_START_YEAR}:{cur_year}[dp]"
+    review_term = f"{disease_name}[Title/Abstract] AND (Systematic Review[pt] OR Meta-Analysis[pt]) AND {_EVIDENCE_SEARCH_START_YEAR}:{cur_year}[dp]"
     classification_term = (
-        f"{disease_name} classification[Title/Abstract] AND 2010:{cur_year}[dp]"
+        f"{disease_name} classification[Title/Abstract] AND {_EVIDENCE_SEARCH_START_YEAR}:{cur_year}[dp]"
     )
     broad_guideline_term = (
-        f"{disease_name}[Title/Abstract] AND (guideline OR consensus OR recommendation) AND 2010:{cur_year}[dp]"
+        f"{disease_name}[Title/Abstract] AND (guideline OR consensus OR recommendation) AND {_EVIDENCE_SEARCH_START_YEAR}:{cur_year}[dp]"
     )
     broad_review_term = (
-        f"{disease_name}[Title/Abstract] AND (systematic review OR meta-analysis OR review) AND 2010:{cur_year}[dp]"
+        f"{disease_name}[Title/Abstract] AND (systematic review OR meta-analysis OR review) AND {_EVIDENCE_SEARCH_START_YEAR}:{cur_year}[dp]"
     )
     journal_term = (
-        f"{disease_name}[Title/Abstract] AND {journal_filter} AND 2010:{cur_year}[dp]"
+        f"{disease_name}[Title/Abstract] AND {journal_filter} AND {_EVIDENCE_SEARCH_START_YEAR}:{cur_year}[dp]"
         if journal_filter
         else None
     )
@@ -2070,12 +2198,14 @@ async def fetch_disease_data(disease_name: str, *, extra_pubmed_terms: list[str]
             _fetch_medlineplus(client, disease_name),
             _fetch_semantic_scholar(client, disease_name),
             _fetch_ncbi_disease_structured(client, disease_name),
+            _fetch_ncbi_books(client, disease_name),
+            _fetch_clinicaltrials(client, disease_name),
         ]
 
         # LLM-expanded MeSH terms — additive on top of hardcoded searches above
         if extra_pubmed_terms:
             _cur_year = _dt.now().year
-            _date_suffix = f" AND 2010:{_cur_year}[dp]"
+            _date_suffix = f" AND {_EVIDENCE_SEARCH_START_YEAR}:{_cur_year}[dp]"
             for _t in extra_pubmed_terms[:3]:  # cap at 3 extra terms per call
                 if _t and len(_t) > 10 and "[dp]" not in _t:  # skip empty/malformed/already-dated
                     tasks.append(
@@ -2108,6 +2238,8 @@ async def fetch_disease_data(disease_name: str, *, extra_pubmed_terms: list[str]
         medlineplus = results[6] if isinstance(results[6], str) else None
         semantic = results[7] if isinstance(results[7], list) else []
         ncbi = results[8] if len(results) > 8 and isinstance(results[8], str) else None
+        ncbi_books = results[9] if len(results) > 9 and isinstance(results[9], str) else None
+        ct_studies = results[10] if len(results) > 10 and isinstance(results[10], list) else []
 
         # Extract expanded PubMed search results from LLM-generated terms
         extra_guideline_ids = []
@@ -2163,6 +2295,20 @@ async def fetch_disease_data(disease_name: str, *, extra_pubmed_terms: list[str]
         result.semantic_papers = semantic
         result.ncbi_structured = ncbi
 
+        # NCBI Books — use as fallback if StatPearls/PMC found nothing
+        if ncbi_books and not result.ncbi_structured:
+            result.ncbi_structured = ncbi_books
+        elif ncbi_books and result.ncbi_structured:
+            # Append book content if both exist (truncated to avoid prompt bloat)
+            result.ncbi_structured = result.ncbi_structured + "\n\n" + ncbi_books[:800]
+
+        # ClinicalTrials.gov — add completed trials as guideline-level abstracts
+        if ct_studies:
+            if "ClinicalTrials.gov" not in result.data_sources:
+                result.data_sources.append("ClinicalTrials.gov")
+            # Add to guideline_abstracts so they're included in evidence scoring
+            result.guideline_abstracts = result.guideline_abstracts + ct_studies
+
     result.fetch_success = bool(
         result.guideline_abstracts
         or result.systematic_review_abstracts
@@ -2171,7 +2317,7 @@ async def fetch_disease_data(disease_name: str, *, extra_pubmed_terms: list[str]
 
     # Fallback: if no PubMed results, retry without [pt] filter
     if not result.guideline_abstracts and not result.systematic_review_abstracts:
-        fallback_term = f"{disease_name}[Title/Abstract] AND (guideline OR consensus OR recommendation) AND 2015:{_dt.now().year}[dp]"
+        fallback_term = f"{disease_name}[Title/Abstract] AND (guideline OR consensus OR recommendation) AND 2005:{_dt.now().year}[dp]"
         async with _make_client() as client:
             fallback_ids = await _pubmed_esearch_throttled(client, fallback_term, 8)
             if fallback_ids:
@@ -2397,12 +2543,12 @@ async def fetch_evidence_data(query: str, *, extra_pubmed_terms: list[str] | Non
     trial_term = (
         f"{query}[Title/Abstract] AND "
         "(Clinical Trial[pt] OR Randomized Controlled Trial[pt]) "
-        f"AND 2010:{current_year}[dp]"
+        f"AND {_EVIDENCE_SEARCH_START_YEAR}:{current_year}[dp]"
     )
-    review_term = f"{query}[Title/Abstract] AND (Systematic Review[pt] OR Meta-Analysis[pt]) AND 2010:{current_year}[dp]"
-    guideline_term = f"{query}[Title/Abstract] AND (Practice Guideline[pt] OR Guideline[pt]) AND 2010:{current_year}[dp]"
+    review_term = f"{query}[Title/Abstract] AND (Systematic Review[pt] OR Meta-Analysis[pt]) AND {_EVIDENCE_SEARCH_START_YEAR}:{current_year}[dp]"
+    guideline_term = f"{query}[Title/Abstract] AND (Practice Guideline[pt] OR Guideline[pt]) AND {_EVIDENCE_SEARCH_START_YEAR}:{current_year}[dp]"
     broad_evidence_term = (
-        f"{query}[Title/Abstract] AND (guideline OR review OR trial OR consensus OR recommendation) AND 2010:{current_year}[dp]"
+        f"{query}[Title/Abstract] AND (guideline OR review OR trial OR consensus OR recommendation) AND {_EVIDENCE_SEARCH_START_YEAR}:{current_year}[dp]"
     )
 
     async with _make_client() as client:
@@ -2412,11 +2558,12 @@ async def fetch_evidence_data(query: str, *, extra_pubmed_terms: list[str] | Non
             _pubmed_esearch_throttled(client, review_term, 8),
             _pubmed_esearch_throttled(client, guideline_term, 10, sort="pub_date"),
             _pubmed_esearch_throttled(client, broad_evidence_term, 12, sort="pub_date"),
+            _fetch_clinicaltrials(client, query),
         ]
 
         # LLM-expanded MeSH terms — additive on top of hardcoded searches above
         if extra_pubmed_terms:
-            _date_suffix = f" AND 2010:{current_year}[dp]"
+            _date_suffix = f" AND {_EVIDENCE_SEARCH_START_YEAR}:{current_year}[dp]"
             for _t in extra_pubmed_terms[:3]:  # cap at 3 extra terms per call
                 if _t and len(_t) > 10 and "[dp]" not in _t:  # skip empty/malformed/already-dated
                     _tasks.append(
@@ -2424,16 +2571,17 @@ async def fetch_evidence_data(query: str, *, extra_pubmed_terms: list[str] | Non
                     )
 
         results = await asyncio.gather(*_tasks, return_exceptions=True)
-        trial_ids, review_ids, guideline_ids, broad_ids = results[0:4]
+        trial_ids, review_ids, guideline_ids, broad_ids = results[0], results[1], results[2], results[3]
         trial_ids = trial_ids if isinstance(trial_ids, list) else []
         review_ids = review_ids if isinstance(review_ids, list) else []
         guideline_ids = guideline_ids if isinstance(guideline_ids, list) else []
         broad_ids = broad_ids if isinstance(broad_ids, list) else []
+        ct_studies_ev = results[4] if len(results) > 4 and isinstance(results[4], list) else []
 
-        # Extract expanded PubMed search results from LLM-generated terms
+        # Remaining LLM-expanded terms start at index 5 now (was 4)
         extra_ids = []
-        if len(results) > 4:
-            for _res in results[4:]:
+        if len(results) > 5:
+            for _res in results[5:]:
                 if isinstance(_res, list):
                     extra_ids.extend(_res[:8])  # take first 8 from each extra search
 
@@ -2472,6 +2620,12 @@ async def fetch_evidence_data(query: str, *, extra_pubmed_terms: list[str] | Non
             result.systematic_review_abstracts, 5000
         )
         result.guideline_abstracts = _cap_abstracts(result.guideline_abstracts, 4000)
+
+        if ct_studies_ev:
+            result.clinical_trial_abstracts = result.clinical_trial_abstracts + ct_studies_ev
+            result.clinical_trial_abstracts = _cap_abstracts(result.clinical_trial_abstracts, 6000)
+            if "ClinicalTrials.gov" not in result.data_sources:
+                result.data_sources.append("ClinicalTrials.gov")
 
         if result.clinical_trial_abstracts or result.systematic_review_abstracts or result.guideline_abstracts:
             if "PubMed" not in result.data_sources:
