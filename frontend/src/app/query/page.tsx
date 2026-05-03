@@ -118,6 +118,26 @@ function ErrorBanner({ message, onDismiss }: { message: string; onDismiss: () =>
   );
 }
 
+function PartialResultsNotice({ onDismiss }: { onDismiss: () => void }) {
+  return (
+    <div className="flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm">
+      <svg className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+      </svg>
+      <span className="flex-1 text-amber-300">
+        Response may be incomplete — connection ended early. The results shown are valid.
+      </span>
+      <button
+        onClick={onDismiss}
+        className="shrink-0 text-amber-400 hover:text-amber-200 transition-colors leading-none"
+        aria-label="Dismiss"
+      >
+        ✕
+      </button>
+    </div>
+  );
+}
+
 function QueryContent() {
   const { result, streamingText, streamingBluf, streamingSections, streamingSectionTitles, streamingFlowcharts, streamingTables, fetchedArticles, isLoading, loadingStage, error, activeModelName, isFallback, fallbackModel, submitQuery, clearResult } = useQueryContext();
   const { user } = useAuth();
@@ -249,7 +269,9 @@ function QueryContent() {
 
           {/* Error note shown beneath partial results — only when BLUF already rendered */}
           {visibleError && !isLoading && (
-            <ErrorBanner message={visibleError} onDismiss={handleDismissError} />
+            streamingSections.length > 0
+              ? <PartialResultsNotice onDismiss={handleDismissError} />
+              : <ErrorBanner message={visibleError} onDismiss={handleDismissError} />
           )}
         </div>
       )}

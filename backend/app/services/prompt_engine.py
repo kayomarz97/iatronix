@@ -68,11 +68,14 @@ _SECTION_GUIDANCE: dict[str, str] = {
     ),
     "comparative": (
         "Summary · [One dedicated section per entity being compared] · "
-        "Head-to-Head Comparison · Clinical Preference & Guideline Positioning"
+        "Head-to-Head Comparison (MUST include a comparison table with the compared entities as columns) · "
+        "Clinical Preference & Guideline Positioning"
     ),
     "comparative_drug": (
         "Summary · [One dedicated section per drug being compared] · "
-        "Head-to-Head Comparison · Clinical Preference & Guideline Positioning · "
+        "Head-to-Head Comparison (MUST include a structured comparison table with the two drugs as columns "
+        "and key dimensions as rows: mechanism, dosing, efficacy, side effects, contraindications, drug interactions) · "
+        "Clinical Preference & Guideline Positioning · "
         "Drug Interactions Between Compared Agents (list every clinically significant "
         "interaction between any two agents in the comparison — severity: major/moderate/minor, "
         "mechanism, clinical consequences, and management)"
@@ -85,7 +88,6 @@ _SECTION_GUIDANCE: dict[str, str] = {
         "Clinical Summary · Supporting Studies (with sample size, LOE) · "
         "Opposing / Conflicting Evidence · Clinical Recommendation · Guideline Status"
     ),
-    "general": "Summary · Key Points · Clinical Context · Related Considerations",
     "complex": (
         "Baseline Rule (drug × primary disease) · "
         "[ONE SECTION PER COMORBIDITY: 'Conflict with <comorbidity>' — covering interaction mechanism, dose adjustment, monitoring] · "
@@ -589,7 +591,11 @@ _STATIC_BLUF_SYSTEM = (
     + EVIDENCE_RULES
     + FORMATTING_RULES
     + "Generate a concise BLUF (bottom-line up front) and a list of section titles "
-    + "that a comprehensive answer to this query should contain."
+    + "that a comprehensive answer to this query should contain.\n\n"
+    + "BLUF RULE: The headline and body must directly answer the clinical question asked. "
+    + "Begin with the answer or recommendation (e.g., 'Metformin should be dose-reduced when eGFR is 30-45'), "
+    + "not background information. Do NOT start with 'This query is about...' or 'The topic is...'. "
+    + "Answer the question first, then elaborate.\n"
     + _BLUF_ONLY_SCHEMA
 )
 

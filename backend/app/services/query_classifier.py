@@ -6,7 +6,7 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-_VALID_TYPES = {"drug", "disease", "comparative", "procedure", "evidence", "general", "complex"}
+_VALID_TYPES = {"drug", "disease", "comparative", "procedure", "evidence", "complex"}
 
 _HIGHLIGHTS_RE = re.compile(
     r"\b(?:surviving|approach to|initial management of|quick|highlights?|"
@@ -15,61 +15,47 @@ _HIGHLIGHTS_RE = re.compile(
     re.IGNORECASE,
 )
 
-_COMPARATIVE_RE = re.compile(
-    r"\b(?:vs\.?|versus|compare|comparison|difference between|compared to|compared with)\b",
-    re.IGNORECASE,
+LLM_CLASSIFY_PROMPT = (
+    "You are a clinical query router. Return exactly one classification type for the medical query below.\n"
+    "Output ONLY valid JSON with no markdown, no explanation: {\"type\": \"...\", \"confidence\": 0.0}\n"
+    "\n"
+    "CLASSIFICATION RULES — read all rules before deciding, then apply the FIRST that matches:\n"
+    "\n"
+    "1. comparative — the query EXPLICITLY names exactly two specific entities "
+    "(two drugs, two diseases, or two treatment strategies) and asks for a direct comparison, "
+    "difference, or choice between them. Both entities must be clearly stated. "
+    "Do NOT use this type for: one entity with many properties, vague multi-entity questions, "
+    "implicit comparisons, or more than two entities.\n"
+    "\n"
+    "2. procedure — the query is SOLELY about the step-by-step technique of performing "
+    "a specific clinical procedure. There must be no management context, timing question, "
+    "outcome question, or post-procedure concern. If anything beyond pure technique is present "
+    "(including when/how long/whether to do something) → use evidence instead.\n"
+    "\n"
+    "3. drug — the query is about a SINGLE pharmaceutical agent with NO clinical condition "
+    "or patient context. Asks about mechanism, pharmacology, dosing range, interactions, "
+    "side effects, or monitoring of that one drug in isolation.\n"
+    "\n"
+    "4. disease — the query is about a SINGLE disease, condition, syndrome, or symptom with "
+    "NO drug or treatment agent named. Asks about pathophysiology, diagnosis, staging, prognosis, "
+    "or overview of that one condition. Medical abbreviations that expand to a single disease name "
+    "count as one disease entity.\n"
+    "\n"
+    "5. evidence — the query involves a drug or intervention in the context of a disease or "
+    "patient situation; OR asks when/whether/how long to use something; OR asks about "
+    "postoperative or post-procedure management; OR asks about safety or efficacy of "
+    "a specific intervention for a specific population.\n"
+    "\n"
+    "6. complex — use for EVERYTHING ELSE: multiple entities of mixed types, comorbidities, "
+    "broad clinical questions, unclear queries, multi-drug or multi-disease scenarios, general "
+    "medical questions without a precise single focus. This is the DEFAULT. When uncertain, "
+    "always prefer complex over any other type. NEVER output 'general'.\n"
+    "\n"
+    "Confidence guide: 0.9+ for unambiguous match, 0.7–0.89 for clear match, "
+    "0.5–0.69 for uncertain. Never output confidence below 0.4.\n"
+    "\n"
+    "Query: {query}"
 )
-_PROCEDURE_RE = re.compile(
-    r"\b(?:how to|steps for|procedure for|when to insert|when to remove|"
-    r"perform|insert|remove|intubation|extubation|lumbar puncture|thoracentesis|"
-    r"central line|arterial line|catheter|drain|checklist|algorithm)\b",
-    re.IGNORECASE,
-)
-_EVIDENCE_RE = re.compile(
-    r"\b(?:safe in|effective in|effective for|can .* be used|off[- ]label|"
-    r"evidence for|evidence of|trial|clinical evidence|benefit of|safety of)\b",
-    re.IGNORECASE,
-)
-_DISEASE_RE = re.compile(
-    r"\b(?:management|treatment|diagnosis|workup|approach to|evaluation of|"
-    r"guideline|guidelines|staging|classification|prognosis|complications?|"
-    r"acute|chronic|syndrome|disease|failure|embolism|hypertension|pancreatitis)\b",
-    re.IGNORECASE,
-)
-_DRUG_IN_CONDITION_RE = re.compile(
-    r"^\s*([A-Za-z][A-Za-z0-9\-]{2,40}(?:\s+[A-Za-z][A-Za-z0-9\-]{2,40}){0,2})\s+(?:in|for)\s+([A-Za-z].{2,120})$",
-    re.IGNORECASE,
-)
-
-# Complex = drug/procedure/management in a primary condition WITH comorbidities or modifiers.
-# Triggers on: ", with X", " and Y", "alongside", "comorbid", "complicated by",
-# multiple "in/with" clauses, or known modifier tokens (dialysis, hepatic impairment,
-# renal failure, pregnancy, paediatric, elderly, on warfarin / anticoagulants, etc.).
-_COMPLEX_RE = re.compile(
-    r"\b(?:"
-    r"with\s+(?:co-?morbid|comorbidity|comorbidities|complication|complicated\s+by)"
-    r"|alongside\s+\w+"
-    r"|(?:in|for)\s+[\w\s\-]{3,40}\s+(?:with|and|plus)\s+[\w\s\-]{3,80}"
-    r"|on\s+(?:dialysis|haemodialysis|hemodialysis|warfarin|doac|noac|anticoagulant|fluconazole|amiodarone)"
-    r"|(?:hepatic|renal|cardiac|kidney|liver)\s+(?:failure|impairment|dysfunction)"
-    r"|pregnan(?:t|cy)\s+(?:with|and|plus)"
-    r")\b",
-    re.IGNORECASE,
-)
-
-LLM_CLASSIFY_PROMPT = """Classify this medical query into exactly one type.
-Return ONLY valid JSON with no extra text: {{"type": "...", "confidence": 0.0}}
-
-Types:
-- drug = drug or molecule lookup, dosing, mechanism, side effects, monitoring, interactions
-- disease = disease/condition overview, diagnosis, criteria, treatment, prognosis
-- comparative = explicit comparison between drugs, diseases, or management options
-- procedure = how to perform, stepwise technique, insertion/removal, protocols
-- evidence = whether an intervention is safe/effective/appropriate in a condition, or evidence synthesis
-- complex = a drug/procedure/management question in a primary condition that is qualified by one or more comorbidities, organ-system impairments, pregnancy, age extremes, or concomitant drugs (e.g. "rivaroxaban dosing in afib with hepatic impairment on fluconazole")
-- general = broad clinical summary, quick pearls, or anything not clearly above
-
-Query: {query}"""
 
 
 def detect_intent(query: str) -> str:
@@ -79,40 +65,15 @@ def detect_intent(query: str) -> str:
     return "full"
 
 
-def classify_query(query: str, user_hint: str | None = None) -> tuple[str, float]:
-    """Minimal structural fallback classifier.
+def _no_llm_fallback(query: str, user_hint: str | None = None) -> tuple[str, float]:
+    """Emergency fallback when no LLM key is available.
 
-    This is intentionally not a medical-routing engine. The primary path is LLM/DSPy
-    analysis. These checks only catch obvious structure when that path is unavailable.
+    Returns 'complex' so the comprehensive fetcher runs — better than no fetch.
+    This is used only when both user key and system LLM are unavailable.
     """
-    if user_hint:
+    if user_hint and user_hint in _VALID_TYPES:
         return user_hint, 0.99
-
-    normalized = re.sub(r"\s+", " ", query.strip())
-    token_count = len(re.findall(r"[A-Za-z0-9\-]+", normalized))
-
-    if _COMPARATIVE_RE.search(query):
-        return "comparative", 0.9
-    if _COMPLEX_RE.search(query):
-        return "complex", 0.85
-    if _PROCEDURE_RE.search(query):
-        return "procedure", 0.85
-    if _EVIDENCE_RE.search(query):
-        return "evidence", 0.8
-    drug_in_condition = _DRUG_IN_CONDITION_RE.match(normalized)
-    if drug_in_condition and token_count <= 10:
-        left = drug_in_condition.group(1)
-        if len(left.split()) <= 3:
-            return "drug", 0.75
-    if _DISEASE_RE.search(query):
-        return "disease", 0.75
-    if token_count <= 4 and not detect_intent(query) == "highlights":
-        return "disease", 0.6
-    if detect_intent(query) == "highlights":
-        if token_count <= 6:
-            return "disease", 0.6
-        return "general", 0.7
-    return "general", 0.4
+    return "complex", 0.4
 
 
 async def classify_query_llm(
@@ -121,9 +82,9 @@ async def classify_query_llm(
     user_provider: str | None = None,
     model_id: str | None = None,
 ) -> tuple[str, float]:
-    """LLM classifier used as the primary route when a user key is available."""
+    """LLM classifier — primary standalone classifier when _analyze_and_expand_query() is unavailable."""
     if not user_key:
-        return classify_query(query)
+        return _no_llm_fallback(query)
 
     try:
         from app.services.llm_factory import create_llm
@@ -141,11 +102,11 @@ async def classify_query_llm(
         if text.startswith("json"):
             text = text[4:].strip()
         data = json.loads(text)
-        qtype = data.get("type", "general")
+        qtype = data.get("type", "complex")
         conf = float(data.get("confidence", 0.6))
         if qtype not in _VALID_TYPES:
-            return classify_query(query)
+            return _no_llm_fallback(query)
         return qtype, min(max(conf, 0.0), 1.0)
     except Exception:
         logger.debug("LLM query classification failed", exc_info=True)
-        return classify_query(query)
+        return _no_llm_fallback(query)

@@ -2842,7 +2842,7 @@ async def fetch_data_for_query(
             fetched.fallback_to_llm = not fetched.evidence_data.fetch_success
             _fire_and_forget_index(fetched.evidence_data.clinical_trial_abstracts)
 
-        elif query_type == "complex" and entities:
+        elif query_type in ("complex", "general") and entities:
             # entities[0] = drug/intervention; entities[1] = primary disease (when extractor found it).
             drug_name = entities[0]
             primary_disease = entities[1] if len(entities) >= 2 else (condition_context or "")

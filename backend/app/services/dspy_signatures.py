@@ -14,7 +14,7 @@ class MedicalQueryAnalysis(dspy.Signature):
     )
 
     query_type: Literal[
-        "drug", "disease", "comparative", "procedure", "evidence", "general", "complex"
+        "drug", "disease", "comparative", "procedure", "evidence", "complex"
     ] = dspy.OutputField()
     required_sections: list[str] = dspy.OutputField(
         desc="Only the sections relevant to this query"
@@ -57,7 +57,7 @@ class MedicalResponseGeneration(dspy.Signature):
 
     query: str = dspy.InputField()
     query_type: str = dspy.InputField(
-        desc="One of drug, disease, comparative, procedure, evidence, general"
+        desc="One of drug, disease, comparative, procedure, evidence, complex"
     )
     condition_context: str = dspy.InputField(
         desc="Condition context for drug/comparative queries when present, otherwise empty string"
