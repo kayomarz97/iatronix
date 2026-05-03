@@ -62,7 +62,7 @@ from app.services.prompt_engine import (
     build_bluf_only_messages,
     build_section_messages,
 )
-from app.services.query_classifier import classify_query, classify_query_llm, detect_intent
+from app.services.query_classifier import classify_query_llm, detect_intent
 from app.services.safety_checker import check_safety
 from app.services.url_builder import enrich_references
 from app.services.source_router import route_query
@@ -1552,7 +1552,11 @@ async def _analyze_and_expand_query(
         "RULES (follow exactly):\n"
         "1. rewritten_query: Fix all typos, expand all medical abbreviations (CKD→chronic kidney disease, "
         "HTN→hypertension, HF→heart failure, MI→myocardial infarction, T2DM→type 2 diabetes mellitus, "
-        "COPD→chronic obstructive pulmonary disease, SGLT2→sodium-glucose cotransporter-2, etc.), "
+        "COPD→chronic obstructive pulmonary disease, SGLT2→sodium-glucose cotransporter-2, "
+        "ALL→acute lymphoblastic leukemia, AML→acute myeloid leukemia, CLL→chronic lymphocytic leukemia, "
+        "CML→chronic myeloid leukemia, NHL→non-Hodgkin lymphoma, HL→Hodgkin lymphoma, "
+        "MM→multiple myeloma, HCC→hepatocellular carcinoma, GBM→glioblastoma multiforme, "
+        "NSCLC→non-small cell lung cancer, SCLC→small cell lung cancer, RCC→renal cell carcinoma, etc.), "
         "keep clinical intent exactly the same.\n"
         "2. intent: classify as ONE of: treatment | diagnosis | drug_dosing | drug_safety | "
         "drug_comparison | guideline | side_effect | contraindication | prognosis | general. "
@@ -1563,9 +1567,18 @@ async def _analyze_and_expand_query(
         "5. pubmed_terms strings: valid PubMed queries using [MeSH], [Title/Abstract], AND/OR, [pt] filters.\n"
         "6. journal_filter: 2-4 top peer-reviewed journals for this topic joined with OR.\n"
         "7. Do NOT include date ranges in pubmed_terms (added automatically).\n"
-        "8. query_type: if query describes a medical condition/disease/symptom → 'disease'. "
-        "When uncertain between 'general' and 'disease', always prefer 'disease'.\n"
-        "9. Output ONLY JSON — no markdown, no backticks, no explanation.\n"
+        "8. query_type: classify using these rules in order:\n"
+        "   - 'comparative': ONLY when exactly two entities are explicitly being compared.\n"
+        "   - 'procedure': ONLY for pure step-by-step technique queries with no other clinical context.\n"
+        "   - 'drug': ONLY for a single pharmaceutical agent with no disease/condition context.\n"
+        "   - 'disease': ONLY for a single disease/condition with no drug or treatment named.\n"
+        "   - 'evidence': drug-in-condition queries, timing/management decisions, postoperative care, safety/efficacy questions.\n"
+        "   - 'complex': everything else — multiple entities, comorbidities, broad questions, unclear queries.\n"
+        "   NEVER output 'general'. Default to 'complex' when uncertain.\n"
+        "9. response_focus: Write a direct clinical answer to the user's question in 1-2 sentences. "
+        "This is used as the BLUF (Bottom Line Up Front). Start with the answer (e.g., 'Metformin should be "
+        "dose-reduced when eGFR is 30-45 mL/min'), not background information.\n"
+        "10. Output ONLY JSON — no markdown, no backticks, no explanation.\n"
         "\n"
         f"Query: {query}"
     )
@@ -2120,27 +2133,7 @@ async def process_query(
             model_id=normalized_request_model,
         )
 
-    # Item 18: confidence fallback — use rule-based classifier when LLM confidence is low
-    if confidence < settings.classifier_confidence_threshold:
-        fallback_type, fallback_conf = classify_query(request.query)
-        if fallback_conf >= confidence:
-            logger.info(
-                "Classifier confidence %.2f below threshold %.2f — using rule-based: %s→%s",
-                confidence,
-                settings.classifier_confidence_threshold,
-                query_type,
-                fallback_type,
-            )
-            query_type, confidence = fallback_type, fallback_conf
-
-    # Item 19: disease safety net — if LLM found entities but classified as 'general', upgrade to 'disease'
-    if query_type == "general" and query_analysis and query_analysis.get("entities"):
-        logger.info(
-            "query_type upgraded 'general'→'disease': entities %s detected in query",
-            query_analysis["entities"],
-        )
-        query_type = "disease"
-
+    # Normalize query type for highlights intent — don't use complex/procedure/etc
     if query_intent == "highlights" and query_type not in (
         "drug",
         "disease",
@@ -2148,20 +2141,19 @@ async def process_query(
         "procedure",
         "evidence",
     ):
-        query_type = "general"
+        query_type = "complex"
 
     analysis_entities = _sanitize_entities(query_analysis["entities"]) if query_analysis else []
     condition_context = query_analysis.get("condition_context") if query_analysis else None
 
-    # Item 20: broad evidence safety net — if query remains 'general' with no entities,
-    # upgrade to 'evidence' and use the raw query as a synthetic entity so that
-    # route_query sets fetch_enabled=True. There are always PubMed articles.
-    if query_type == "general" and not analysis_entities:
+    # Safety net: normalize any unrecognized type (including legacy "general") to "complex"
+    _CURRENT_VALID_TYPES = {"drug", "disease", "comparative", "procedure", "evidence", "complex"}
+    if query_type not in _CURRENT_VALID_TYPES:
         logger.info(
-            "query_type upgraded 'general'→'evidence' (Item 20): no entities, using raw query as entity"
+            "query_type normalized to 'complex': unrecognized value %r (query: %r)",
+            query_type, request.query[:60],
         )
-        query_type = "evidence"
-        analysis_entities = _sanitize_entities([request.query.strip()[:120]])
+        query_type = "complex"
 
     # Track query frequency for self-improvement (fire-and-forget)
     if redis_client:

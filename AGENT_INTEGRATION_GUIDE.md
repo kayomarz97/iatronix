@@ -75,10 +75,18 @@ Next.js Proxy  →  FastAPI Backend (port 8000)
 ### 4.1 Classification
 `rag_pipeline.py` determines `query_type` via:
 - User-supplied hint in the request (`query_type` field)
-- Regex fallback classifier (`query_classifier.py`)
-- Optional LLM classifier (if DSPy enabled)
+- LLM classifier (primary path: `_analyze_and_expand_query()` Haiku call, or fallback: `classify_query_llm()`)
+- Fallback: `_no_llm_fallback()` returns `"complex"` type (catch-all) when no LLM key available
 
-**Types:** `drug` | `disease` | `comparative` | `procedure` | `evidence` | `complex` | `general`
+**Types (6 total, no "general"):**
+- `drug` — single pharmaceutical agent, no clinical condition context; info-only questions (mechanism, dosing, side effects)
+- `disease` — single disease/condition/syndrome, no drug/treatment context; overview, diagnosis, prognosis questions
+- `comparative` — exactly two named entities being explicitly compared; outputs comparison table
+- `procedure` — pure step-by-step technique only (no timing, management, or clinical context); "how to perform" questions only
+- `evidence` — drug-in-condition (drug + disease context), timing/management decisions, postoperative protocols, safety/efficacy of intervention
+- `complex` — everything else (multiple entities, comorbidities, vague queries, broad clinical questions, general medical questions); fetch all sources; catch-all default
+
+**"general" type removed** — all queries now route to one of the 6 valid types. The LLM classifier is instructed never to return "general"; any value from cache or malformed output is normalized to "complex" by the safety net.
 
 ### 4.2 Cache Check
 Redis key format: `v{prompt_version}:{model_id}:{query_type}:{md5(normalized_query)}`
@@ -99,7 +107,7 @@ Redis key format: `v{prompt_version}:{model_id}:{query_type}:{md5(normalized_que
 
 | Source | What It Provides |
 |--------|-----------------|
-| OpenFDA | Drug labels, adverse events |
+| OpenFDA | Drug labels (marketed drugs only—filtered by product_type), adverse events (May 2026: added marketing status filter to exclude discontinued drugs) |
 | PubMed/NCBI | Guideline abstracts, PMC full text, clinical trials |
 | RxNorm | Drug names, interactions, drug class |
 | DailyMed | Full FDA drug labels |
@@ -153,7 +161,12 @@ Token budgets (single-call path):
 
 ### 4.8 Post-Processing
 1. JSON repair (LLM output is often malformed)
-2. Citation validation (sources must be in the approved whitelist)
+2. Citation validation (`citation_validator.py`):
+   - **Strict mode** (query_type=`complex` or `procedure`): Claims with sources not matching `[SOURCE: ...]` labels from fetched data are dropped (marked `__drop__=True`)
+   - **Approved sources:** Whitelist of 30+ sources (PubMed, NICE, FDA, ACOG, etc.); unverified sources logged as warnings but allowed for non-strict types
+   - **NA literal replacement:** LLM-output "NA"/"N/A" values in source field replaced with actual data source or "Medical literature" fallback
+   - **URL validation:** HTTPS-only, domain whitelist enforcement; invalid URLs removed
+   - **Evidence ratio check:** Warns if >50% (strict) or >70% (non-strict) of claims have low confidence or missing citations
 3. Drug name normalization (fuzzy match + metaphone)
 4. Safety checking
 5. Rich hyperlinking (PMID/DOI → URLs)
@@ -209,14 +222,15 @@ The pipeline is designed to accept additional agents at specific integration poi
 
 ### 6.1 Add a New Query Type
 
-1. **Add the type** to the `QueryType` enum in `schemas/query.py`
-2. **Create a response schema** (e.g., `TriageResponse`) in `schemas/query.py`
-3. **Add a classifier branch** in `query_classifier.py` (regex patterns or LLM prompt)
-4. **Add fetch logic** in `data_fetcher.py` (new async function, add to `FetchedData`)
-5. **Add a prompt builder** in `prompt_engine.py` (`build_<type>_prompt()`)
-6. **Add a source route** in `source_router.py` (model tier, entity extraction)
-7. **Add a frontend renderer** in `frontend/src/components/results/`
-8. **Update `AdaptiveResultRenderer.tsx`** to handle the new type
+Note: The 6-type taxonomy (drug, disease, comparative, procedure, evidence, complex) is stable and complete. To modify classification behavior:
+
+1. **Update the LLM classifier prompt** in `query_classifier.py`: `LLM_CLASSIFY_PROMPT` — add semantic rules for the new classification rule
+2. **Update `_analyze_and_expand_query()` prompt** in `rag_pipeline.py` (Rule 8): add clarification on when the new rule applies
+3. **Add/modify fetch logic** in `data_fetcher.py` if a query type now maps to different sources
+4. **Add/modify prompt builder** in `prompt_engine.py` if response format changes per type
+5. **Update `_SECTION_GUIDANCE`** dict in `prompt_engine.py` if section structure differs
+
+For truly novel query types (unlikely), follow: Add schema → update LLM prompt → add fetch function → add prompt builder → add frontend renderer
 
 ### 6.2 Add a New Data Source
 
@@ -232,7 +246,12 @@ async def fetch_my_source(query: str, entities: dict) -> dict:
         return {}  # Silent failure — never block the pipeline
 ```
 
-Then add it to the `asyncio.gather()` call in `data_fetcher.py`'s main fetch function, and add a field to `FetchedData`.
+Then add it to the `asyncio.gather()` call in `data_fetcher.py`'s main fetch function, and add a field to `FetchedData`. Make sure to populate the `data_sources` field in your result object so sources are rolled up into `FetchedData.data_sources` (see May 2026 update below).
+
+#### May 2026 Update: Data Source Rollup
+- **Added:** Automatic aggregation of all sub-result `data_sources` into top-level `FetchedData.data_sources` at end of `fetch_data_for_query()`
+- **Purpose:** Enables accurate `fetch_sources` reporting to frontend for `DataSourceBadges` component
+- **Implementation:** Loop through all `FetchedData` sub-results and `comparative_drug_data`, collect unique source strings, assign to `fetched.data_sources`
 
 ### 6.3 Add a New LLM Provider
 
@@ -374,6 +393,17 @@ The `complex` query type handles questions like: _"rivaroxaban dosing in severe 
 - `prompt_engine.py`: add `build_complex_bluf_messages()`, `build_complex_section_messages()`
 - `rag_pipeline.py`: route complex queries through new builders
 - `citation_validator.py`: strict-mode enforcement for complex
+
+---
+
+## 7a. Strict Citation Validation Extended to Procedure Queries (May 2026)
+
+**Rationale:** Procedure queries (e.g., "surgical treatment of Dupuytren's contracture") were allowing LLM to cite drugs/treatments from training knowledge even though no FDA data was fetched, leading to hallucinated drug recommendations.
+
+**Change:**
+- Modified `citation_validator.py` line 87: `strict = query_type in ("complex", "procedure")` (was only `"complex"`)
+- Now drops any claim whose source doesn't match a `[SOURCE: ...]` label from the actual fetched data block for procedure queries
+- Prevents LLM from inventing drug/treatment claims during procedure responses
 
 ---
 
