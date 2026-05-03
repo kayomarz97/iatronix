@@ -2057,8 +2057,9 @@ async def process_query(
 
     query_intent = detect_intent(request.query)
 
-    # Speculative type via rule-based classifier (sync, ~1ms) — used for parallel cache check
-    speculative_type, _ = classify_query(request.query)
+    # Speculative type — default to complex (catch-all) for parallel cache prefetch
+    # Used only for cache hint before real LLM classification; doesn't affect final result
+    speculative_type = "complex"
 
     # For OpenRouter users, use their chosen model for classification —
     # settings.model_classify is a Claude Haiku ID that OpenRouter doesn't recognise.
