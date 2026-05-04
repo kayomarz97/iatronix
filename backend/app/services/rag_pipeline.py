@@ -489,11 +489,8 @@ def _retrieval_assessment(
         )
         evidence_hits = len(d.guideline_abstracts or []) + len(d.systematic_review_abstracts or []) + len(d.clinical_trial_abstracts or [])
         score = core_fields * 2 + min(evidence_hits, 6)
-        if core_fields < 3:
-            reasons.append("too few populated drug fields")
-        if evidence_hits < 2 and not fetched_data.condition_data:
-            reasons.append("limited drug evidence")
-        return score, score >= 8, reasons
+        # Any populated field or evidence hit is sufficient — LLM notes quality
+        return score, score >= 2, reasons
 
     if query_type == "disease":
         if not fetched_data.disease_data:
@@ -506,9 +503,8 @@ def _retrieval_assessment(
             score += 1
         if d.nice_recommendations:
             score += 2
-        if guideline_hits + review_hits < 3:
-            reasons.append("too few disease abstracts")
-        return score, score >= 8, reasons
+        # Any guideline/review/summary is sufficient
+        return score, score >= 1, reasons
 
     if query_type == "procedure":
         if not fetched_data.procedure_data:
@@ -516,9 +512,8 @@ def _retrieval_assessment(
         d = fetched_data.procedure_data
         hits = len(d.guideline_abstracts or []) + len(d.practice_guideline_abstracts or [])
         score = hits * 2
-        if hits < 2:
-            reasons.append("too few procedure guidelines")
-        return score, score >= 4, reasons
+        # Any guideline hit is sufficient
+        return score, score >= 1, reasons
 
     if query_type == "evidence":
         if not fetched_data.evidence_data:
@@ -528,9 +523,8 @@ def _retrieval_assessment(
         reviews = len(d.systematic_review_abstracts or [])
         guidelines = len(d.guideline_abstracts or [])
         score = trials * 2 + reviews * 2 + guidelines
-        if trials + reviews + guidelines < 3:
-            reasons.append("too few evidence studies")
-        return score, score >= 7, reasons
+        # Even a single case report or trial is sufficient — LLM notes evidence quality
+        return score, score >= 1, reasons
 
     if query_type == "comparative":
         drug_hits = 0
@@ -542,11 +536,29 @@ def _retrieval_assessment(
         if evidence:
             evidence_hits = len(evidence.clinical_trial_abstracts or []) + len(evidence.systematic_review_abstracts or []) + len(evidence.guideline_abstracts or [])
         score = drug_hits + min(evidence_hits * 2, 8)
-        if len(fetched_data.comparative_drug_data or []) < 2:
-            reasons.append("comparison entities not fully resolved")
-        if evidence_hits < 2:
-            reasons.append("limited comparative evidence")
-        return score, score >= 8, reasons
+        # Any drug data or evidence hit is sufficient
+        return score, score >= 2, reasons
+
+    if query_type in ("complex", "general"):
+        # Aggregate evidence across all sub-fetch results for complex queries
+        total = 0
+        d = fetched_data.drug_data
+        if d and d.fetch_success:
+            total += sum(1 for v in [d.indications_raw, d.dosing_raw, d.mechanism_raw] if v)
+            total += len(d.guideline_abstracts or []) + len(d.systematic_review_abstracts or []) + len(d.clinical_trial_abstracts or [])
+        c = fetched_data.condition_data
+        if c and c.fetch_success:
+            total += len(c.guideline_abstracts or []) + len(c.systematic_review_abstracts or [])
+        e = fetched_data.evidence_data
+        if e and e.fetch_success:
+            total += len(e.clinical_trial_abstracts or []) + len(e.systematic_review_abstracts or []) + len(e.guideline_abstracts or [])
+        for comorbid in (fetched_data.comorbidity_data or []):
+            if comorbid and comorbid.fetch_success:
+                total += len(comorbid.guideline_abstracts or []) + len(comorbid.systematic_review_abstracts or [])
+        score = total
+        if score < 1:
+            reasons.append("no evidence retrieved for complex query")
+        return score, score >= 1, reasons
 
     if query_type in {"drug", "disease", "procedure", "evidence", "comparative"}:
         return 0, False, ["data fetch timed out — no retrieval data available"]
@@ -1412,6 +1424,8 @@ def _default_model_for_provider(provider: str | None) -> str:
         return settings.openrouter_default_model
     if provider == "openai":
         return settings.openai_default_model
+    if provider == "cerebras":
+        return settings.cerebras_default_model
     return settings.model_haiku
 
 
@@ -1426,6 +1440,8 @@ def _normalize_model_for_provider(
         return model_id if "/" not in model_id else settings.openai_default_model
     if provider == "anthropic":
         return model_id if "/" not in model_id else settings.model_haiku
+    if provider == "cerebras":
+        return model_id if model_id else settings.cerebras_default_model
     if model_explicit:
         return model_id
     return model_id or settings.model_haiku
