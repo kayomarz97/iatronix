@@ -23,4 +23,6 @@ def get_dspy_lm(
     }
     if provider == "openrouter":
         kwargs["api_base"] = settings.openrouter_api_base
+    elif provider == "cerebras":
+        kwargs["api_base"] = settings.cerebras_api_base
     return dspy.LM(f"{prefix}/{model_id}", **kwargs)
