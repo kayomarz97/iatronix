@@ -2061,11 +2061,11 @@ async def process_query(
     # Used only for cache hint before real LLM classification; doesn't affect final result
     speculative_type = "complex"
 
-    # For OpenRouter users, use their chosen model for classification —
-    # settings.model_classify is a Claude Haiku ID that OpenRouter doesn't recognise.
+    # For non-Anthropic providers, use their own model for classification.
+    # settings.model_classify is an Anthropic Haiku ID; other providers need their own models.
     _dspy_classify_model = (
         normalized_request_model
-        if user_llm_provider == "openrouter"
+        if provider_for_request in ("openrouter", "cerebras", "openai", "gemini")
         else settings.model_classify
     )
 

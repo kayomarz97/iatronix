@@ -281,10 +281,12 @@ def _match_source_pattern(source_lower: str, title: str) -> str | None:
             if title and base_url.endswith(("/", "search", "guidance", "Guidelines")):
                 # Append a search query for sources that support it
                 if (
-                    "search" in base_url
+                    "pubmed.ncbi.nlm.nih.gov" in base_url
+                    or "search" in base_url
                     or "nice.org.uk" in base_url
                     or "cochrane" in base_url
                 ):
-                    return f"{base_url}?q={quote(title)}"
+                    param = "term" if "pubmed.ncbi.nlm.nih.gov" in base_url else "q"
+                    return f"{base_url}?{param}={quote(title)}"
             return base_url
     return None
