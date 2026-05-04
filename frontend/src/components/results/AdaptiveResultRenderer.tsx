@@ -90,6 +90,8 @@ function normalizeMd(text: string): string {
   if (!text) return text;
   // Convert * bullets to - bullets
   let out = text.replace(/^\* /gm, "- ");
+  // Single newlines between non-bullet lines → double newline (paragraph break)
+  out = out.replace(/([^\n])\n([^\n\-*#>])/g, "$1\n\n$2");
   // If text is wall-of-prose (many sentences, no bullets/headings), convert to bullets
   const sentenceCount = (out.match(/\. /g) || []).length;
   const hasBullets = /\n[-*1]/.test(out);
@@ -131,7 +133,7 @@ function ClaimRow({ item, fetchSources }: { item: AdaptiveContentItem; fetchSour
   return (
     <div className="py-3 border-b border-border/40 last:border-0">
       <div className="flex gap-2 items-start">
-        <div className="flex-1 text-sm prose prose-sm max-w-none prose-p:my-2 prose-ul:my-2 prose-ul:list-disc prose-ul:pl-5 prose-li:my-1 prose-li:leading-relaxed prose-table:text-xs prose-strong:font-bold prose-em:italic prose-headings:font-semibold prose-headings:mt-3 prose-blockquote:border-l-4 prose-blockquote:pl-3 prose-blockquote:italic" style={{ color: "var(--text-primary)" }}>
+        <div className="flex-1 text-sm prose prose-sm max-w-none prose-p:my-2 prose-ul:my-2 prose-ul:list-disc prose-ul:pl-5 prose-li:my-1 prose-li:leading-relaxed prose-table:text-xs prose-strong:font-bold prose-em:italic prose-headings:font-semibold prose-headings:mt-3 prose-blockquote:border-l-4 prose-blockquote:pl-3 prose-blockquote:italic prose-code:bg-gray-100 dark:prose-code:bg-gray-800 prose-code:rounded prose-code:px-1 dark:prose-invert" style={{ color: "var(--text-primary)" }}>
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{normalizeMd(item.text)}</ReactMarkdown>
         </div>
         {/* Badge beside text on sm+ screens */}
@@ -207,9 +209,9 @@ function SectionCard({ section, index, fetchSources }: { section: AdaptiveSectio
             ))}
           </ul>
         ) : (
-          <div className="prose prose-sm max-w-none text-sm prose-p:my-2 prose-ul:my-2 prose-ul:list-disc prose-ul:pl-5 prose-li:block prose-li:my-1.5 prose-table:text-xs prose-strong:font-bold prose-em:italic" style={{ color: "var(--text-primary)" }}>
+          <div className="prose prose-sm max-w-none text-sm prose-p:my-2 prose-ul:my-2 prose-ul:list-disc prose-ul:pl-5 prose-li:my-1 prose-li:leading-relaxed prose-table:text-xs prose-strong:font-bold prose-em:italic prose-headings:font-semibold prose-headings:mt-3 prose-blockquote:border-l-4 prose-blockquote:pl-3 prose-blockquote:italic prose-code:bg-gray-100 dark:prose-code:bg-gray-800 prose-code:rounded prose-code:px-1 dark:prose-invert" style={{ color: "var(--text-primary)" }}>
             <ReactMarkdown remarkPlugins={[remarkGfm]}>
-              {String(section.content)}
+              {normalizeMd(String(section.content))}
             </ReactMarkdown>
           </div>
         )
@@ -403,8 +405,8 @@ export function AdaptiveResultRenderer({ data, fetchSources, hideEvidenceBar, is
           { label: "depth", value: data.depth },
         ]}
         directAnswer={
-          <ReactMarkdown remarkPlugins={[remarkGfm]} className="prose prose-sm max-w-none prose-p:my-1 prose-ul:my-1 prose-ul:list-disc prose-ul:pl-5 prose-li:my-0.5 prose-strong:font-bold">
-            {data.bluf.body ?? data.bluf.headline}
+          <ReactMarkdown remarkPlugins={[remarkGfm]} className="prose prose-sm max-w-none prose-p:my-1 prose-ul:my-1 prose-ul:list-disc prose-ul:pl-5 prose-li:my-0.5 prose-strong:font-bold prose-headings:font-semibold prose-headings:mt-2 prose-blockquote:border-l-4 prose-blockquote:pl-3 prose-blockquote:italic prose-code:bg-gray-100 dark:prose-code:bg-gray-800 prose-code:rounded prose-code:px-1 dark:prose-invert">
+            {normalizeMd(data.bluf.body ?? data.bluf.headline)}
           </ReactMarkdown>
         }
         context={

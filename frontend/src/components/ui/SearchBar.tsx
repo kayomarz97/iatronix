@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
+import { Search } from "lucide-react";
 
 interface SearchBarProps {
   onSubmit: (query: string) => void;
@@ -35,9 +36,10 @@ export function SearchBar({
       <button
         type="submit"
         disabled={isLoading || !query.trim()}
-        className="px-6 py-3 bg-primary text-white rounded-lg font-medium hover:bg-primary-dark disabled:opacity-50 transition-colors min-h-[44px]"
+        className="px-6 py-3 bg-primary text-white rounded-lg font-medium hover:bg-primary-dark disabled:opacity-50 transition-colors min-h-[44px] flex items-center justify-center whitespace-nowrap"
       >
-        {isLoading ? "..." : "Search"}
+        <span className="hidden sm:inline">{isLoading ? "..." : "Search"}</span>
+        <Search size={18} className="sm:hidden" />
       </button>
     </form>
   );

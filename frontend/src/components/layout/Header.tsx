@@ -4,8 +4,6 @@ import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  Sun,
-  Moon,
   ChevronDown,
   LogOut,
   Settings,
@@ -26,7 +24,6 @@ const NAV_LINKS = [
 
 export function Header() {
   const pathname = usePathname();
-  const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [email, setEmail] = useState("");
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -37,10 +34,6 @@ export function Header() {
     const storedKey = localStorage.getItem(API_KEY_STORAGE_KEY);
     setIsLoggedIn(!!storedKey);
     setEmail(localStorage.getItem("iatronix_email") || "");
-
-    const savedTheme = (localStorage.getItem("theme") as "dark" | "light") ?? "dark";
-    setTheme(savedTheme);
-    document.documentElement.dataset.theme = savedTheme;
   }, []);
 
   // Close dropdown on outside click
@@ -53,13 +46,6 @@ export function Header() {
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, []);
-
-  const toggleTheme = () => {
-    const next = theme === "dark" ? "light" : "dark";
-    setTheme(next);
-    document.documentElement.dataset.theme = next;
-    localStorage.setItem("theme", next);
-  };
 
   const logout = async () => {
     await signOut(auth);
@@ -138,34 +124,6 @@ export function Header() {
 
         {/* Right side */}
         <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-          {/* Theme toggle */}
-          <button
-            onClick={toggleTheme}
-            aria-label="Toggle theme"
-            style={{
-              background: "transparent",
-              border: "none",
-              cursor: "pointer",
-              padding: "8px",
-              borderRadius: "var(--radius-md)",
-              color: "var(--text-secondary)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              transition: "background var(--transition), color var(--transition)",
-            }}
-            onMouseOver={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.background = "var(--bg-hover)";
-              (e.currentTarget as HTMLButtonElement).style.color = "var(--text-primary)";
-            }}
-            onMouseOut={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.background = "transparent";
-              (e.currentTarget as HTMLButtonElement).style.color = "var(--text-secondary)";
-            }}
-          >
-            {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
-          </button>
-
           {/* Auth area */}
           {isLoggedIn ? (
             <div ref={dropdownRef} style={{ position: "relative" }}>

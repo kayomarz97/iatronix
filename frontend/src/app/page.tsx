@@ -145,10 +145,18 @@ export default function HomePage() {
         className="animate-in"
         style={{ width: "100%", maxWidth: 620, marginBottom: "2rem", animationDelay: "50ms" }}
       >
-        <div ref={wrapperRef} style={{ position: "relative" }}>
+        <div
+          style={{
+            display: "flex",
+            gap: 8,
+            alignItems: "stretch",
+          }}
+        >
           <div
+            ref={wrapperRef}
             style={{
               position: "relative",
+              flex: 1,
               boxShadow: focused ? "0 0 0 3px var(--accent-glow), var(--shadow-md)" : "var(--shadow-md)",
               borderRadius: "var(--radius-lg)",
               transition: "box-shadow 200ms ease",
@@ -173,7 +181,7 @@ export default function HomePage() {
               autoComplete="off"
               style={{
                 width: "100%",
-                padding: "16px 56px 16px 50px",
+                padding: "16px 16px 16px 50px",
                 background: "var(--bg-surface)",
                 border: "1px solid",
                 borderColor: focused ? "var(--border-focus)" : "var(--border)",
@@ -185,31 +193,39 @@ export default function HomePage() {
                 transition: "border-color 200ms ease",
               }}
             />
-            <button
-              type="submit"
-              disabled={!query.trim()}
-              style={{
-                position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)",
-                padding: "8px 18px",
-                background: query.trim() ? "var(--accent)" : "var(--bg-elevated)",
-                border: "none", borderRadius: "var(--radius-md)",
-                cursor: query.trim() ? "pointer" : "not-allowed",
-                color: query.trim() ? "#fff" : "var(--text-muted)",
-                fontWeight: 600, fontSize: "0.875rem",
-                transition: "all 200ms ease",
-              }}
-            >
-              Search
-            </button>
+
+            {showSuggestions && (
+              <SearchSuggestions
+                suggestions={suggestions}
+                onSelect={runSearch}
+                highlightIndex={highlightIndex}
+              />
+            )}
           </div>
 
-          {showSuggestions && (
-            <SearchSuggestions
-              suggestions={suggestions}
-              onSelect={runSearch}
-              highlightIndex={highlightIndex}
-            />
-          )}
+          <button
+            type="submit"
+            disabled={!query.trim()}
+            style={{
+              padding: "16px 18px",
+              background: query.trim() ? "var(--accent)" : "var(--bg-elevated)",
+              border: "none", borderRadius: "var(--radius-lg)",
+              cursor: query.trim() ? "pointer" : "not-allowed",
+              color: query.trim() ? "#fff" : "var(--text-muted)",
+              fontWeight: 600,
+              fontSize: "0.875rem",
+              transition: "all 200ms ease",
+              whiteSpace: "nowrap",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              minWidth: 44,
+            }}
+            className="search-button-responsive"
+          >
+            <span className="hidden sm:inline">Search</span>
+            <Search size={18} className="sm:hidden" />
+          </button>
         </div>
       </form>
 
