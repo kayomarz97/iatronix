@@ -1618,7 +1618,8 @@ async def _analyze_and_expand_query(
         data = _json.loads(clean)
 
         # Validate required keys exist before trusting the response
-        required_keys = {"rewritten_query", "query_type", "entities", "pubmed_terms"}
+        # pubmed_terms excluded — it's search enrichment, not classification
+        required_keys = {"rewritten_query", "query_type", "entities"}
         if not required_keys.issubset(data.keys()):
             logger.warning(
                 "_analyze_and_expand_query: missing keys %s — falling back",
@@ -1626,11 +1627,22 @@ async def _analyze_and_expand_query(
             )
             return None
 
-        # Validate pubmed_terms structure
+        # pubmed_terms: use LLM-provided value if valid, else construct minimal fallback
         pt = data.get("pubmed_terms", {})
         if not isinstance(pt, dict) or not any(pt.get(k) for k in ("guideline", "review", "trial")):
-            logger.warning("_analyze_and_expand_query: invalid pubmed_terms — falling back")
-            return None
+            rq = (data.get("rewritten_query") or query).strip()
+            data["pubmed_terms"] = {
+                "guideline": [
+                    f"{rq}[Title/Abstract] AND (Practice Guideline[pt] OR Guideline[pt])"
+                ],
+                "review": [
+                    f"{rq}[Title/Abstract] AND (Systematic Review[pt] OR Meta-Analysis[pt])"
+                ],
+                "trial": [
+                    f"{rq}[Title/Abstract] AND (Randomized Controlled Trial[pt])"
+                ],
+                "journal_filter": "",
+            }
 
         # Sanitize entities using existing helper
         data["entities"] = _sanitize_entities(data.get("entities") or [])
@@ -2117,7 +2129,7 @@ async def process_query(
         _dspy_result, _rewritten = await asyncio.gather(
             _analyze_query_with_dspy(
                 request.query,
-                model_id=settings.model_classify,
+                model_id=_dspy_classify_model,
                 user_key=user_llm_key,
                 user_provider=user_llm_provider,
             ),
