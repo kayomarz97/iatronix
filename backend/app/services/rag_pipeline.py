@@ -720,17 +720,21 @@ async def _expand_retrieval_if_needed(
     entities: list[str],
     condition_context: str | None,
     response_focus: str | None,
+    rewritten_query: str | None = None,
+    answer_entities: list[str] | None = None,
 ) -> tuple[FetchedData | None, list[str]]:
     if not settings.adaptive_second_pass_enabled or not fetched_data:
         return fetched_data, []
 
     score, sufficient, reasons = _retrieval_assessment(fetched_data, query_type)
-    if sufficient:
+    # complex and evidence always benefit from a second pass — bypass early exit
+    if sufficient and query_type not in ("complex", "evidence"):
         return fetched_data, []
 
     notes = [f"initial retrieval score={score}", *reasons]
     follow_up_terms: list[str] = []
-    for term in [response_focus, query]:
+    _primary = rewritten_query or query
+    for term in [_primary, response_focus]:
         value = re.sub(r"\s+", " ", str(term or "")).strip()
         if value and value.lower() not in {t.lower() for t in follow_up_terms}:
             follow_up_terms.append(value)
@@ -757,11 +761,15 @@ async def _expand_retrieval_if_needed(
                         fetched_data.procedure_data, extra
                     )
         elif query_type == "evidence":
-            extras = await asyncio.gather(
-                fetch_evidence_data(query),
-                *(fetch_evidence_data(term) for term in follow_up_terms[:1]),
-                return_exceptions=True,
-            )
+            _primary_term = rewritten_query or query
+            evidence_tasks: list = [fetch_evidence_data(_primary_term)]
+            # Secondary: resolved answer entities in context
+            for ae in (answer_entities or [])[:1]:
+                ae_clean = ae.strip()
+                if ae_clean:
+                    _ctx = condition_context or _primary_term
+                    evidence_tasks.append(fetch_evidence_data(f"{ae_clean} {_ctx}"))
+            extras = await asyncio.gather(*evidence_tasks, return_exceptions=True)
             for extra in extras:
                 if isinstance(extra, EvidenceFetchResult) and extra.fetch_success:
                     fetched_data.evidence_data = _enrich_evidence_result(
@@ -809,6 +817,35 @@ async def _expand_retrieval_if_needed(
                     fetched_data.condition_data = _enrich_disease_result(
                         fetched_data.condition_data, condition_extra
                     )
+        elif query_type == "complex":
+            # Always run for complex: fetch clinical scenario + answer-entity evidence in parallel
+            _primary_term = rewritten_query or query
+            tasks: list = [fetch_evidence_data(_primary_term)]
+            # Fetch resolved answer entities (drug/procedure/concept) in clinical context
+            for ae in (answer_entities or [])[:2]:
+                ae_clean = ae.strip()
+                if ae_clean:
+                    # Combine answer entity + condition context for relevance (not isolated drug lookup)
+                    _ctx = condition_context or _primary_term
+                    tasks.append(fetch_evidence_data(f"{ae_clean} {_ctx}"))
+            # Fetch disease/comorbidity data for each condition entity
+            for ent in (entities or [])[:2]:
+                if ent:
+                    tasks.append(fetch_disease_data(ent))
+            extras = await asyncio.gather(*tasks, return_exceptions=True)
+            for extra in extras:
+                if isinstance(extra, EvidenceFetchResult) and extra.fetch_success:
+                    fetched_data.evidence_data = _enrich_evidence_result(
+                        fetched_data.evidence_data, extra
+                    )
+                elif isinstance(extra, DiseaseFetchResult) and extra.fetch_success:
+                    if not fetched_data.condition_data:
+                        fetched_data.condition_data = extra
+                    else:
+                        fetched_data.comorbidity_data = [
+                            *fetched_data.comorbidity_data,
+                            extra,
+                        ]
     except Exception:
         logger.warning("Second-pass retrieval expansion failed", exc_info=True)
 
@@ -1537,12 +1574,13 @@ async def _analyze_and_expand_query(
         "EXAMPLE OUTPUT:\n"
         "{\n"
         '  "rewritten_query": "metformin chronic kidney disease dosing",\n'
-        '  "query_type": "drug",\n'
+        '  "query_type": "evidence",\n'
         '  "intent": "drug_dosing",\n'
         '  "entities": ["metformin", "chronic kidney disease"],\n'
         '  "condition_context": "chronic kidney disease",\n'
         '  "response_focus": "metformin dosing adjustments and safety in chronic kidney disease",\n'
         '  "related_topics": ["GFR thresholds", "lactic acidosis risk", "KDIGO guidelines", "renal dose adjustment"],\n'
+        '  "answer_entities": ["metformin", "renal dose adjustment"],\n'
         '  "search_variants": [\n'
         '    "metformin chronic kidney disease dosing",\n'
         '    "metformin CKD renal dose adjustment",\n'
@@ -1565,6 +1603,39 @@ async def _analyze_and_expand_query(
         '  }\n'
         "}\n"
         "\n"
+        "EXAMPLE INPUT: drug of choice for CKD with T2DM to reduce blood sugar\n"
+        "EXAMPLE OUTPUT:\n"
+        "{\n"
+        '  "rewritten_query": "drug of choice for chronic kidney disease with type 2 diabetes mellitus to reduce blood glucose",\n'
+        '  "query_type": "complex",\n'
+        '  "intent": "treatment",\n'
+        '  "entities": ["chronic kidney disease", "type 2 diabetes mellitus"],\n'
+        '  "condition_context": "chronic kidney disease, type 2 diabetes mellitus",\n'
+        '  "response_focus": "SGLT2 inhibitors such as empagliflozin are preferred in CKD with T2DM due to renoprotective and glycemic benefits per KDIGO 2022 and ADA guidelines.",\n'
+        '  "related_topics": ["eGFR thresholds", "CREDENCE trial", "DAPA-CKD trial", "KDIGO 2022", "renoprotection", "HbA1c targets in CKD"],\n'
+        '  "answer_entities": ["SGLT2 inhibitors", "empagliflozin", "dapagliflozin"],\n'
+        '  "search_variants": [\n'
+        '    "chronic kidney disease type 2 diabetes mellitus glycemic management drug choice",\n'
+        '    "CKD T2DM antidiabetic therapy guidelines",\n'
+        '    "diabetes kidney disease treatment"\n'
+        '  ],\n'
+        '  "pubmed_terms": {\n'
+        '    "guideline": [\n'
+        '      "Renal Insufficiency, Chronic[MeSH] AND Diabetes Mellitus, Type 2[MeSH] AND (Practice Guideline[pt] OR Guideline[pt])",\n'
+        '      "Renal Insufficiency, Chronic[MeSH] AND Diabetes Mellitus, Type 2[MeSH] AND Sodium-Glucose Transporter 2 Inhibitors[MeSH] AND (Practice Guideline[pt] OR Guideline[pt])"\n'
+        '    ],\n'
+        '    "review": [\n'
+        '      "Renal Insufficiency, Chronic[MeSH] AND Diabetes Mellitus, Type 2[MeSH] AND (Systematic Review[pt] OR Meta-Analysis[pt])",\n'
+        '      "Renal Insufficiency, Chronic[MeSH] AND Diabetes Mellitus, Type 2[MeSH] AND Sodium-Glucose Transporter 2 Inhibitors[MeSH] AND (Systematic Review[pt] OR Meta-Analysis[pt])"\n'
+        '    ],\n'
+        '    "trial": [\n'
+        '      "Renal Insufficiency, Chronic[MeSH] AND Diabetes Mellitus, Type 2[MeSH] AND (Randomized Controlled Trial[pt])",\n'
+        '      "Renal Insufficiency, Chronic[MeSH] AND Diabetes Mellitus, Type 2[MeSH] AND Sodium-Glucose Transporter 2 Inhibitors[MeSH] AND (Randomized Controlled Trial[pt])"\n'
+        '    ],\n'
+        '    "journal_filter": "\\"Kidney International\\"[Journal] OR \\"Journal of the American Society of Nephrology\\"[Journal] OR \\"Diabetes Care\\"[Journal]"\n'
+        '  }\n'
+        "}\n"
+        "\n"
         "RULES (follow exactly):\n"
         "1. rewritten_query: Fix all typos, expand all medical abbreviations (CKD→chronic kidney disease, "
         "HTN→hypertension, HF→heart failure, MI→myocardial infarction, T2DM→type 2 diabetes mellitus, "
@@ -1579,8 +1650,13 @@ async def _analyze_and_expand_query(
         "Use drug_dosing when dose/dosing/mg is mentioned. Use drug_comparison for vs/versus/compare. "
         "Use guideline when guidelines/recommendations/protocol is mentioned. Default to treatment.\n"
         "3. entities: SHORT CLINICAL TERMS ONLY — e.g. [\"metformin\", \"chronic kidney disease\"], never a full sentence.\n"
-        "4. search_variants: exactly 3 strings — [full rewritten query, abbreviated keyword form, shortest entity-only form].\n"
-        "5. pubmed_terms strings: valid PubMed queries using [MeSH], [Title/Abstract], AND/OR, [pt] filters.\n"
+        "4. search_variants: exactly 3 strings — [full rewritten query, abbreviated keyword form, condition-focused short form]. "
+        "All three variants MUST preserve every disease/condition named in the query. "
+        "NEVER replace disease/condition context with the resolved drug or therapy name.\n"
+        "5. pubmed_terms strings: valid PubMed queries using [MeSH], [Title/Abstract], AND/OR, [pt] filters. "
+        "CRITICAL: every pubmed_terms string MUST include ALL named diseases and clinical conditions from the query as MeSH or Title/Abstract anchors. "
+        "NEVER build pubmed_terms solely around a resolved drug/therapy name — always anchor to the clinical scenario. "
+        "Include the resolved answer (drug, procedure, or medical concept) as a second string in ALL three categories (guideline, review, trial) alongside the condition-anchored first string.\n"
         "6. journal_filter: 2-4 top peer-reviewed journals for this topic joined with OR.\n"
         "7. Do NOT include date ranges in pubmed_terms (added automatically).\n"
         "8. query_type: classify using these rules in order:\n"
@@ -1594,7 +1670,11 @@ async def _analyze_and_expand_query(
         "9. response_focus: Write a direct clinical answer to the user's question in 1-2 sentences. "
         "This is used as the BLUF (Bottom Line Up Front). Start with the answer (e.g., 'Metformin should be "
         "dose-reduced when eGFR is 30-45 mL/min'), not background information.\n"
-        "10. Output ONLY JSON — no markdown, no backticks, no explanation.\n"
+        "10. answer_entities: list of 1-3 short medical terms that ARE the answer to the query "
+        "(the resolved drug, procedure, diagnostic test, or medical concept). Empty list [] if the answer "
+        "cannot be resolved to a specific entity (e.g., 'management of CKD' has no single answer entity). "
+        "These are used to fetch specific evidence on the resolved answer, separate from the clinical scenario search.\n"
+        "11. Output ONLY JSON — no markdown, no backticks, no explanation.\n"
         "\n"
         f"Query: {query}"
     )
@@ -2348,6 +2428,8 @@ async def process_query(
             entities=routing.entities if routing else (analysis_entities or []),
             condition_context=condition_context,
             response_focus=(query_analysis or {}).get("response_focus") if query_analysis else None,
+            rewritten_query=rewritten_query,
+            answer_entities=(query_analysis or {}).get("answer_entities") if query_analysis else None,
         )
 
         # Rank retrieved articles by evidence quality before LLM synthesis
