@@ -73,10 +73,18 @@ Next.js Proxy  →  FastAPI Backend (port 8000)
 ## 4. Query Lifecycle (Step-by-Step)
 
 ### 4.1 Classification
-`rag_pipeline.py` determines `query_type` via:
-- User-supplied hint in the request (`query_type` field)
-- LLM classifier (primary path: `_analyze_and_expand_query()` Haiku call, or fallback: `classify_query_llm()`)
-- Fallback: `_no_llm_fallback()` returns `"complex"` type (catch-all) when no LLM key available
+`rag_pipeline.py` determines `query_type` via (in priority order):
+1. User-supplied hint in the request (`query_type` field) — confidence 0.99
+2. LLM analysis+expansion result (`_analyze_and_expand_query()` call via DSPy) — confidence 0.95
+3. LLM classifier fallback (`classify_query_llm()` call when #2 fails) — confidence variable
+4. Fallback: `_no_llm_fallback()` returns `"complex"` type (catch-all) when no LLM key available — confidence 0.4
+
+**LLM call routing** — for non-Anthropic providers, `_dspy_classify_model` uses the user's own model for classification:
+- **OpenRouter** → uses user's OpenRouter model
+- **Cerebras** → uses user's Cerebras model (e.g. `gpt-oss-120b`)
+- **OpenAI** → uses user's OpenAI model
+- **Gemini** → uses user's Gemini model
+- **Anthropic** → uses `settings.model_classify` (Claude Haiku, optimized for classification cost)
 
 **Types (6 total, no "general"):**
 - `drug` — single pharmaceutical agent, no clinical condition context; info-only questions (mechanism, dosing, side effects)
@@ -86,7 +94,7 @@ Next.js Proxy  →  FastAPI Backend (port 8000)
 - `evidence` — drug-in-condition (drug + disease context), timing/management decisions, postoperative protocols, safety/efficacy of intervention
 - `complex` — everything else (multiple entities, comorbidities, vague queries, broad clinical questions, general medical questions); fetch all sources; catch-all default
 
-**"general" type removed** — all queries now route to one of the 6 valid types. The LLM classifier is instructed never to return "general"; any value from cache or malformed output is normalized to "complex" by the safety net.
+**"general" type removed** — all queries now route to one of the 6 valid types. The LLM classifier is instructed never to return "general"; any value from cache or malformed output is normalized to "complex" by the safety net (line 2150–2157).
 
 ### 4.2 Cache Check
 Redis key format: `v{prompt_version}:{model_id}:{query_type}:{md5(normalized_query)}`

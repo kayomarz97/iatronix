@@ -16,10 +16,16 @@ def get_provider(model_id: str) -> str:
         return "openrouter"
     if model_id.startswith("gemini") or model_id.startswith("models/gemini"):
         return "gemini"
+    # Cerebras models must be checked before OpenAI (gpt-oss-* is Cerebras-exclusive)
+    if (
+        model_id.startswith("gpt-oss")
+        or model_id.startswith("llama")
+        or model_id.startswith("qwen")
+        or model_id.startswith("mistral")
+    ):
+        return "cerebras"
     if model_id.startswith("gpt-") or model_id.startswith("o1") or model_id.startswith("o3"):
         return "openai"
-    if model_id.startswith("llama") or model_id.startswith("qwen") or model_id.startswith("mistral"):
-        return "cerebras"
     return "anthropic"
 
 
@@ -92,8 +98,9 @@ def create_llm(
             timeout=settings.llm_timeout_seconds,
         )
     elif provider == "cerebras":
+        effective_model = model_id if model_id else settings.cerebras_default_model
         return ChatOpenAI(
-            model=settings.cerebras_default_model,  # always uses config — easy name change
+            model=effective_model,
             api_key=api_key,
             base_url=settings.cerebras_api_base,
             max_tokens=effective_max_tokens,         # paid tier: no artificial cap needed
