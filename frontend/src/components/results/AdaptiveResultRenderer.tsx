@@ -102,6 +102,33 @@ function normalizeMd(text: string): string {
   return out;
 }
 
+// ── ReactMarkdown components — apply direct Tailwind utilities so bullets and
+//    formatting work without @tailwindcss/typography (Tailwind v4 preflight resets
+//    ul/ol list-style to none; this re-applies it at the element level).
+const mdComponents: React.ComponentProps<typeof ReactMarkdown>["components"] = {
+  ul: ({ children }) => <ul className="list-disc pl-5 my-2 space-y-1">{children}</ul>,
+  ol: ({ children }) => <ol className="list-decimal pl-5 my-2 space-y-1">{children}</ol>,
+  li: ({ children }) => <li className="leading-relaxed pl-1">{children}</li>,
+  p:  ({ children }) => <p className="my-2 leading-relaxed">{children}</p>,
+  strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+  em: ({ children }) => <em className="italic">{children}</em>,
+  h1: ({ children }) => <h1 className="text-base font-semibold mt-4 mb-1">{children}</h1>,
+  h2: ({ children }) => <h2 className="text-sm font-semibold mt-3 mb-1">{children}</h2>,
+  h3: ({ children }) => <h3 className="text-sm font-medium mt-3 mb-1">{children}</h3>,
+  blockquote: ({ children }) => (
+    <blockquote className="border-l-4 border-border pl-3 italic my-2 opacity-80">{children}</blockquote>
+  ),
+  code: ({ children }) => (
+    <code className="bg-black/10 dark:bg-white/10 rounded px-1 text-xs font-mono">{children}</code>
+  ),
+  a: ({ href, children }) => (
+    <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">{children}</a>
+  ),
+  table: ({ children }) => <table className="w-full text-xs border-collapse my-2">{children}</table>,
+  th: ({ children }) => <th className="border border-border px-2 py-1 font-semibold text-left">{children}</th>,
+  td: ({ children }) => <td className="border border-border px-2 py-1">{children}</td>,
+};
+
 // ── Single claim row ─────────────────────────────────────────────────────────
 function ClaimRow({ item, fetchSources }: { item: AdaptiveContentItem; fetchSources?: string[] }) {
   const sourceHref = item.url
@@ -133,8 +160,8 @@ function ClaimRow({ item, fetchSources }: { item: AdaptiveContentItem; fetchSour
   return (
     <div className="py-3 border-b border-border/40 last:border-0">
       <div className="flex gap-2 items-start">
-        <div className="flex-1 text-sm prose prose-sm max-w-none prose-p:my-2 prose-ul:my-2 prose-ul:list-disc prose-ul:pl-5 prose-li:my-1 prose-li:leading-relaxed prose-table:text-xs prose-strong:font-bold prose-em:italic prose-headings:font-semibold prose-headings:mt-3 prose-blockquote:border-l-4 prose-blockquote:pl-3 prose-blockquote:italic prose-code:bg-gray-100 dark:prose-code:bg-gray-800 prose-code:rounded prose-code:px-1 dark:prose-invert" style={{ color: "var(--text-primary)" }}>
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{normalizeMd(item.text)}</ReactMarkdown>
+        <div className="flex-1 text-sm" style={{ color: "var(--text-primary)" }}>
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>{normalizeMd(item.text)}</ReactMarkdown>
         </div>
         {/* Badge beside text on sm+ screens */}
         <div className="hidden sm:flex flex-col items-end gap-1 shrink-0 pt-0.5">
@@ -209,8 +236,8 @@ function SectionCard({ section, index, fetchSources }: { section: AdaptiveSectio
             ))}
           </ul>
         ) : (
-          <div className="prose prose-sm max-w-none text-sm prose-p:my-2 prose-ul:my-2 prose-ul:list-disc prose-ul:pl-5 prose-li:my-1 prose-li:leading-relaxed prose-table:text-xs prose-strong:font-bold prose-em:italic prose-headings:font-semibold prose-headings:mt-3 prose-blockquote:border-l-4 prose-blockquote:pl-3 prose-blockquote:italic prose-code:bg-gray-100 dark:prose-code:bg-gray-800 prose-code:rounded prose-code:px-1 dark:prose-invert" style={{ color: "var(--text-primary)" }}>
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+          <div className="text-sm" style={{ color: "var(--text-primary)" }}>
+            <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
               {normalizeMd(String(section.content))}
             </ReactMarkdown>
           </div>
@@ -405,7 +432,7 @@ export function AdaptiveResultRenderer({ data, fetchSources, hideEvidenceBar, is
           { label: "depth", value: data.depth },
         ]}
         directAnswer={
-          <ReactMarkdown remarkPlugins={[remarkGfm]} className="prose prose-sm max-w-none prose-p:my-1 prose-ul:my-1 prose-ul:list-disc prose-ul:pl-5 prose-li:my-0.5 prose-strong:font-bold prose-headings:font-semibold prose-headings:mt-2 prose-blockquote:border-l-4 prose-blockquote:pl-3 prose-blockquote:italic prose-code:bg-gray-100 dark:prose-code:bg-gray-800 prose-code:rounded prose-code:px-1 dark:prose-invert">
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
             {normalizeMd(data.bluf.body ?? data.bluf.headline)}
           </ReactMarkdown>
         }
