@@ -1245,6 +1245,30 @@ def _model_cost(model_id: str, inp: int, out: int) -> ModelCost:
     )
 
 
+def _backfill_expert_opinion(section_data: dict) -> None:
+    """When a claim has source='Expert opinion' but the section has real references,
+    backfill the claim with the first reference's title and PMID to provide actual attribution.
+    """
+    content_items = section_data.get("content_items", [])
+    references = section_data.get("references", [])
+
+    if not references or not content_items:
+        return
+
+    first_ref = references[0]
+    backfill_title = first_ref.get("title")
+    backfill_pmid = first_ref.get("pmid")
+
+    if not backfill_title:
+        return
+
+    for item in content_items:
+        if isinstance(item, dict) and item.get("source") == "Expert opinion" and not item.get("pmid"):
+            item["source"] = backfill_title
+            if backfill_pmid:
+                item["pmid"] = backfill_pmid
+
+
 def _coerce_evidenced_claims(obj: object) -> None:
     """Recursively fill missing/invalid required EvidencedClaim fields with safe defaults.
 
@@ -2022,6 +2046,8 @@ async def _run_parallel_pipeline(
             "title": sec.get("title", title),
             "content_items": sec.get("content_items", []),
         }
+        section_dict["references"] = [r for r in sec.get("references", []) if isinstance(r, dict)]
+        _backfill_expert_opinion(section_dict)
         all_sections.append(section_dict)
         all_refs.extend(r for r in sec.get("references", []) if isinstance(r, dict))
 

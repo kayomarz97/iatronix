@@ -191,7 +191,7 @@ RESPOND WITH A SINGLE JSON OBJECT — no markdown fences, no prose outside the J
 }}
 
 EVERY content_item.source MUST cite a [SOURCE: ...] label from the fetched data block. Sources outside the block are FORBIDDEN.
-Never write "NA", "N/A", "n.a.", "unknown", or "none" as a source value. If you cannot match to a data-block source, use "Expert opinion" instead.
+Never write "NA", "N/A", "n.a.", "unknown", or "none" as a source value. You MUST use the exact [SOURCE: ...] label from the data block. "Expert opinion" is ONLY acceptable when the data block contains NO relevant entries at all.
 If loe and cor are both null (evidence not gradeable), source is EVEN MORE critical — it is the only attribution the reader has. Never leave source null or empty.
 references: List ALL sources from the data block that informed this section. Include a reference for every [SOURCE: ...] label cited in content_items. If fetched data was provided, there MUST be at least 1 reference. Only omit if the data block contained no relevant entries for this section.
 Keep text length 100–200 words per item.
@@ -223,7 +223,7 @@ RESPOND WITH A SINGLE JSON OBJECT — no markdown fences, no prose outside the J
 }
 
 EVERY content_item.source MUST cite a [SOURCE: ...] label from the fetched data block. Sources outside the block are FORBIDDEN.
-Never write "NA", "N/A", "n.a.", "unknown", or "none" as a source value. If you cannot match to a data-block source, use "Expert opinion" instead.
+Never write "NA", "N/A", "n.a.", "unknown", or "none" as a source value. You MUST use the exact [SOURCE: ...] label from the data block. "Expert opinion" is ONLY acceptable when the data block contains NO relevant entries at all.
 If loe and cor are both null (evidence not gradeable), source is EVEN MORE critical — it is the only attribution the reader has. Never leave source null or empty.
 references: List ALL sources from the data block that informed this section. Include a reference for every [SOURCE: ...] label cited in content_items. If fetched data was provided, there MUST be at least 1 reference. Only omit if the data block contained no relevant entries for this section.
 Keep text length 100–200 words per item.

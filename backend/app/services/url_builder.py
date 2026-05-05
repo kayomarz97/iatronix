@@ -238,6 +238,14 @@ def enrich_references(data: dict, fetched_data=None) -> None:
         # Step 2: title match against fetched PMID index
         if title:
             pmid = pmid_index.get(title.lower())
+            # Fuzzy fallback: strip punctuation and try prefix matching
+            if not pmid:
+                normalized = re.sub(r"[^\w\s]", "", title.lower()).split()
+                for idx_title, idx_pmid in pmid_index.items():
+                    idx_words = re.sub(r"[^\w\s]", "", idx_title).split()
+                    if normalized and idx_words and normalized[:6] == idx_words[:6]:
+                        pmid = idx_pmid
+                        break
             if pmid:
                 candidate = f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
                 ref["url"] = candidate if is_safe_url(candidate) else None
@@ -279,14 +287,8 @@ def _match_source_pattern(source_lower: str, title: str) -> str | None:
     for keyword, base_url in _SOURCE_URL_MAP:
         if keyword in source_lower:
             if title and base_url.endswith(("/", "search", "guidance", "Guidelines")):
-                # Append a search query for sources that support it
-                if (
-                    "pubmed.ncbi.nlm.nih.gov" in base_url
-                    or "search" in base_url
-                    or "nice.org.uk" in base_url
-                    or "cochrane" in base_url
-                ):
-                    param = "term" if "pubmed.ncbi.nlm.nih.gov" in base_url else "q"
-                    return f"{base_url}?{param}={quote(title)}"
+                # Don't generate search URLs — let frontend use PMID fallback instead.
+                # Search URLs are less useful than direct article links.
+                return None
             return base_url
     return None
