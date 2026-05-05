@@ -60,6 +60,7 @@ Next.js Proxy  →  FastAPI Backend (port 8000)
 | `backend/app/services/rag_pipeline.py` | **Main orchestrator** — `process_query()` is the entry point for all queries |
 | `backend/app/services/data_fetcher.py` | Fetches from 10+ medical APIs in parallel; includes new NCBI Books + ClinicalTrials.gov sources |
 | `backend/app/services/ranking.py` | Ranks articles by multi-factor evidence score (study type, relevance, recency, fulltext, citations) — NEW |
+| `backend/app/services/url_builder.py` | Deterministic source-aware URL enrichment (7-step priority) — PMID lookup, NCT ID lookup, DOI, source pattern matching with non-PubMed source guards |
 | `backend/app/services/prompt_engine.py` | Builds prompts for each query type (format-mode and generate-mode) |
 | `backend/app/services/llm_factory.py` | Instantiates LLM clients (Claude, OpenAI, OpenRouter) from the user's BYOK key |
 | `backend/app/services/dspy_modules.py` | DSPy adaptive pipeline — analysis + generation signatures |
@@ -173,11 +174,12 @@ Token budgets (single-call path):
    - **Strict mode** (query_type=`complex` or `procedure`): Claims with sources not matching `[SOURCE: ...]` labels from fetched data are dropped (marked `__drop__=True`)
    - **Approved sources:** Whitelist of 30+ sources (PubMed, NICE, FDA, ACOG, etc.); unverified sources logged as warnings but allowed for non-strict types
    - **NA literal replacement:** LLM-output "NA"/"N/A" values in source field replaced with actual data source or "Medical literature" fallback
+   - **URL enrichment** (`url_builder.py`): Deterministic source-aware URL construction (7-step priority) — PMID lookup (guard: skip for non-PubMed sources), PMID/DOI inline, NCT ID lookup, source-name pattern matching. If all steps fail, URL stays null. FDA references → accessdata.fda.gov, NICE → nice.org.uk, ClinicalTrials → clinicaltrials.gov, etc.
    - **URL validation:** HTTPS-only, domain whitelist enforcement; invalid URLs removed
    - **Evidence ratio check:** Warns if >50% (strict) or >70% (non-strict) of claims have low confidence or missing citations
 3. Drug name normalization (fuzzy match + metaphone)
 4. Safety checking
-5. Rich hyperlinking (PMID/DOI → URLs)
+5. Rich hyperlinking (PMID/DOI → source-specific URLs via `enrich_references()`)
 
 ### 4.9 Response Shape
 
