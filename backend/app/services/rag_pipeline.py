@@ -64,7 +64,7 @@ from app.services.prompt_engine import (
 )
 from app.services.query_classifier import classify_query_llm, detect_intent
 from app.services.safety_checker import check_safety
-from app.services.url_builder import enrich_references
+from app.services.url_builder import enrich_references, sanitize_response_pmids
 from app.services.source_router import route_query
 from app.services.ranking import rank_article_list
 
@@ -1269,6 +1269,39 @@ def _backfill_expert_opinion(section_data: dict) -> None:
                 item["pmid"] = backfill_pmid
 
 
+def _backfill_expert_opinion_global(parsed: dict) -> None:
+    """Replace 'Expert opinion' in content_items with a real reference title.
+
+    Uses global parsed["references"] so all code paths benefit (parallel pipeline,
+    single-call, chat-service). Call AFTER sanitize_response_pmids so backfilled
+    PMIDs are guaranteed to be real fetched PMIDs or None.
+    """
+    global_refs = [
+        r for r in parsed.get("references", [])
+        if isinstance(r, dict) and r.get("title") and r["title"] != "Expert opinion"
+    ]
+    if not global_refs:
+        return
+
+    first_ref = global_refs[0]
+    backfill_title = first_ref.get("title", "")
+    backfill_pmid = first_ref.get("pmid")
+
+    if not backfill_title:
+        return
+
+    for section in parsed.get("sections", []):
+        if not isinstance(section, dict):
+            continue
+        for item in section.get("content_items", []):
+            if isinstance(item, dict):
+                src = item.get("source") or ""
+                if src in ("Expert opinion", "") and not item.get("pmid"):
+                    item["source"] = backfill_title
+                    if backfill_pmid:
+                        item["pmid"] = backfill_pmid
+
+
 def _coerce_evidenced_claims(obj: object) -> None:
     """Recursively fill missing/invalid required EvidencedClaim fields with safe defaults.
 
@@ -2046,8 +2079,6 @@ async def _run_parallel_pipeline(
             "title": sec.get("title", title),
             "content_items": sec.get("content_items", []),
         }
-        section_dict["references"] = [r for r in sec.get("references", []) if isinstance(r, dict)]
-        _backfill_expert_opinion(section_dict)
         all_sections.append(section_dict)
         all_refs.extend(r for r in sec.get("references", []) if isinstance(r, dict))
 
@@ -2912,6 +2943,8 @@ async def process_query(
 
     # Build AdaptiveResponse from parsed dict
     try:
+        sanitize_response_pmids(parsed, fetched_data)
+        _backfill_expert_opinion_global(parsed)
         _raw_refs = parsed.get("references", [])
         enrich_references({"references": _raw_refs}, fetched_data)
         _references = [
