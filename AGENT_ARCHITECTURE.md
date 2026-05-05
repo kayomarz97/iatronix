@@ -43,7 +43,7 @@
 | frontend/src/components/ui/SearchBar.tsx | Search input component |
 | frontend/src/components/ui/SearchSuggestions.tsx | Autocomplete dropdown |
 | frontend/src/components/ui/IatronixLogo.tsx | Favicon-based SVG logo |
-| frontend/src/components/results/AdaptiveResultRenderer.tsx | Main result display; filters empty sections |
+| frontend/src/components/results/AdaptiveResultRenderer.tsx | Main result display; filters empty sections; `getSourceFallbackUrl()` helper for source-aware reference links (FDA → accessdata.fda.gov, NICE → nice.org.uk, ClinicalTrials → clinicaltrials.gov, etc.) |
 | frontend/src/components/results/MermaidClient.tsx | Mermaid chart rendering (legacy — no longer used by FlowchartRenderer) |
 | frontend/src/components/results/FlowchartRenderer.tsx | Clinical pathway flowcharts — custom CSS step flow, no Mermaid; branch steps rendered from "Condition → Outcome" format |
 | frontend/src/components/providers/QueryProvider.tsx | Stream state — handles bluf/section_complete/token events; exposes streamingSectionTitles, streamingFlowcharts, streamingTables |
@@ -119,7 +119,7 @@ OpenFDA, DailyMed, RxNorm, PubMed/NCBI, PMC/StatPearls, NICE, MedlinePlus, Seman
 - **Strict-mode procedure queries:** Citation validation now enforces strict source matching for `procedure` type (in addition to `complex`), preventing LLM from citing drugs/treatments not in fetched data block
 - **Discontinued FDA filter:** OpenFDA label searches now filter by `product_type:"HUMAN PRESCRIPTION DRUG" OR "OTC DRUG"` to exclude historical/withdrawn drug entries
 - **Prompt guardrails:** Explicit "never use NA/N/A as source" guidance in system prompts; LLM directed to use "Expert opinion" for unmatched sources
-- **PubMed reference links** (May 2026): Reference URLs now include `?term=<article_title>` search parameter for PubMed references when no PMID is available, linking to actual article search results instead of the empty PubMed homepage
+- **Non-PubMed source links** (May 2026): Multi-layer source attribution — FDA references link to accessdata.fda.gov, NICE to nice.org.uk, ClinicalTrials.gov trials to clinicaltrials.gov, etc. Backend (`url_builder.py`) enforces source-specific URL routing with Step 2 source guard (no PubMed match for non-PubMed sources) + Step 5 NCT ID lookup. Frontend (`AdaptiveResultRenderer.tsx`) uses source-aware fallback URLs when backend URL is null. Applies to both backend-injected references (`_inject_fetched_refs`) and LLM-provided references.
 
 ## Response Schema (query.py)
 Union of: AdaptiveResponse | DrugResponse | DiseaseResponse | ComparativeResponse |
@@ -263,7 +263,7 @@ process_query()
 
 **Fallback:** If Phase 1 (BLUF call) fails, falls back to single-call path automatically.
 
-**Per-claim citations:** Every `content_item` in section agents must have `source` (required), `pmid` (optional PubMed ID → auto-linked to pubmed.ncbi.nlm.nih.gov), `url` (optional direct URL). Frontend `ClaimRow` renders source as a hyperlink when pmid or url is present.
+**Per-claim citations:** Every `content_item` in section agents must have `source` (required), `pmid` (optional PubMed ID), `url` (optional direct URL). Source field determines URL routing: FDA → accessdata.fda.gov, NICE → nice.org.uk, ClinicalTrials → clinicaltrials.gov, etc. When `url` is null, frontend `ClaimRow` uses `getSourceFallbackUrl(source, pmid)` to generate source-appropriate fallback links instead of unconditional PubMed URLs.
 
 ## Comparative Drug Query — Drug Interactions
 When `query_type == "comparative"` and `fetched_data.comparative_drug_data` has ≥ 2 entries, the prompt guidance automatically includes:
