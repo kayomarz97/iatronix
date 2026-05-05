@@ -129,10 +129,24 @@ const mdComponents: React.ComponentProps<typeof ReactMarkdown>["components"] = {
   td: ({ children }) => <td className="border border-border px-2 py-1">{children}</td>,
 };
 
+// ── Source-aware fallback URL helper ───────────────────────────────────────────
+function getSourceFallbackUrl(source: string | undefined, pmid: string | undefined): string | null {
+  const s = (source || "").toLowerCase();
+  if (pmid && (!s || s.includes("pubmed"))) return `https://pubmed.ncbi.nlm.nih.gov/${pmid}/`;
+  if (s.includes("fda")) return "https://www.accessdata.fda.gov/scripts/cder/daf/";
+  if (s.includes("nice")) return "https://www.nice.org.uk/guidance";
+  if (s.includes("cochrane")) return "https://www.cochranelibrary.com/search";
+  if (s.includes("who")) return "https://www.who.int/publications/";
+  if (s.includes("clinicaltrials")) return "https://clinicaltrials.gov/";
+  if (s.includes("medlineplus")) return "https://medlineplus.gov/";
+  if (s.includes("dailymed")) return "https://dailymed.nlm.nih.gov/dailymed/";
+  if (pmid) return `https://pubmed.ncbi.nlm.nih.gov/${pmid}/`;
+  return null;
+}
+
 // ── Single claim row ─────────────────────────────────────────────────────────
 function ClaimRow({ item, fetchSources }: { item: AdaptiveContentItem; fetchSources?: string[] }) {
-  const sourceHref = item.url
-    ?? (item.pmid ? `https://pubmed.ncbi.nlm.nih.gov/${item.pmid}/` : null);
+  const sourceHref = item.url ?? getSourceFallbackUrl(item.source, item.pmid);
 
   const displaySource = item.source?.replace(/^\[SOURCE:\s*/i, "").replace(/\]$/, "") ?? null;
 
@@ -252,6 +266,7 @@ function SectionCard({ section, index, fetchSources }: { section: AdaptiveSectio
 function ReferenceRow({ ref: r, index }: { ref: AdaptiveReference; index: number }) {
   const label = r.title || r.source || `Reference ${index + 1}`;
   const meta = [r.source, r.year].filter(Boolean).join(", ");
+  const fallbackUrl = getSourceFallbackUrl(r.source, r.pmid);
   return (
     <li className="flex items-start gap-1.5 text-xs">
       <span className="text-muted-foreground shrink-0 mt-0.5">{index + 1}.</span>
@@ -265,9 +280,9 @@ function ReferenceRow({ ref: r, index }: { ref: AdaptiveReference; index: number
           >
             {label}
           </a>
-        ) : r.pmid ? (
+        ) : fallbackUrl ? (
           <a
-            href={`https://pubmed.ncbi.nlm.nih.gov/${r.pmid}/`}
+            href={fallbackUrl}
             target="_blank"
             rel="noopener noreferrer"
             className="text-blue-600 dark:text-blue-400 hover:underline"
@@ -275,16 +290,9 @@ function ReferenceRow({ ref: r, index }: { ref: AdaptiveReference; index: number
             {label}
           </a>
         ) : (
-          <a
-            href={`https://pubmed.ncbi.nlm.nih.gov/?term=${encodeURIComponent(
-              [r.title, r.source, r.year?.toString()].filter(Boolean).join(" ")
-            )}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-blue-600 dark:text-blue-400 hover:underline"
-          >
+          <span className="text-muted-foreground">
             {label}
-          </a>
+          </span>
         )}
         {meta && (
           <span className="text-muted-foreground ml-1">({meta})</span>

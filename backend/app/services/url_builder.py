@@ -100,6 +100,7 @@ _SOURCE_URL_MAP: list[tuple[str, str]] = [
     ("fda", "https://www.accessdata.fda.gov/scripts/cder/daf/"),
     ("nice", "https://www.nice.org.uk/guidance"),
     ("cochrane", "https://www.cochranelibrary.com/search"),
+    ("clinicaltrials.gov", "https://clinicaltrials.gov/study/"),
     ("pubmed", "https://pubmed.ncbi.nlm.nih.gov/"),
     ("esc", "https://www.escardio.org/Guidelines"),
     ("who", "https://www.who.int/publications/"),
@@ -199,6 +200,38 @@ def build_pmid_index(fetched_data) -> dict[str, str]:
     return index
 
 
+def build_nctid_index(fetched_data) -> dict[str, str]:
+    """Build a normalised-title → NCT ID mapping from all clinical trial abstracts in fetched_data."""
+    index: dict[str, str] = {}
+    if fetched_data is None:
+        return index
+
+    abstract_lists: list[list] = []
+    for attr in (
+        "drug_data",
+        "disease_data",
+        "procedure_data",
+        "evidence_data",
+    ):
+        obj = getattr(fetched_data, attr, None)
+        if obj is None:
+            continue
+        lst = getattr(obj, "clinical_trial_abstracts", None)
+        if lst:
+            abstract_lists.append(lst)
+
+    for lst in abstract_lists:
+        for abstract in lst:
+            if not isinstance(abstract, dict):
+                continue
+            nct_id = abstract.get("nct_id")
+            title = abstract.get("title", "")
+            if nct_id and title:
+                index[title.strip().lower()] = str(nct_id)
+
+    return index
+
+
 def sanitize_response_pmids(data: dict, fetched_data=None) -> None:
     """Null out every PMID in the response that was not actually fetched.
 
@@ -230,18 +263,27 @@ def enrich_references(data: dict, fetched_data=None) -> None:
 
     Priority order:
       1. Existing url — validated; nulled if unsafe.
-      2. PMID lookup from fetched_data abstracts (title match).
+      2. PMID lookup from fetched_data abstracts (title match) — only for PubMed sources.
       3. PMID inline in source/title text.
       4. DOI inline in source/title text.
-      5. Source-name pattern → known base URL.
-      6. null (no invented URLs).
+      5. NCT ID lookup from fetched_data abstracts (clinical trials only).
+      6. Source-name pattern → known base URL.
+      7. null (no invented URLs).
     """
     pmid_index = build_pmid_index(fetched_data)
+    nctid_index = build_nctid_index(fetched_data)
     valid_pmids = set(pmid_index.values())
     pmid_to_title = {v: k.title() for k, v in pmid_index.items()}
     refs = data.get("references")
     if not refs:
         return
+
+    NON_PUBMED_SOURCES = {
+        "fda", "nice", "cochrane", "who", "esc", "aha", "acc",
+        "clinicaltrials", "clinicaltrials.gov", "ema", "gold",
+        "kdigo", "ada", "acog", "idsa", "nccn", "medlineplus",
+        "ncbi books", "dailymed"
+    }
 
     for ref in refs:
         # Step 0: backfill title if missing but PMID is present
@@ -260,9 +302,11 @@ def enrich_references(data: dict, fetched_data=None) -> None:
         title = (ref.get("title") or "").strip()
         source = (ref.get("source") or "").strip()
         combined = f"{source} {title}".strip()
+        source_lower = source.lower()
 
-        # Step 2: title match against fetched PMID index
-        if title:
+        # Step 2: title match against fetched PMID index — ONLY for PubMed sources
+        is_non_pubmed = any(s in source_lower for s in NON_PUBMED_SOURCES)
+        if title and not is_non_pubmed:
             pmid = pmid_index.get(title.lower())
             # Fuzzy fallback: strip punctuation and try prefix matching
             if not pmid:
@@ -295,14 +339,23 @@ def enrich_references(data: dict, fetched_data=None) -> None:
             if ref["url"]:
                 continue
 
-        # Step 5: source-name pattern — validate before accepting
-        source_lower = source.lower()
+        # Step 5: NCT ID lookup for clinical trials
+        nct_id = ref.get("nct_id")
+        if not nct_id and title:
+            nct_id = nctid_index.get(title.lower())
+        if nct_id:
+            candidate = f"https://clinicaltrials.gov/study/{nct_id}"
+            ref["url"] = candidate if is_safe_url(candidate) else None
+            if ref["url"]:
+                continue
+
+        # Step 6: source-name pattern — validate before accepting
         matched_url = _match_source_pattern(source_lower, title)
         if matched_url and is_safe_url(matched_url):
             ref["url"] = matched_url
             continue
 
-        # Step 6: leave null
+        # Step 7: leave null
         ref["url"] = None
 
 
@@ -312,9 +365,8 @@ def enrich_references(data: dict, fetched_data=None) -> None:
 def _match_source_pattern(source_lower: str, title: str) -> str | None:
     for keyword, base_url in _SOURCE_URL_MAP:
         if keyword in source_lower:
-            if title and base_url.endswith(("/", "search", "guidance", "Guidelines")):
-                # Don't generate search URLs — let frontend use PMID fallback instead.
-                # Search URLs are less useful than direct article links.
+            if keyword == "pubmed" and title:
+                # Steps 2/3 already handle PubMed via PMID; base URL is useless here
                 return None
             return base_url
     return None

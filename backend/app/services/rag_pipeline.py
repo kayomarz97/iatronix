@@ -1329,6 +1329,7 @@ def _inject_fetched_refs(fetched_data, max_refs: int = 8) -> list[dict]:
                     "title": title,
                     "source": abstract.get("journal") or abstract.get("collective_name") or "PubMed",
                     "pmid": str(pmid) if pmid else None,
+                    "nct_id": abstract.get("nct_id"),
                     "year": abstract.get("year"),
                 })
                 if len(refs) >= max_refs:
