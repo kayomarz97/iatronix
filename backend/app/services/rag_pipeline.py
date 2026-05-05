@@ -1302,6 +1302,40 @@ def _backfill_expert_opinion_global(parsed: dict) -> None:
                         item["pmid"] = backfill_pmid
 
 
+def _inject_fetched_refs(fetched_data, max_refs: int = 8) -> list[dict]:
+    """Build reference dicts from fetched PubMed abstracts.
+
+    Used when the LLM (e.g. Cerebras/GPT) fails to return a references array.
+    Guaranteed real PMIDs — no hallucination possible.
+    """
+    refs: list[dict] = []
+    if fetched_data is None:
+        return refs
+
+    for data_attr in ("drug_data", "disease_data", "procedure_data", "evidence_data", "condition_data"):
+        obj = getattr(fetched_data, data_attr, None)
+        if obj is None:
+            continue
+        for list_attr in ("guideline_abstracts", "systematic_review_abstracts",
+                           "clinical_trial_abstracts", "practice_guideline_abstracts"):
+            for abstract in getattr(obj, list_attr, None) or []:
+                if not isinstance(abstract, dict):
+                    continue
+                title = abstract.get("title", "").strip()
+                pmid = abstract.get("pmid")
+                if not title:
+                    continue
+                refs.append({
+                    "title": title,
+                    "source": abstract.get("journal") or abstract.get("collective_name") or "PubMed",
+                    "pmid": str(pmid) if pmid else None,
+                    "year": abstract.get("year"),
+                })
+                if len(refs) >= max_refs:
+                    return refs
+    return refs
+
+
 def _coerce_evidenced_claims(obj: object) -> None:
     """Recursively fill missing/invalid required EvidencedClaim fields with safe defaults.
 
@@ -2944,6 +2978,9 @@ async def process_query(
     # Build AdaptiveResponse from parsed dict
     try:
         sanitize_response_pmids(parsed, fetched_data)
+        # If model (e.g. Cerebras/GPT) didn't return references, inject from real fetched data
+        if not parsed.get("references") and fetched_data:
+            parsed["references"] = _inject_fetched_refs(fetched_data)
         _backfill_expert_opinion_global(parsed)
         _raw_refs = parsed.get("references", [])
         enrich_references({"references": _raw_refs}, fetched_data)
