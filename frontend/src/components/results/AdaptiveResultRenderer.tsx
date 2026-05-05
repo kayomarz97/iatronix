@@ -134,19 +134,21 @@ function ClaimRow({ item, fetchSources }: { item: AdaptiveContentItem; fetchSour
   const sourceHref = item.url
     ?? (item.pmid ? `https://pubmed.ncbi.nlm.nih.gov/${item.pmid}/` : null);
 
+  const displaySource = item.source?.replace(/^\[SOURCE:\s*/i, "").replace(/\]$/, "") ?? null;
+
   const badgeAndSource = (
     <>
       <EvidenceBadge loe={item.loe ?? undefined} cor={item.cor ?? undefined} compact />
       {/* Source: always show something so user knows data origin */}
-      {item.source ? (
+      {displaySource ? (
         sourceHref ? (
           <a href={sourceHref} target="_blank" rel="noopener noreferrer"
              className="text-[10px] text-blue-400 hover:underline max-w-[120px] text-right leading-tight">
-            {item.source}
+            {displaySource}
           </a>
         ) : (
           <span className="text-[10px] text-muted-foreground max-w-[120px] text-right leading-tight">
-            {item.source}
+            {displaySource}
           </span>
         )
       ) : (
