@@ -199,6 +199,31 @@ def build_pmid_index(fetched_data) -> dict[str, str]:
     return index
 
 
+def sanitize_response_pmids(data: dict, fetched_data=None) -> None:
+    """Null out every PMID in the response that was not actually fetched.
+
+    The LLM hallucinates PMID numbers. Only PMIDs present in build_pmid_index
+    (i.e., retrieved from real PubMed abstracts) are trusted. Call this before
+    enrich_references so broken PMID→URL links are never built.
+    """
+    valid_pmids = set(build_pmid_index(fetched_data).values())
+    if not valid_pmids:
+        return
+    _null_unrecognized_pmids(data, valid_pmids)
+
+
+def _null_unrecognized_pmids(obj: object, valid_pmids: set) -> None:
+    if isinstance(obj, dict):
+        if "pmid" in obj and obj["pmid"] is not None:
+            if str(obj["pmid"]) not in valid_pmids:
+                obj["pmid"] = None
+        for v in obj.values():
+            _null_unrecognized_pmids(v, valid_pmids)
+    elif isinstance(obj, list):
+        for item in obj:
+            _null_unrecognized_pmids(item, valid_pmids)
+
+
 def enrich_references(data: dict, fetched_data=None) -> None:
     """
     Mutate data in-place: fill Reference.url using deterministic rules only.
@@ -212,6 +237,7 @@ def enrich_references(data: dict, fetched_data=None) -> None:
       6. null (no invented URLs).
     """
     pmid_index = build_pmid_index(fetched_data)
+    valid_pmids = set(pmid_index.values())
     pmid_to_title = {v: k.title() for k, v in pmid_index.items()}
     refs = data.get("references")
     if not refs:
@@ -252,9 +278,9 @@ def enrich_references(data: dict, fetched_data=None) -> None:
                 if ref["url"]:
                     continue
 
-        # Step 3: PMID inline in source/title text
+        # Step 3: PMID inline in source/title text — only if PMID is from fetched data
         pmid_match = _PMID_RE.search(combined)
-        if pmid_match:
+        if pmid_match and pmid_match.group(1) in valid_pmids:
             candidate = f"https://pubmed.ncbi.nlm.nih.gov/{pmid_match.group(1)}/"
             ref["url"] = candidate if is_safe_url(candidate) else None
             if ref["url"]:
