@@ -87,6 +87,11 @@ Next.js Proxy  →  FastAPI Backend (port 8000)
 - **Gemini** → uses user's Gemini model
 - **Anthropic** → uses `settings.model_classify` (Claude Haiku, optimized for classification cost)
 
+**Model configuration** — All Anthropic model IDs (Haiku, Sonnet, Classify, Generate) are fully env-var configurable via `.env`:
+- `MODEL_HAIKU`, `MODEL_SONNET` — primary generation models
+- `MODEL_CLASSIFY`, `MODEL_GENERATE` — override defaults without code changes
+- Error handling: If a model is not found on Anthropic (e.g., due to API plan or ID typo), the pipeline returns a friendly 400 error with instructions to update the model name via env vars. No cryptic 404 stack traces.
+
 **Types (6 total, no "general"):**
 - `drug` — single pharmaceutical agent, no clinical condition context; info-only questions (mechanism, dosing, side effects)
 - `disease` — single disease/condition/syndrome, no drug/treatment context; overview, diagnosis, prognosis questions
@@ -102,12 +107,39 @@ Redis key format: `v{prompt_version}:{model_id}:{query_type}:{md5(normalized_que
 - Hit → return immediately, skip all downstream work
 - Miss → continue
 
-### 4.3 Source Routing & LLM Intent Extraction
+### 4.3 Query Analysis & Patient Context Extraction
+`_analyze_and_expand_query()` (via DSPy) performs multi-step analysis:
+
+**Step 1 — Source Routing & LLM Intent:**
 `source_router.py` extracts drug/disease entities, determines clinical intent, and selects the model tier:
 - **Intent classification:** 10 clinical intents (treatment, diagnosis, drug_dosing, drug_safety, drug_comparison, guideline, side_effect, contraindication, prognosis, general) — enables intent-aware routing and search refinement
 - **Entity extraction:** Drug/disease terms for guideline/trial filtering
 - **Model selection:** Drug queries → Haiku (fast, cheap); Disease/comparative/procedure → Sonnet (powerful, slow)
 - **Condition context:** Extracted for "drug in condition" queries (e.g., "metformin in CKD")
+
+**Step 2 — Patient Context Extraction (May 2026):**
+For complex and drug-in-condition queries, `_analyze_and_expand_query()` extracts structured clinical modifiers from the user's natural-language query:
+- **age:** Numerical age or population descriptor (e.g., "72-year-old", "pediatric", "elderly")
+- **renal:** Any creatinine clearance, GFR, dialysis status, ESRD, or CKD stage mention
+- **hepatic:** Child-Pugh classification, cirrhosis grade, or liver failure level
+- **weight:** Body weight in kg or BMI if mentioned
+- **pregnancy:** Pregnancy status, lactation, or trimester
+- **concurrent_drugs:** All named medications OTHER than the primary drug (e.g., "on amiodarone and fluconazole" in "rivaroxaban for AFib on amiodarone and fluconazole")
+- **other_factors:** Immunocompromised status, transplant history, ICU setting, or other population modifiers
+
+These are stored in `FetchedData.patient_context` dict (empty `{}` for simple queries) and passed to the section builders.
+
+**How it works:**
+1. User query: _"rivaroxaban 5mg in AFib, 72-year-old, CrCl 35, on amiodarone and fluconazole"_
+2. `_analyze_and_expand_query()` extracts: `patient_context = {"age": "72-year-old", "renal": "CrCl 35", "concurrent_drugs": ["amiodarone", "fluconazole"]}`
+3. These are formatted into the section-generation prompt as: _"Specified Patient Context: Patient age: 72-year-old. Renal function: CrCl 35. Concurrent medications: amiodarone, fluconazole."_
+4. The prompt also includes clinical-relevance instructions: _"Include additional sections for any of the following that are CLINICALLY RELEVANT for rivaroxaban: Renal Dose Adjustment (if renally cleared) · Hepatic Dose Adjustment (if hepatically metabolised)..."_
+
+**Two-layer approach:**
+- **Layer 1 (explicit):** If patient context IS provided, sections are personalised with specific values (e.g., "Renal Dose Adjustment — CrCl 35: dose X")
+- **Layer 2 (implicit):** Even WITHOUT patient context, the LLM uses its pharmacology knowledge to determine which sections are clinically relevant. A renally-cleared drug always warrants a renal dose section; a teratogenic drug always warrants pregnancy/lactation safety section. The LLM determines relevance, NOT hardcoded rules.
+
+**Why this scales:** Any new drug in the query automatically gets appropriate sections based on the LLM's pharmacology knowledge without code changes. No per-drug rule hardcoding needed.
 
 ### 4.4 Parallel Data Fetch
 `data_fetcher.py` fires all API calls concurrently with `asyncio.gather`. Each source is independent and fails silently. Results are merged into a `FetchedData` dataclass.
@@ -168,18 +200,78 @@ Token budgets (single-call path):
 - Generate fallback: 4096 tokens
 - Parallel BLUF: 1024 tokens / section: 1200 tokens
 
-### 4.8 Post-Processing
+### 4.8 Post-Processing & URL Enrichment (May 2026 Update)
 1. JSON repair (LLM output is often malformed)
-2. Citation validation (`citation_validator.py`):
+2. **Expert Consensus normalization** (May 2026):
+   - Non-Anthropic models (GPT, Cerebras) frequently return `"Expert Consensus"`, `"Clinical Consensus"`, or similar variants instead of the canonical `"Expert opinion"` fallback
+   - Pipeline normalizes ALL consensus variants to `"Expert opinion"` **before** backfill runs
+   - If LLM returns ONLY fake consensus references (all variants with no URLs), the pipeline injects real fetched data instead
+   - After URL enrichment, any remaining unfixable expert opinions (no URL) are filtered when real linked references exist
+   - Four-layer defense: (1) Prompt forbids consensus variants, (2) Normalize step, (3) Smart inject replaces fake-only refs, (4) Final filter
+3. Citation validation (`citation_validator.py`):
    - **Strict mode** (query_type=`complex` or `procedure`): Claims with sources not matching `[SOURCE: ...]` labels from fetched data are dropped (marked `__drop__=True`)
    - **Approved sources:** Whitelist of 30+ sources (PubMed, NICE, FDA, ACOG, etc.); unverified sources logged as warnings but allowed for non-strict types
    - **NA literal replacement:** LLM-output "NA"/"N/A" values in source field replaced with actual data source or "Medical literature" fallback
-   - **URL enrichment** (`url_builder.py`): Deterministic source-aware URL construction (7-step priority) — PMID lookup (guard: skip for non-PubMed sources), PMID/DOI inline, NCT ID lookup, source-name pattern matching. If all steps fail, URL stays null. FDA references → accessdata.fda.gov, NICE → nice.org.uk, ClinicalTrials → clinicaltrials.gov, etc.
-   - **URL validation:** HTTPS-only, domain whitelist enforcement; invalid URLs removed
-   - **Evidence ratio check:** Warns if >50% (strict) or >70% (non-strict) of claims have low confidence or missing citations
-3. Drug name normalization (fuzzy match + metaphone)
-4. Safety checking
-5. Rich hyperlinking (PMID/DOI → source-specific URLs via `enrich_references()`)
+4. **Universal Source URL Flow** (`url_builder.py`):
+   - **Step 0 (LLM output):** If the data block contained a `URL: https://...` label (from DailyMed, NICE, FDA, ClinicalTrials, or PubMed abstracts), the LLM copies it verbatim into the reference `url` field. This is the authoritative source for the URL.
+   - **Step 1 (validation):** `url_builder.py` validates the LLM-provided URL exists and is safe (HTTPS, domain whitelist enforcement)
+   - **Step 2 (construction for missing URLs):** For references without a URL from the LLM, use deterministic source-aware construction (7-step priority) — PMID lookup (guard: skip for non-PubMed sources), PMID/DOI inline, NCT ID lookup, source-name pattern matching
+   - **Domain whitelist:** Includes `pubmed.ncbi.nlm.nih.gov`, `clinicaltrials.gov`, `doi.org`, `dailymed.nlm.nih.gov`, `www.accessdata.fda.gov`, `www.nice.org.uk`, and 20+ others
+   - **Backward compatibility:** For any new source added in the future, if the fetch function stores a `label_url` in the result and the format helper includes `URL: {url}` in the data block text, the LLM will copy it verbatim without any url_builder code changes (existing domain whitelist permitting)
+4. Drug name normalization (fuzzy match + metaphone)
+5. Safety checking
+6. Rich hyperlinking (PMID/DOI → source-specific URLs via `enrich_references()`)
+
+### 4.8a Comparative Query Evidence Injection (May 2026)
+
+For `query_type="comparative"` (two named entities being compared), the data block now includes **head-to-head evidence** that was previously fetched but unused:
+
+**Evidence included per entity:**
+- **Per-drug evidence:** Guideline abstracts, clinical trial abstracts, and systematic review abstracts specific to each drug
+- **Head-to-head evidence:** Clinical trials comparing the two drugs directly, systematic reviews of both drugs side-by-side, and comparative guidelines
+
+**Data block structure for comparative queries:**
+```
+=== DRUG 1 DATA ===
+[Drug A profile: indication, mechanism, dosing, side effects, etc.]
+
+=== DRUG 1 EVIDENCE ===
+[Guideline abstracts about Drug A]
+[Clinical trial abstracts about Drug A]
+[Systematic review abstracts about Drug A]
+
+=== DRUG 2 DATA ===
+[Drug B profile...]
+
+=== DRUG 2 EVIDENCE ===
+[Guideline abstracts about Drug B]
+[Clinical trial abstracts about Drug B]
+[Systematic review abstracts about Drug B]
+
+=== HEAD-TO-HEAD CLINICAL TRIALS ===
+[Trials directly comparing Drug A vs Drug B]
+
+=== HEAD-TO-HEAD SYSTEMATIC REVIEWS ===
+[Reviews synthesizing evidence on Drug A vs Drug B]
+
+=== COMPARATIVE GUIDELINES ===
+[Guidelines discussing both drugs side-by-side]
+```
+
+**Section guidance expansion (for comparative drug queries):**
+The `_SECTION_GUIDANCE["comparative_drug"]` now includes mandatory sections:
+- Summary (what is being compared, key clinical question)
+- Drug A Full Profile (Mechanism of Action, Indications, Dosing, Contraindications, Side Effects, Drug Interactions, Pharmacokinetics, Monitoring Parameters, Special Populations)
+- Drug B Full Profile (same 8 sub-sections)
+- Head-to-Head Comparison (MUST include a structured table: Drug A vs Drug B columns; rows must cover mechanism, dosing, efficacy, safety, contraindications, drug interactions, pharmacokinetics, guideline standing)
+- Drug Interactions Between Agents (severity: major/moderate/minor; mechanism; clinical consequences; management)
+- Clinical Evidence (key RCTs and systematic reviews with trial names, sample sizes, primary endpoints, results)
+- Clinical Preference & Guideline Positioning
+
+**Why this works:**
+Previously, comparative queries returned only 4 thin sections. Now the LLM has access to full clinical evidence for each drug and head-to-head comparisons, enabling comprehensive structured comparisons with evidence citations throughout.
+
+---
 
 ### 4.9 Response Shape
 
@@ -256,7 +348,32 @@ async def fetch_my_source(query: str, entities: dict) -> dict:
         return {}  # Silent failure — never block the pipeline
 ```
 
-Then add it to the `asyncio.gather()` call in `data_fetcher.py`'s main fetch function, and add a field to `FetchedData`. Make sure to populate the `data_sources` field in your result object so sources are rolled up into `FetchedData.data_sources` (see May 2026 update below).
+Then add it to the `asyncio.gather()` call in `data_fetcher.py`'s main fetch function, and add a field to `FetchedData`. Make sure to populate the `data_sources` field in your result object so sources are rolled up into `FetchedData.data_sources`.
+
+#### Universal Source URL Flow for New Sources (May 2026)
+
+When adding a new data source, the URL propagation is **automatic** if you follow this pattern:
+
+1. **In your fetch function**, store the human-readable page URL in the result object. For example:
+   ```python
+   result.label_url = f"https://my-api.com/articles/{article_id}"
+   ```
+   or add it to each item in a list:
+   ```python
+   item["url"] = f"https://my-api.com/drug/{drug_id}"
+   ```
+
+2. **In the format helper** (`_format_drug_block()`, `_format_abstracts()`, or a new format function), include the URL in the text output:
+   ```python
+   if url:
+       lines.append(f"URL: {url}")
+   ```
+
+3. **In the LLM prompt** (reference schema), the LLM is instructed to copy the URL verbatim into the reference `url` field if present.
+
+4. **In `url_builder.py`**, the URL is validated against the domain whitelist (add your domain if needed).
+
+**No additional url_builder code changes required** — the LLM handles the URL propagation. This keeps the URL-construction logic centralized in the fetch and format functions, where the actual data lives.
 
 #### May 2026 Update: Data Source Rollup
 - **Added:** Automatic aggregation of all sub-result `data_sources` into top-level `FetchedData.data_sources` at end of `fetch_data_for_query()`
@@ -326,6 +443,13 @@ process_query()
 1. Add the section title to `_SECTION_GUIDANCE[query_type]` in `prompt_engine.py`
 2. The BLUF phase will automatically include it in `section_titles`
 3. Phase 2 generates it in parallel alongside all other sections
+
+**Frontend rendering for new sections (Comparative queries — May 2026):**
+- For `query_type="comparative"`, the frontend `ComparativeLayout` component automatically groups sections into three zones based on title heuristics:
+  - **Profile Zone:** Sections whose titles DON'T contain "comparison", "interaction", "preference", "evidence", "summary" — rendered as 2-column grid (desktop) or stacked (mobile)
+  - **Comparison Zone:** Sections with "comparison" or "interaction" in the title, plus any tables — rendered with prominent table display
+  - **Guidance Zone:** Sections with "evidence", "preference", or "positioning" in the title
+- No frontend code changes needed when adding new sections; the heuristics automatically categorize new titles. To fine-tune layout for a new section type, update the title-matching regex in `AdaptiveResultRenderer.tsx` `ComparativeLayout` component.
 
 **To add a post-generation specialist agent** (e.g., drug interaction enricher):
 ```python

@@ -120,6 +120,16 @@ OpenFDA, DailyMed, RxNorm, PubMed/NCBI, PMC/StatPearls, NICE, MedlinePlus, Seman
 - **Discontinued FDA filter:** OpenFDA label searches now filter by `product_type:"HUMAN PRESCRIPTION DRUG" OR "OTC DRUG"` to exclude historical/withdrawn drug entries
 - **Prompt guardrails:** Explicit "never use NA/N/A as source" guidance in system prompts; LLM directed to use "Expert opinion" for unmatched sources
 - **Non-PubMed source links** (May 2026): Multi-layer source attribution — FDA references link to accessdata.fda.gov, NICE to nice.org.uk, ClinicalTrials.gov trials to clinicaltrials.gov, etc. Backend (`url_builder.py`) enforces source-specific URL routing with Step 2 source guard (no PubMed match for non-PubMed sources) + Step 5 NCT ID lookup. Frontend (`AdaptiveResultRenderer.tsx`) uses source-aware fallback URLs when backend URL is null. Applies to both backend-injected references (`_inject_fetched_refs`) and LLM-provided references.
+- **Expert Consensus normalization** (May 2026): Non-Anthropic models (GPT, Cerebras) frequently return `"Expert Consensus"` or `"Clinical Consensus"` as a source variant. Pipeline now normalizes all consensus variants to canonical `"Expert opinion"` before backfill, injects real fetched data when LLM returns only fake consensus refs, and filters unfixable unfunded expert refs when real linked refs exist. Four-layer defense: (1) Prompt forbids consensus variants, (2) Normalize step converts variants, (3) Smart inject replaces fake-only refs, (4) Final filter removes unfixable remaining experts.
+
+### Universal Source URL Flow (May 2026)
+- **DrugFetchResult extended:** New field `label_url: Optional[str]` stores human-readable label page URL from fetch (DailyMed or FDA application)
+- **DailyMed:** During fetch, `setid` extracted and URL constructed: `https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid={setid}`
+- **FDA labels:** Application number extracted from `openfda.application_number`, stripped to digits, and URL constructed: `https://www.accessdata.fda.gov/scripts/cder/daf/index.cfm?event=overview.process&ApplNo={app_num}`
+- **NICE guidelines:** Each recommendation dict includes `url` field: `https://www.nice.org.uk/guidance/{item_id}`
+- **Reference schemas:** All LLM prompt reference schemas now include `url` field. LLM instructed to copy URLs verbatim from data block
+- **URL propagation:** URLs travel from fetch → format helper (data block text) → LLM reference field → url_builder validation → frontend render. No hardcoded patterns per source.
+- **Backward compatible:** Any new source added to fetcher automatically gets correct links if: (1) fetch stores URL, (2) format helper includes `URL:` in text, (3) LLM copies verbatim, (4) domain added to allowlist
 
 ## Response Schema (query.py)
 Union of: AdaptiveResponse | DrugResponse | DiseaseResponse | ComparativeResponse |

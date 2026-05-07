@@ -1269,6 +1269,56 @@ def _backfill_expert_opinion(section_data: dict) -> None:
                 item["pmid"] = backfill_pmid
 
 
+_EXPERT_SOURCE_KEYWORDS = frozenset(["expert", "consensus", "clinical opinion", "clinical consensus"])
+
+
+def _is_expert_source(s: str) -> bool:
+    """True if source string is any variant of expert opinion / consensus."""
+    s_low = (s or "").lower()
+    return any(k in s_low for k in _EXPERT_SOURCE_KEYWORDS)
+
+
+def _normalize_consensus_sources(parsed: dict) -> None:
+    """Normalize all expert/consensus source variants to canonical 'Expert opinion'.
+
+    Must run before backfill so that _backfill_expert_opinion_global() can match them.
+    Affects: references[].source, references[].title, content_items[].source
+    """
+    canonical = "Expert opinion"
+    for ref in parsed.get("references", []):
+        if isinstance(ref, dict):
+            if _is_expert_source(ref.get("source", "")):
+                ref["source"] = canonical
+            if _is_expert_source(ref.get("title", "")):
+                ref["title"] = canonical
+    for section in parsed.get("sections", []):
+        if not isinstance(section, dict):
+            continue
+        for item in section.get("content_items", []):
+            if isinstance(item, dict) and _is_expert_source(item.get("source", "")):
+                item["source"] = canonical
+
+
+def _filter_expert_references(refs: list) -> list:
+    """Drop Expert opinion refs with no URL when real linked refs exist."""
+    real = [
+        r for r in refs
+        if isinstance(r, dict)
+        and not _is_expert_source(r.get("source", "") or r.get("title", ""))
+        and r.get("url")
+    ]
+    if not real:
+        return refs  # nothing to replace with — keep as-is
+    return [
+        r for r in refs
+        if not (
+            isinstance(r, dict)
+            and _is_expert_source(r.get("source", "") or r.get("title", ""))
+            and not r.get("url")
+        )
+    ]
+
+
 def _backfill_expert_opinion_global(parsed: dict) -> None:
     """Replace 'Expert opinion' in content_items with a real reference title.
 
@@ -1706,6 +1756,15 @@ async def _analyze_and_expand_query(
         '  "response_focus": "SGLT2 inhibitors such as empagliflozin are preferred in CKD with T2DM due to renoprotective and glycemic benefits per KDIGO 2022 and ADA guidelines.",\n'
         '  "related_topics": ["eGFR thresholds", "CREDENCE trial", "DAPA-CKD trial", "KDIGO 2022", "renoprotection", "HbA1c targets in CKD"],\n'
         '  "answer_entities": ["SGLT2 inhibitors", "empagliflozin", "dapagliflozin"],\n'
+        '  "patient_context": {\n'
+        '    "age": null,\n'
+        '    "renal": "eGFR 30 (CKD stage 3b)",\n'
+        '    "hepatic": null,\n'
+        '    "weight": null,\n'
+        '    "pregnancy": null,\n'
+        '    "concurrent_drugs": [],\n'
+        '    "other_factors": []\n'
+        '  },\n'
         '  "search_variants": [\n'
         '    "chronic kidney disease type 2 diabetes mellitus glycemic management drug choice",\n'
         '    "CKD T2DM antidiabetic therapy guidelines",\n'
@@ -1766,7 +1825,16 @@ async def _analyze_and_expand_query(
         "(the resolved drug, procedure, diagnostic test, or medical concept). Empty list [] if the answer "
         "cannot be resolved to a specific entity (e.g., 'management of CKD' has no single answer entity). "
         "These are used to fetch specific evidence on the resolved answer, separate from the clinical scenario search.\n"
-        "11. Output ONLY JSON — no markdown, no backticks, no explanation.\n"
+        "11. patient_context: for complex queries, extract ALL clinical modifiers from the query that affect dosing or drug choice:\n"
+        "    - age: numerical age or population (pediatric <18, elderly ≥65)\n"
+        "    - renal: any CrCl/GFR/creatinine value, dialysis, ESRD, CKD stage\n"
+        "    - hepatic: Child-Pugh class, cirrhosis, liver failure grade\n"
+        "    - weight: body weight in kg or BMI if mentioned\n"
+        "    - pregnancy: pregnant/lactating/trimester if mentioned\n"
+        "    - concurrent_drugs: ALL named medications other than the primary drug (not diseases)\n"
+        "    - other_factors: any other population modifiers (transplant, immunocompromised, ICU)\n"
+        "    Leave null/empty-list if not mentioned. For non-complex queries, output {}.\n"
+        "12. Output ONLY JSON — no markdown, no backticks, no explanation.\n"
         "\n"
         f"Query: {query}"
     )
@@ -1980,6 +2048,7 @@ async def _run_parallel_pipeline(
             drug=drug,
             primary_disease=primary_disease,
             comorbidity_list=comorbidity_list,
+            patient_context=getattr(fetched_data, "patient_context", {}) if fetched_data else {},
             fetched_data=fetched_data,
             vector_results=vector_results,
         )
@@ -2058,6 +2127,7 @@ async def _run_parallel_pipeline(
                 drug=drug,
                 primary_disease=primary_disease,
                 comorbidity_list=comorbidity_list,
+                patient_context=getattr(fetched_data, "patient_context", {}) if fetched_data else {},
                 fetched_data=fetched_data,
                 vector_results=vector_results,
             )
@@ -2291,6 +2361,8 @@ async def process_query(
         pubmed_expansion_terms = combined.get("pubmed_terms")
         _query_intent = combined.get("intent") or "general"
         _search_variants = combined.get("search_variants") or []
+        # Store patient_context extracted from query (for complex queries)
+        _patient_context = combined.get("patient_context", {}) or {}
         if rewritten_query != request.query:
             logger.info("Query rewritten: %r → %r", request.query, rewritten_query)
     else:
@@ -2298,6 +2370,7 @@ async def process_query(
         logger.info("_analyze_and_expand_query failed — falling back to legacy DSPy + rewrite")
         _query_intent = "general"
         _search_variants = []
+        _patient_context = {}
         _dspy_result, _rewritten = await asyncio.gather(
             _analyze_query_with_dspy(
                 request.query,
@@ -2459,6 +2532,9 @@ async def process_query(
         pubmed_expansion_terms=pubmed_expansion_terms,
         force_refresh=request.force_refresh,
     )
+    # Store patient context extracted from query (for complex queries)
+    if fetched_data:
+        fetched_data.patient_context = _patient_context
     logger.info(
         "pipeline.data_fetch",
         extra={
@@ -2979,12 +3055,19 @@ async def process_query(
     # Build AdaptiveResponse from parsed dict
     try:
         sanitize_response_pmids(parsed, fetched_data)
-        # If model (e.g. Cerebras/GPT) didn't return references, inject from real fetched data
-        if not parsed.get("references") and fetched_data:
+        _normalize_consensus_sources(parsed)
+        # If model (e.g. Cerebras/GPT) returned no references OR only fake consensus ones, inject real fetched data
+        _refs_before_inject = parsed.get("references", [])
+        _all_fake = _refs_before_inject and all(
+            _is_expert_source((r.get("source") or r.get("title") or "") if isinstance(r, dict) else str(r))
+            for r in _refs_before_inject
+        )
+        if (not _refs_before_inject or _all_fake) and fetched_data:
             parsed["references"] = _inject_fetched_refs(fetched_data)
         _backfill_expert_opinion_global(parsed)
         _raw_refs = parsed.get("references", [])
         enrich_references({"references": _raw_refs}, fetched_data)
+        _raw_refs = _filter_expert_references(_raw_refs)
         _references = [
             AdaptiveReference(**r) if isinstance(r, dict) else AdaptiveReference(title=str(r))
             for r in _raw_refs

@@ -43,6 +43,10 @@ EVIDENCE-BASED CLAIMS:
 - Use Confidence: high (guideline/RCT), moderate (observational/review), low (case reports/expert).
 - Never contradict fetched data. If no data exists, state "limited evidence" and explain what's known from your training (with caveats).
 - Avoid speculative claims about off-label use without citing trial data or expert guidance.
+
+REFERENCES & URLs:
+- If the data block contains a URL (marked as "URL:" or "Label URL:"), copy it verbatim into the reference "url" field.
+- Never invent, modify, or shorten URLs. If the data block has no URL for a source, leave "url" as null.
 """
 
 FORMATTING_RULES = """
@@ -67,18 +71,28 @@ _SECTION_GUIDANCE: dict[str, str] = {
         "Complications · Prognosis"
     ),
     "comparative": (
-        "Summary · [One dedicated section per entity being compared] · "
+        "Summary · "
+        "[One dedicated full-profile section per entity: overview, key features, evidence base] · "
         "Head-to-Head Comparison (MUST include a comparison table with the compared entities as columns) · "
+        "Clinical Evidence (key supporting studies for each entity) · "
         "Clinical Preference & Guideline Positioning"
     ),
     "comparative_drug": (
-        "Summary · [One dedicated section per drug being compared] · "
-        "Head-to-Head Comparison (MUST include a structured comparison table with the two drugs as columns "
-        "and key dimensions as rows: mechanism, dosing, efficacy, side effects, contraindications, drug interactions) · "
-        "Clinical Preference & Guideline Positioning · "
-        "Drug Interactions Between Compared Agents (list every clinically significant "
-        "interaction between any two agents in the comparison — severity: major/moderate/minor, "
-        "mechanism, clinical consequences, and management)"
+        "Summary (2–3 sentences: what is being compared and the key clinical question) · "
+        "[Drug A Full Profile: Mechanism of Action · Indications · "
+        "Dosing (all key regimens and routes) · Contraindications · "
+        "Side Effects (common + serious) · Drug Interactions · "
+        "Pharmacokinetics · Monitoring Parameters · Special Populations] · "
+        "[Drug B Full Profile: same 8 sub-sections as Drug A] · "
+        "Head-to-Head Comparison (MUST include a structured comparison table: "
+        "Drug A vs Drug B as columns; rows MUST cover: mechanism, dosing, efficacy, "
+        "safety profile, contraindications, drug interactions, pharmacokinetics, "
+        "guideline standing) · "
+        "Drug Interactions Between Compared Agents (severity: major/moderate/minor, "
+        "mechanism, clinical consequences, management) · "
+        "Clinical Evidence (key RCTs and systematic reviews; cite trial name, "
+        "sample size, primary endpoint, result for each drug) · "
+        "Clinical Preference & Guideline Positioning"
     ),
     "procedure": (
         "Overview & Indications · Contraindications · Step-by-Step Technique · "
@@ -90,7 +104,14 @@ _SECTION_GUIDANCE: dict[str, str] = {
     ),
     "complex": (
         "Baseline Rule (drug × primary disease) · "
-        "[ONE SECTION PER COMORBIDITY: 'Conflict with <comorbidity>' — covering interaction mechanism, dose adjustment, monitoring] · "
+        "[ONE SECTION PER COMORBIDITY: 'Conflict with <comorbidity>' — interaction mechanism, dose adjustment, monitoring] · "
+        "[CLINICALLY-DRIVEN SECTIONS based on drug pharmacology and query context — NOT hardcoded, "
+        "determined by LLM based on clinical relevance: Renal Dose Adjustment (if renally cleared or nephrotoxic) · "
+        "Hepatic Dose Adjustment (if hepatically metabolised or hepatotoxic) · "
+        "Geriatric Considerations (if age-related PK changes apply) · "
+        "Paediatric Dosing (if applicable) · Pregnancy & Lactation Safety (if teratogenic or category concerns) · "
+        "Weight-Based Dosing (if mg/kg or obesity adjustments apply) · "
+        "Key Drug-Drug Interactions (major interactions in the clinical context)] · "
         "Synthesised Recommendation · Monitoring & Red Flags"
     ),
 }
@@ -127,6 +148,7 @@ RESPOND WITH A SINGLE JSON OBJECT — no markdown fences, no prose outside the J
       "title": "Top-level article/guideline title from the data block",
       "source": "PubMed | NICE | FDA | etc.",
       "pmid": "12345678 or null",
+      "url": "Copy the URL exactly from the data block if present, otherwise null",
       "year": "2024 or null"
     }
   ],
@@ -183,12 +205,15 @@ RESPOND WITH A SINGLE JSON OBJECT — no markdown fences, no prose outside the J
   "references": [
     {{
       "title": "Exact article or guideline title from the data block",
-      "source": "PubMed | NICE | FDA OpenFDA | MedlinePlus | Clinical Consensus | etc.",
+      "source": "PubMed | NICE | FDA | MedlinePlus | [SOURCE: label from data block]",
       "pmid": "12345678 or null",
+      "url": "Copy the URL exactly from the data block if present, otherwise null",
       "year": "2024 or null"
     }}
   ]
 }}
+
+CRITICAL: Never use "Clinical Consensus", "Expert Consensus", "Clinical Opinion", or any invented source name. The ONLY acceptable fallback when the data block has NO relevant entries is "Expert opinion".
 
 EVERY content_item.source MUST cite a [SOURCE: ...] label from the fetched data block. Sources outside the block are FORBIDDEN.
 Never write "NA", "N/A", "n.a.", "unknown", or "none" as a source value. You MUST use the exact [SOURCE: ...] label from the data block. "Expert opinion" is ONLY acceptable when the data block contains NO relevant entries at all.
@@ -215,8 +240,9 @@ RESPOND WITH A SINGLE JSON OBJECT — no markdown fences, no prose outside the J
   "references": [
     {
       "title": "Exact article or guideline title from the data block",
-      "source": "PubMed | NICE | FDA OpenFDA | MedlinePlus | Clinical Consensus | etc.",
+      "source": "PubMed | NICE | FDA | MedlinePlus | [SOURCE: label from data block]",
       "pmid": "12345678 or null",
+      "url": "Copy the URL exactly from the data block if present, otherwise null",
       "year": "2024 or null"
     }
   ]
@@ -224,6 +250,7 @@ RESPOND WITH A SINGLE JSON OBJECT — no markdown fences, no prose outside the J
 
 EVERY content_item.source MUST cite a [SOURCE: ...] label from the fetched data block. Sources outside the block are FORBIDDEN.
 Never write "NA", "N/A", "n.a.", "unknown", or "none" as a source value. You MUST use the exact [SOURCE: ...] label from the data block. "Expert opinion" is ONLY acceptable when the data block contains NO relevant entries at all.
+CRITICAL: Never use "Clinical Consensus", "Expert Consensus", "Clinical Opinion", or any invented source name. The ONLY acceptable fallback when the data block has NO relevant entries is "Expert opinion".
 If loe and cor are both null (evidence not gradeable), source is EVEN MORE critical — it is the only attribution the reader has. Never leave source null or empty.
 references: List ALL sources from the data block that informed this section. Include a reference for every [SOURCE: ...] label cited in content_items. If fetched data was provided, there MUST be at least 1 reference. Only omit if the data block contained no relevant entries for this section.
 Keep text length 100–200 words per item.
@@ -327,6 +354,11 @@ def _format_drug_block(drug_result: Any) -> str:
         if interactions_raw:
             lines.append(f"Interactions: {interactions_raw}")
 
+    # Include label URL for LLM to cite
+    label_url = getattr(drug_result, "label_url", None)
+    if label_url:
+        lines.append(f"Label URL: {label_url}")
+
     return "\n".join(lines)
 
 
@@ -349,8 +381,28 @@ def _format_abstracts(abstracts: list[dict | str]) -> str:
             source = a.get("journal") or a.get("collective_name") or "PubMed"
             year = a.get("year", "n.d.")
             pmid = a.get("pmid", "")
+            nct_id = a.get("nct_id", "")
+            doi = a.get("doi", "")
             label = f"[SOURCE: {title}]"
-            formatted.append(f"{label}\nTitle: {title}\nSource: {source} ({year})\nPMID: {pmid}\nAbstract: {text}")
+
+            # Build URL section based on available identifiers
+            url_section = ""
+            if pmid:
+                url_section = f"URL: https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
+            elif nct_id:
+                url_section = f"URL: https://clinicaltrials.gov/study/{nct_id}"
+            elif doi:
+                url_section = f"URL: https://doi.org/{doi}"
+
+            parts = [label, f"Title: {title}", f"Source: {source} ({year})"]
+            if pmid:
+                parts.append(f"PMID: {pmid}")
+            if nct_id:
+                parts.append(f"NCT: {nct_id}")
+            if url_section:
+                parts.append(url_section)
+            parts.append(f"Abstract: {text}")
+            formatted.append("\n".join(parts))
         else:
             formatted.append(str(a))
     return "\n\n".join(formatted)
@@ -360,7 +412,11 @@ def _format_nice_recs(recs: list[dict]) -> str:
     """Format NICE recommendations."""
     lines = []
     for rec in recs[:5]:
-        lines.append(f"- {rec.get('recommendation', '')}")
+        line = f"- {rec.get('recommendation', rec.get('text', ''))}"
+        url = rec.get("url")
+        if url:
+            line += f"\n  URL: {url}"
+        lines.append(line)
     return "\n".join(lines)
 
 
@@ -481,6 +537,23 @@ def _build_adaptive_data_block(
         elif query_type == "comparative" and fetched_data.comparative_drug_data:
             for i, drug in enumerate(fetched_data.comparative_drug_data[:3], 1):
                 parts.append(f"=== DRUG {i} DATA ===\n" + _format_drug_block(drug))
+                # Per-drug evidence abstracts
+                per_drug_abs = (
+                    (drug.guideline_abstracts or []) +
+                    (drug.clinical_trial_abstracts or []) +
+                    (drug.systematic_review_abstracts or [])
+                )
+                if per_drug_abs:
+                    parts.append(f"=== DRUG {i} EVIDENCE ===\n" + _format_abstracts(per_drug_abs[:8]))
+            # Head-to-head comparative evidence (currently fetched but never injected)
+            if fetched_data.comparative_evidence and fetched_data.comparative_evidence.fetch_success:
+                ce = fetched_data.comparative_evidence
+                if ce.clinical_trial_abstracts:
+                    parts.append("=== HEAD-TO-HEAD CLINICAL TRIALS ===\n" + _format_abstracts(ce.clinical_trial_abstracts[:6]))
+                if ce.systematic_review_abstracts:
+                    parts.append("=== HEAD-TO-HEAD SYSTEMATIC REVIEWS ===\n" + _format_abstracts(ce.systematic_review_abstracts[:4]))
+                if ce.guideline_abstracts:
+                    parts.append("=== COMPARATIVE GUIDELINES ===\n" + _format_abstracts(ce.guideline_abstracts[:4]))
 
         elif query_type == "procedure" and fetched_data.procedure_data and fetched_data.procedure_data.fetch_success:
             d = fetched_data.procedure_data
@@ -678,6 +751,7 @@ def build_complex_bluf_messages(
     drug: str,
     primary_disease: str,
     comorbidity_list: list[str],
+    patient_context: dict | None = None,
     fetched_data: "FetchedData | None" = None,
     vector_results: "list[SearchResult] | None" = None,
 ) -> tuple[str, str, str, str]:
@@ -691,14 +765,41 @@ def build_complex_bluf_messages(
     )
     forced_block = "REQUIRED section_titles (return EXACTLY these, in this order): " + " | ".join(forced_titles)
 
+    # Build patient context block for the prompt
+    ctx = patient_context or {}
+    context_lines = []
+    if ctx.get("age"):              context_lines.append(f"Patient age: {ctx['age']}")
+    if ctx.get("renal"):            context_lines.append(f"Renal function: {ctx['renal']}")
+    if ctx.get("hepatic"):          context_lines.append(f"Hepatic function: {ctx['hepatic']}")
+    if ctx.get("weight"):           context_lines.append(f"Weight/BMI: {ctx['weight']}")
+    if ctx.get("pregnancy"):        context_lines.append(f"Pregnancy/lactation: {ctx['pregnancy']}")
+    if ctx.get("concurrent_drugs"): context_lines.append(f"Concurrent medications: {', '.join(ctx['concurrent_drugs'])}")
+    if ctx.get("other_factors"):    context_lines.append(f"Other factors: {', '.join(ctx['other_factors'])}")
+
+    patient_block = "\n".join(context_lines)
+
     dynamic_system = (
         f"QUERY TYPE: complex\n"
         f"REQUIRED SECTION AREAS: {section_guidance}\n"
         f"{forced_block}\n\n"
         f"  3. Comorbidities to address: {co_capped}.\n"
+        f"  4. Patient context (from query): {patient_block or 'none specified — use clinical judgment'}\n"
+        f"  5. ADDITIONAL CLINICALLY-RELEVANT SECTIONS: In addition to the forced section_titles, "
+        f"include additional sections for any of the following that are CLINICALLY RELEVANT for {drug}, "
+        f"even if the user did not specify them:\n"
+        f"     - Renal Dose Adjustment — if {drug} is renally cleared or has renal safety concerns\n"
+        f"     - Hepatic Dose Adjustment — if {drug} has hepatic metabolism or hepatotoxicity risk\n"
+        f"     - Geriatric Considerations — if age-related PK changes, fall risk, or guideline age caveats apply to {drug}\n"
+        f"     - Paediatric Dosing — if {drug} has different paediatric dosing or safety profile\n"
+        f"     - Pregnancy & Lactation Safety — if {drug} has a known teratogenicity or FDA pregnancy category\n"
+        f"     - Weight-Based Dosing — if dosing is weight-dependent (e.g., mg/kg, obesity adjustments)\n"
+        f"     - Drug-Drug Interactions — list major interactions clinically relevant to {primary_disease} context\n"
+        f"     Determine relevance from your pharmacology knowledge. Do NOT add these sections if they are not clinically meaningful for {drug}.\n"
     )
     data_block = _build_adaptive_data_block("complex", fetched_data, vector_results)
     user_text = f"Query: {query}\nPrimary drug/intervention: {drug}\nPrimary disease: {primary_disease}\nComorbidities: {co_capped}"
+    if patient_block:
+        user_text += f"\n\nSpecified Patient Context:\n{patient_block}"
     return _STATIC_COMPLEX_BLUF_SYSTEM, dynamic_system, data_block, user_text
 
 
@@ -730,6 +831,7 @@ def build_complex_section_messages(
     drug: str,
     primary_disease: str,
     comorbidity_list: list[str],
+    patient_context: dict | None = None,
     fetched_data: "FetchedData | None" = None,
     vector_results: "list[SearchResult] | None" = None,
 ) -> tuple[str, str, str, str]:
@@ -753,12 +855,26 @@ def build_complex_section_messages(
             target_comorbidity = c
             break
 
+    # Build patient context block for the prompt
+    ctx = patient_context or {}
+    context_lines = []
+    if ctx.get("age"):              context_lines.append(f"Patient age: {ctx['age']}")
+    if ctx.get("renal"):            context_lines.append(f"Renal function: {ctx['renal']}")
+    if ctx.get("hepatic"):          context_lines.append(f"Hepatic function: {ctx['hepatic']}")
+    if ctx.get("weight"):           context_lines.append(f"Weight/BMI: {ctx['weight']}")
+    if ctx.get("pregnancy"):        context_lines.append(f"Pregnancy/lactation: {ctx['pregnancy']}")
+    if ctx.get("concurrent_drugs"): context_lines.append(f"Concurrent medications: {', '.join(ctx['concurrent_drugs'])}")
+    if ctx.get("other_factors"):    context_lines.append(f"Other factors: {', '.join(ctx['other_factors'])}")
+
+    patient_block = "\n".join(context_lines)
+
     dynamic_system = (
         f"QUERY TYPE: complex\n"
         f"SECTION TO GENERATE: \"{section_title}\"\n"
         f"OTHER SECTIONS (do NOT duplicate): {other_str}\n"
         f"ALIGNMENT — keep consistent with this BLUF: {bluf_text}\n"
         f"AVAILABLE EVIDENCE: {tier_description}\n"
+        + (f"PATIENT CONTEXT:\n{patient_block}\n" if patient_block else "")
         + (f"FOCUS COMORBIDITY: {target_comorbidity}\n" if target_comorbidity else "")
         + (f"  3. If evidence is from lower tiers (case_report/drug_class), note it in the text:\n"
            f"     'Based on limited evidence from {tier.replace('_', ' ')}. Verify against local guidelines.'\n"
