@@ -10,6 +10,43 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 
+def handle_llm_api_error(e: Exception, model_id: str, provider: str) -> None:
+    """Convert LLM provider errors to user-friendly HTTP exceptions.
+
+    Raises HTTPException on known errors; re-raises on unknown.
+    """
+    error_msg = str(e).lower()
+
+    if provider == "anthropic":
+        # Check for NotFoundError or 404 in error message
+        if "notfound" in error_msg or "404" in error_msg or "model" in error_msg and "does not exist" in error_msg:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "error": "model_not_found",
+                    "message": f"Model '{model_id}' not found on Anthropic. Check your API plan or update the model name via MODEL_HAIKU / MODEL_SONNET environment variables.",
+                    "settings_url": "/settings",
+                },
+            ) from e
+        elif "authentication" in error_msg or "401" in error_msg or "invalid api key" in error_msg:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={
+                    "error": "auth_failed",
+                    "message": "Anthropic API key is invalid or expired. Check Settings → LLM API Key.",
+                    "settings_url": "/settings",
+                },
+            ) from e
+    # Re-raise unknown errors as 500
+    raise HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail={
+            "error": "llm_error",
+            "message": f"{provider} API error: {error_msg[:100]}",
+        },
+    ) from e
+
+
 def get_provider(model_id: str) -> str:
     """Determine provider from model ID."""
     if "/" in model_id:
