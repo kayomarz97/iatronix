@@ -202,12 +202,11 @@ Token budgets (single-call path):
 
 ### 4.8 Post-Processing & URL Enrichment (May 2026 Update)
 1. JSON repair (LLM output is often malformed)
-2. **Expert Consensus normalization** (May 2026):
-   - Non-Anthropic models (GPT, Cerebras) frequently return `"Expert Consensus"`, `"Clinical Consensus"`, or similar variants instead of the canonical `"Expert opinion"` fallback
-   - Pipeline normalizes ALL consensus variants to `"Expert opinion"` **before** backfill runs
-   - If LLM returns ONLY fake consensus references (all variants with no URLs), the pipeline injects real fetched data instead
-   - After URL enrichment, any remaining unfixable expert opinions (no URL) are filtered when real linked references exist
-   - Four-layer defense: (1) Prompt forbids consensus variants, (2) Normalize step, (3) Smart inject replaces fake-only refs, (4) Final filter
+2. **Complete Reference List** (May 2026):
+   - `_normalize_consensus_sources()`: Converts all "Expert Consensus"/"Clinical Consensus" variants to canonical "Expert opinion"
+   - `_build_complete_references()`: Merges LLM-cited refs (section context preserved) with ALL fetched articles (PubMed, NICE recommendations, FDA/DailyMed labels) — deduped by PMID/title
+   - `_inject_fetched_refs()` removed as bottleneck — now includes ALL abstracts with direct article-level URLs (not capped at 8)
+   - URL assignment: Direct PMID→PubMed URL, NCT ID→ClinicalTrials.gov, NICE rec→nice.org.uk, FDA label→dailymed/fda.gov (no homepage fallbacks)
 3. Citation validation (`citation_validator.py`):
    - **Strict mode** (query_type=`complex` or `procedure`): Claims with sources not matching `[SOURCE: ...]` labels from fetched data are dropped (marked `__drop__=True`)
    - **Approved sources:** Whitelist of 30+ sources (PubMed, NICE, FDA, ACOG, etc.); unverified sources logged as warnings but allowed for non-strict types
