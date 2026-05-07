@@ -1328,8 +1328,8 @@ def _resolve_ref_tokens(parsed: dict, ref_map: dict) -> None:
     if not ref_map:
         return
 
-    _TOKEN_FULL = re.compile(r'^\s*\[?\s*(REF_\d+)\s*\]?\s*$', re.IGNORECASE)
-    _TOKEN_INLINE = re.compile(r'\[(REF_\d+)\]', re.IGNORECASE)
+    _TOKEN_FULL = re.compile(r'^\s*[\[\("]?\s*REF[\s_]?(\d+)\s*[\]\)"]?\s*[.;,]?\s*$', re.IGNORECASE)
+    _TOKEN_INLINE = re.compile(r'\b\[?\(?"?\s*REF[\s_]?(\d+)(?![A-Za-z0-9])\s*"?\)?\]?', re.IGNORECASE)
 
     for section in parsed.get("sections", []):
         if not isinstance(section, dict):
@@ -1338,43 +1338,148 @@ def _resolve_ref_tokens(parsed: dict, ref_map: dict) -> None:
             if not isinstance(item, dict):
                 continue
             src = (item.get("source") or "").strip()
-            m = _TOKEN_FULL.match(src) or _TOKEN_INLINE.search(src)
-            if m:
-                key = m.group(1).upper()
+
+            resolved_articles = []
+            for m in _TOKEN_INLINE.finditer(src):
+                key = f"REF_{m.group(1)}"
                 art = ref_map.get(key)
                 if art:
-                    item["source"] = art["title"]
-                    if art.get("pmid"):
-                        item["pmid"] = art["pmid"]
-                    if art.get("url"):
-                        item["url"] = art["url"]
+                    resolved_articles.append(art)
+
+            if not resolved_articles:
+                m_full = _TOKEN_FULL.match(src)
+                if m_full:
+                    key = f"REF_{m_full.group(1)}"
+                    art = ref_map.get(key)
+                    if art:
+                        resolved_articles.append(art)
+
+            if resolved_articles:
+                primary = resolved_articles[0]
+                item["source"] = primary["title"]
+                if primary.get("pmid"):
+                    item["pmid"] = primary["pmid"]
+                if primary.get("url"):
+                    item["url"] = primary["url"]
+                if len(resolved_articles) > 1:
+                    item["additional_sources"] = [
+                        {
+                            "title": art["title"],
+                            "source": art.get("source"),
+                            "pmid": art.get("pmid"),
+                            "url": art.get("url")
+                        }
+                        for art in resolved_articles[1:]
+                    ]
                 else:
-                    # Hallucinated token — strip to "" so backfill picks it up
-                    item["source"] = ""
+                    item["additional_sources"] = []
+            elif _TOKEN_INLINE.search(src) or _TOKEN_FULL.match(src):
+                item["source"] = ""
+                item["additional_sources"] = []
 
     # Resolve tokens in parsed["references"]
     for ref in parsed.get("references", []):
         if not isinstance(ref, dict):
             continue
+        resolved_articles = []
         for field in ("source", "title"):
             val = (ref.get(field) or "").strip()
-            m = _TOKEN_FULL.match(val) or _TOKEN_INLINE.search(val)
-            if m:
-                key = m.group(1).upper()
+            for m in _TOKEN_INLINE.finditer(val):
+                key = f"REF_{m.group(1)}"
                 art = ref_map.get(key)
-                if art:
-                    ref["title"] = art["title"]
-                    ref["source"] = art["source"]
-                    ref["pmid"] = art.get("pmid")
-                    ref["url"] = art.get("url")
-                    break
+                if art and art not in resolved_articles:
+                    resolved_articles.append(art)
+            m_full = _TOKEN_FULL.match(val)
+            if m_full:
+                key = f"REF_{m_full.group(1)}"
+                art = ref_map.get(key)
+                if art and art not in resolved_articles:
+                    resolved_articles.append(art)
+
+        if resolved_articles:
+            primary = resolved_articles[0]
+            ref["title"] = primary["title"]
+            ref["source"] = primary["source"]
+            ref["pmid"] = primary.get("pmid")
+            ref["url"] = primary.get("url")
+
+
+def _best_article_for_claim(claim_text: str, articles: list[dict]) -> dict | None:
+    """Score articles by token overlap with claim text (title + abstract prefix).
+
+    Cheap O(n_articles × n_tokens) scoring. Tie-break by source priority.
+    Returns the best-matching article, or None if no articles.
+    """
+    if not articles:
+        return None
+
+    SOURCE_PRIORITY = {
+        "clinical_trial": 5,
+        "systematic_review": 4,
+        "guideline": 3,
+        "rct": 5,
+        "FDA": 2,
+        "DailyMed": 2,
+    }
+
+    claim_tokens = set(re.findall(r'\b\w+\b', claim_text.lower()))
+    if not claim_tokens:
+        return articles[0]
+
+    best_article = None
+    best_score = -1
+
+    for article in articles:
+        article_text = f"{article.get('title', '')} {article.get('abstract', '')[:200]}".lower()
+        article_tokens = set(re.findall(r'\b\w+\b', article_text))
+        overlap = len(claim_tokens & article_tokens)
+        source = article.get("source", "").lower()
+        priority = next((p for label, p in SOURCE_PRIORITY.items() if label.lower() in source), 0)
+        score = overlap * 10 + priority
+        if score > best_score:
+            best_score = score
+            best_article = article
+
+    return best_article or articles[0]
+
+
+def _quarantine_sourceless_items(parsed: dict) -> None:
+    """Drop content_items and references that lack source/url/pmid after backfill.
+
+    Guarantees: every claim shown to the user has at least one of {source name, URL, PMID}.
+    """
+    for section in parsed.get("sections", []):
+        if not isinstance(section, dict):
+            continue
+        items = section.get("content_items", [])
+        filtered = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            has_source = bool((item.get("source") or "").strip()) and item.get("source") != "Expert opinion"
+            has_url = bool(item.get("url"))
+            has_pmid = bool(item.get("pmid"))
+            if has_source or has_url or has_pmid:
+                filtered.append(item)
+        section["content_items"] = filtered
+
+    refs = parsed.get("references", [])
+    filtered_refs = []
+    for ref in refs:
+        if not isinstance(ref, dict):
+            continue
+        has_url = bool(ref.get("url"))
+        has_pmid = bool(ref.get("pmid"))
+        has_grounded_source = bool((ref.get("source") or "").strip()) and ref.get("source") not in ("", "Expert opinion")
+        if has_url or has_pmid or has_grounded_source:
+            filtered_refs.append(ref)
+    parsed["references"] = filtered_refs
 
 
 def _backfill_expert_opinion_global(parsed: dict, fetched_data: "FetchedData | None" = None) -> None:
-    """Replace 'Expert opinion' in content_items with a real reference from fetched_data.
+    """Replace 'Expert opinion' and empty sources in content_items with per-claim backfill.
 
-    Uses the same ref_map as token resolution to ensure identical universe of articles.
-    Guarantees every content_item gets a real source when any article was fetched.
+    Per-claim resolution uses title similarity. Section-level keyword preference is kept as tie-breaker.
     Call AFTER _resolve_ref_tokens and sanitize_response_pmids.
     """
     from app.services.prompt_engine import build_ref_map
@@ -1384,45 +1489,23 @@ def _backfill_expert_opinion_global(parsed: dict, fetched_data: "FetchedData | N
     if not all_articles:
         return
 
-    SECTION_PRIORITY = {
-        "treatment": ["clinical_trial", "systematic_review", "guideline"],
-        "management": ["clinical_trial", "systematic_review", "guideline"],
-        "guideline": ["practice_guideline", "guideline"],
-        "recommendation": ["practice_guideline", "guideline"],
-        "pathophys": ["systematic_review", "guideline"],
-        "mechanism": ["systematic_review", "guideline"],
-        "dosing": ["FDA", "DailyMed", "practice_guideline"],
-        "pharmacology": ["FDA", "DailyMed"],
-    }
-
     for section in parsed.get("sections", []):
         if not isinstance(section, dict):
             continue
-        title_lower = (section.get("title") or "").lower()
-        preferred_sources = next(
-            (prefs for kw, prefs in SECTION_PRIORITY.items() if kw in title_lower),
-            None,
-        )
-        # Pick best-match article: first article whose source matches a preferred label,
-        # else fall through to first article in deterministic order
-        chosen = None
-        if preferred_sources:
-            for label in preferred_sources:
-                chosen = next((a for a in all_articles if label.lower() in a["source"].lower()), None)
-                if chosen:
-                    break
-        chosen = chosen or all_articles[0]
 
         for item in section.get("content_items", []):
             if not isinstance(item, dict):
                 continue
             src = (item.get("source") or "").strip()
             if src in ("", "Expert opinion") and not item.get("pmid"):
-                item["source"] = chosen["title"]
-                if chosen.get("pmid"):
-                    item["pmid"] = chosen["pmid"]
-                if chosen.get("url"):
-                    item["url"] = chosen["url"]
+                claim_text = item.get("text", "")
+                best = _best_article_for_claim(claim_text, all_articles)
+                if best:
+                    item["source"] = best["title"]
+                    if best.get("pmid"):
+                        item["pmid"] = best["pmid"]
+                    if best.get("url"):
+                        item["url"] = best["url"]
 
 
 def _inject_fetched_refs(fetched_data) -> list[dict]:
@@ -1465,18 +1548,58 @@ def _inject_fetched_refs(fetched_data) -> list[dict]:
     return refs
 
 
+def _is_grounded_ref(llm_ref: dict, ref_map_index: dict) -> bool:
+    """Check if LLM-supplied ref corresponds to a real fetched article.
+
+    Matches by PMID, NCT, DOI, or normalized title against the union of fetched articles.
+    """
+    pmid = str(llm_ref.get("pmid") or "").strip()
+    nct = (llm_ref.get("nct_id") or "").strip().upper()
+    doi = (llm_ref.get("doi") or "").strip().lower()
+    title_norm = re.sub(r'\W+', ' ', (llm_ref.get("title") or "")).strip().lower()
+    return (
+        (pmid and pmid in ref_map_index["pmids"]) or
+        (nct and nct in ref_map_index["ncts"]) or
+        (doi and doi in ref_map_index["dois"]) or
+        (title_norm and title_norm in ref_map_index["titles"])
+    )
+
+
 def _build_complete_references(llm_refs: list, fetched_data) -> list:
     """Merge LLM-cited refs with ALL fetched articles + NICE + FDA, deduped by PMID/title.
 
+    LLM refs are validated against fetched_data; hallucinations are dropped.
     Ensures the response shows every source consulted, not just what the LLM chose to mention.
     """
+    from app.services.prompt_engine import build_ref_map
+
     seen_pmids: set[str] = set()
     seen_titles: set[str] = set()
     result: list[dict] = []
 
-    # Phase 1: keep LLM-cited refs, but build URL from PMID/NCT if missing
+    # Build ref_map_index for grounding validation
+    ref_map_index = {"pmids": set(), "ncts": set(), "dois": set(), "titles": set()}
+    if fetched_data:
+        ref_map = build_ref_map(fetched_data)
+        for art in ref_map.values():
+            pmid = str(art.get("pmid") or "").strip()
+            if pmid:
+                ref_map_index["pmids"].add(pmid)
+            nct = (art.get("nct_id") or "").strip().upper()
+            if nct:
+                ref_map_index["ncts"].add(nct)
+            doi = (art.get("doi") or "").strip().lower()
+            if doi:
+                ref_map_index["dois"].add(doi)
+            title_norm = re.sub(r'\W+', ' ', (art.get("title") or "")).strip().lower()
+            if title_norm:
+                ref_map_index["titles"].add(title_norm)
+
+    # Phase 1: keep grounded LLM-cited refs, build URL from PMID/NCT if missing
     for r in llm_refs:
         if not isinstance(r, dict):
+            continue
+        if fetched_data and not _is_grounded_ref(r, ref_map_index):
             continue
         pmid = str(r.get("pmid") or "").strip()
         nct_id = str(r.get("nct_id") or "").strip()
@@ -1485,7 +1608,6 @@ def _build_complete_references(llm_refs: list, fetched_data) -> list:
             seen_pmids.add(pmid)
         if title:
             seen_titles.add(title)
-        # Build URL from PMID/NCT if LLM didn't provide one (GPT/Cerebras rarely include URLs)
         if not r.get("url"):
             if pmid and pmid.isdigit():
                 r["url"] = f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
@@ -3261,6 +3383,7 @@ async def process_query(
         _raw_refs = _build_complete_references(_llm_refs, fetched_data)
         parsed["references"] = _raw_refs
         _backfill_expert_opinion_global(parsed, fetched_data)  # 4. Backfill remaining expert opinion from fetched_data
+        _quarantine_sourceless_items(parsed)                   # 5. Drop orphan claims without source/url/pmid
         _raw_refs = parsed.get("references", [])
         enrich_references({"references": _raw_refs}, fetched_data)
         _raw_refs = _filter_expert_references(_raw_refs)
