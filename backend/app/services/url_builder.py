@@ -371,6 +371,15 @@ def enrich_references(data: dict, fetched_data=None) -> None:
             if ref["url"]:
                 continue
 
+        # Step 5.5: Direct DOI field fallback — build from structured doi field
+        doi = (ref.get("doi") or "").strip()
+        if doi and not ref.get("url"):
+            safe_doi = quote(doi, safe=_DOI_SAFE_CHARS)
+            candidate = f"https://doi.org/{safe_doi}"
+            ref["url"] = candidate if is_safe_url(candidate) else None
+            if ref["url"]:
+                continue
+
         # Step 6: source-name pattern homepages — REMOVED. Homepages (pubmed.ncbi.nlm.nih.gov/) without article-level URLs are useless.
         # If a source has a meaningful article URL, it will be in the data block and handled by Steps 0.5–5.
 

@@ -155,7 +155,11 @@ async def update_preferences(
     current.update(req.preferences)
     db_user.preferences = current
     await session.commit()
-    return {"preferences": current, "message": "Preferences updated"}
+    invalidate_user_cache(user.firebase_uid)
+
+    # Return active_provider so frontend has canonical source of truth
+    active_prov = current.get("engine_pref") or db_user.llm_provider
+    return {"preferences": current, "active_provider": active_prov, "message": "Preferences updated"}
 
 
 _PROVIDER_COLUMN_MAP = {

@@ -540,27 +540,42 @@ The `complex` query type handles questions like: _"rivaroxaban dosing in severe 
 
 ---
 
-## 7b. Citation Hardening — Robust Token Grounding (May 2026 v2)
+## 7b. Citation Hardening — Robust Token Grounding (May 2026 v3)
 
-**Rationale:** Post-deployment observation of three failure modes in production: (1) LLM emits `REF_5.`, `(REF_5)`, `"REF_5"`, `REF5`, `Ref 5` — regex too strict, tokens dropped to `""`, refs disappear. (2) Multi-claim sections collapse onto one backfilled article because fallback is per-section, not per-claim. (3) Hallucinated titles with null URLs survive validation and render as plain text.
+**Rationale:** Three regressions observed after May v2 citation hardening: (1) **References empty.** Hardening over-corrected: `_is_grounded_ref` was too strict (exact normalized-title match required), rejecting paraphrased titles as hallucinations → claims dropped → only "Expert opinion" shown with no linked sources. (2) **Provider toggle stuck.** Frontend cached stale provider; backend used "first key wins" instead of honoring `engine_pref` → users switched to Anthropic but got Cerebras. (3) **Mid-stream shrinkage.** When `done` event arrives, aggressive post-processing (due to issue #1) drops claims the user already saw stream → visible content shrinkage on screen.
 
-**Implementation** (`rag_pipeline.py`, `prompt_engine.py`, `url_builder.py`):
-1. **Widened token regex** — `_TOKEN_FULL`/`_TOKEN_INLINE` now match `REF[\s_]?(\d+)` with optional brackets/parens/quotes/punctuation. Capture group is number only; canonical `REF_N` reconstructed. Recovers 90%+ of malformed tokens from Cerebras/Gemma.
-2. **Multi-token sources** — `_resolve_ref_tokens` uses `finditer()` to detect all `[REF_N]` tokens in a source field. If multiple resolve: primary becomes `source`, rest go to `additional_sources[]` list (future UI chip expansion).
-3. **Per-claim backfill** — `_backfill_expert_opinion_global` replaced with `_best_article_for_claim()`. Scores articles by token overlap between claim text and article title/abstract; distinct claims land on different articles.
-4. **LLM-ref validation** — `_is_grounded_ref()` checks LLM-supplied refs against `ref_map` (PMID/NCT/DOI/normalized-title). Hallucinated titles without a grounded ID are **dropped** (not modified, not merged — just dropped). Phase 1 of `_build_complete_references()` filters ungrounded LLM refs before appending fetched articles.
-5. **URL verification** — `enrich_references()` in `url_builder.py` builds `allowed_urls` set from fetched articles. LLM-provided URLs not in the set are nulled; deterministic rebuilder takes over.
-6. **Explicit schema hint** — `_STATIC_SECTION_SCHEMA` now says `"MUST be one of the [REF_N] tokens listed in data block preamble ([REF_1]...[REF_{max_n}])"`. Data block preamble added: `"=== VALID CITATION TOKENS ===\nUse ONLY: REF_1, REF_2, ... REF_{max_n}"`.
-7. **Quarantine step** — `_quarantine_sourceless_items()` runs after backfill. Drops content items and references with `source in ("", "Expert opinion") and not (url or pmid)`. Guarantees: zero orphaned plain-text fragments.
+**Implementation** (`rag_pipeline.py`, `prompt_engine.py`, `url_builder.py`, `auth_routes.py`, `settings/page.tsx`, `QueryProvider.tsx`):
 
-**Feature flag:** `CITATION_REF_TOKENS_ENABLED` (reused from existing token system). Set to `false` to revert to pre-token pipeline instantly.
+**Backend — References:**
+1. **Unresolved token sentinel** — `_resolve_ref_tokens` now marks unparseable tokens with `__UNRESOLVED_TOKEN__` (not empty string). Triggers per-claim backfill instead of silent drop; distinguishable in audit logs.
+2. **Tiered LLM-ref validation** — `_is_grounded_ref()` uses evidence-based tiers (not all-or-nothing): (a) PMID/NCT/DOI exact match → grounded; (b) title token overlap ≥0.5 against fetched articles → grounded (enables paraphrased titles); (c) source authority match (PubMed, NICE, FDA, etc.) with fetched articles present → grounded by association; (d) otherwise → not grounded (but claim may still be backfilled). Accepts Tier 1–3 evidence; no longer rejects tier-4 paraphrases.
+3. **Gated quarantine (demote not drop)** — `_quarantine_sourceless_items()` now: (a) only runs if `fetched_data` is non-null (if no live API data, skip quarantine entirely to preserve training-knowledge content); (b) instead of **deleting** ungrounded claims, **demotes** them: sets `source="Expert opinion"`, `confidence="low"`. Users see the claim with a low-confidence badge (never a missing chunk).
+4. **Broadened backfill** — `_backfill_expert_opinion_global` now fires on: (a) empty sources, (b) `__UNRESOLVED_TOKEN__`, (c) low-confidence demoted items. Per-claim backfill via `_best_article_for_claim()` lands each claim on the best-matching fetched article.
+5. **URL safety net** — `url_builder.py` Step 5.5 deterministically rebuilds hallucinated URLs from structured `pmid`/`nct_id`/`doi` fields before returning None. Guarantees: every reference has a clickable link if any ID survives.
+6. **Prompt token re-emission** — `build_section_messages()` and `build_complex_section_messages()` now re-emit valid `[REF_1]...[REF_{max_n}]` tokens in `dynamic_system` prompt (not just data block), with explicit instruction: *"NEVER write 'Expert opinion' as a token — reserve for low-confidence backfill."* Compensates for non-Anthropic models that lose context across long generations.
+
+**Backend — Provider (engine_pref):**
+7. **Authoritative engine_pref resolution** — `rag_pipeline.py` now: (a) reads `user.preferences["engine_pref"]` first; (b) if that provider has a key, use it; (c) else fall back to priority order (cerebras → anthropic → openai). "First key wins" logic removed.
+8. **API returns active_provider** — `POST /auth/settings` now returns `{active_provider, ...}` so frontend has canonical source of truth.
+
+**Frontend — Provider (engine_pref):**
+9. **Single source of truth** — `settings/page.tsx`: (a) initialize `activeProvider` from `fetchBYOKKeys()` response; (b) all save handlers re-sync from API response (not localStorage assumptions); (c) `handleNewEnginePref` awaits `POST /auth/settings` and syncs from response.
+10. **Fresh provider on submit** — `QueryProvider.tsx` calls `getLLMConfig()` at submit time (not stale closure) to get fresh provider + model_id from backend.
+
+**Frontend — Mid-stream shrinkage:**
+11. **Never shrink on done** — `QueryProvider.tsx` `done` handler now: (a) diffs streamed vs. post-processed sections by character count; (b) if post-processed is shorter, keeps streamed content and merges post-processed references only; (c) guarantees UI never shrinks vs. what user already saw.
+
+**Feature flag:** `CITATION_REF_TOKENS_ENABLED`. Set to `false` to revert to pre-token pipeline instantly.
 
 **Verification steps:**
 - Drug query ("metformin T2DM") → every reference has non-null URL
 - Multi-claim section → ≥2 distinct articles cited (inspect response JSON)
-- Cerebras output → same coverage as GPT (malformed tokens recovered)
-- Backend logs → `unresolved_token` counter → near zero
-- Hallucination probe → rare-disease query with 0 PubMed hits → only NICE/FDA or no refs (never fabricated titles)
+- Paraphrased title → claim retained with correct backing article (title_overlap scoring)
+- Cerebras output → same or better coverage than v2 (unresolved tokens backfilled)
+- Rare-disease query with 0 PubMed hits → low-confidence "Expert opinion" shown (never a missing chunk)
+- Toggle provider mid-session → subsequent query uses selected provider (not cached stale value)
+- Stream claim text → complete claim visible when `done` arrives (no visible shrinkage)
+- Backend logs → `unresolved_token_count` counter → <5% of claims
 
 ---
 

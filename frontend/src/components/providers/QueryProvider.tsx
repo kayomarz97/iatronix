@@ -81,8 +81,10 @@ export function QueryProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    const provider = localStorage.getItem(LLM_PROVIDER_STORAGE_KEY) || llmConfig?.default_provider || "cerebras";
-    const cfg = llmConfig || await getLLMConfig();
+    // Refresh LLM config at submit time to get canonical provider from backend
+    const cfg = await getLLMConfig();
+    setLlmConfig(cfg);
+    const provider = localStorage.getItem(LLM_PROVIDER_STORAGE_KEY) || cfg?.default_provider || "cerebras";
     const providerInfo = cfg.providers[provider];
     const modelId = providerInfo?.model_id ?? PROVIDER_DEFAULT_MODELS[provider] ?? "gpt-oss-120b";
     const modelName = providerInfo?.display ?? modelId;
@@ -135,14 +137,45 @@ export function QueryProvider({ children }: { children: ReactNode }) {
           setStreamingSections((prev) => [...prev, event.payload]);
         } else if (event.type === "done") {
           const response = event.payload.result;
+          const adaptiveResp = response.response as AdaptiveResponse;
+
+          // Defensive: never shrink on done event. If post-processed sections are shorter
+          // than streamed, keep streamed version and merge references from post-processed.
+          let finalSections = adaptiveResp?.sections || [];
+          const streamed = streamingSections;
+          const postProcessed = finalSections;
+
+          // Check if post-processed is shorter than streamed (by character count per section)
+          if (streamed.length === postProcessed.length) {
+            const shouldUseMerge = streamed.some((s, i) => {
+              const streamedText = (s.content_items || [])
+                .reduce((acc, item) => acc + (item.text || ""), "");
+              const postText = (postProcessed[i]?.content_items || [])
+                .reduce((acc, item) => acc + (item.text || ""), "");
+              return streamedText.length > postText.length;
+            });
+            if (shouldUseMerge) {
+              // Merge: keep streamed content, use post-processed references
+              finalSections = streamed.map((s, i) => ({
+                ...s,
+                references: postProcessed[i]?.references,
+              }));
+            }
+          }
+
           setStreamingText("");
           setStreamingBluf(null);
           setStreamingSections([]);
           setStreamingSectionTitles([]);
           setStreamingFlowcharts([]);
           setStreamingTables([]);
-          setResult(response);
-          const adaptiveResp = response.response as AdaptiveResponse;
+          setResult({
+            ...response,
+            response: {
+              ...adaptiveResp,
+              sections: finalSections,
+            },
+          });
           posthog?.capture("query_submitted", {
             // Query identity
             query_text: query,

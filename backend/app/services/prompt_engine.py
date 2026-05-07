@@ -873,11 +873,19 @@ def build_section_messages(
     other_titles = [t for t in all_section_titles if t != section_title]
     other_str = ", ".join(f'"{t}"' for t in other_titles) if other_titles else "none"
 
+    # Extract valid citation tokens from fetched data
+    ref_map = build_ref_map(fetched_data) if (fetched_data and settings.citation_ref_tokens_enabled) else {}
+    valid_tokens_str = ""
+    if ref_map:
+        valid_tokens = ", ".join(sorted(ref_map.keys()))
+        max_n = len(ref_map)
+        valid_tokens_str = f"\nVALID CITATION TOKENS: {valid_tokens}\n(Use [REF_1] through [REF_{max_n}] as [source] fields. NEVER write 'Expert opinion' as a token — reserve that for low-confidence backfill.)"
+
     dynamic_system = (
         f"QUERY TYPE: {query_type}\n"
         f"SECTION TO GENERATE: \"{section_title}\"\n"
         f"OTHER SECTIONS IN THIS RESPONSE (do NOT duplicate their content): {other_str}\n"
-        f"ALIGNMENT — keep content consistent with this clinical summary: {bluf_text}\n\n"
+        f"ALIGNMENT — keep content consistent with this clinical summary: {bluf_text}{valid_tokens_str}\n\n"
         f"Generate ONLY the content for the section \"{section_title}\"."
     )
 
@@ -1025,12 +1033,20 @@ def build_complex_section_messages(
 
     patient_block = "\n".join(context_lines)
 
+    # Extract valid citation tokens from fetched data
+    ref_map = build_ref_map(fetched_data) if (fetched_data and settings.citation_ref_tokens_enabled) else {}
+    valid_tokens_str = ""
+    if ref_map:
+        valid_tokens = ", ".join(sorted(ref_map.keys()))
+        max_n = len(ref_map)
+        valid_tokens_str = f"\nVALID CITATION TOKENS: {valid_tokens}\n(Use [REF_1] through [REF_{max_n}] as [source] fields. NEVER write 'Expert opinion' as a token — reserve that for low-confidence backfill.)"
+
     dynamic_system = (
         f"QUERY TYPE: complex\n"
         f"SECTION TO GENERATE: \"{section_title}\"\n"
         f"OTHER SECTIONS (do NOT duplicate): {other_str}\n"
         f"ALIGNMENT — keep consistent with this BLUF: {bluf_text}\n"
-        f"AVAILABLE EVIDENCE: {tier_description}\n"
+        f"AVAILABLE EVIDENCE: {tier_description}{valid_tokens_str}\n"
         + (f"PATIENT CONTEXT:\n{patient_block}\n" if patient_block else "")
         + (f"FOCUS COMORBIDITY: {target_comorbidity}\n" if target_comorbidity else "")
         + (f"  3. If evidence is from lower tiers (case_report/drug_class), note it in the text:\n"

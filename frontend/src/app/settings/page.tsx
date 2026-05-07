@@ -347,15 +347,23 @@ export default function SettingsPage() {
     }
   };
 
-  const handleNewEnginePref = (pref: string) => {
-    setActiveProvider(pref);
-    localStorage.setItem("iatronix_engine_pref", pref);
-    localStorage.setItem(LLM_PROVIDER_STORAGE_KEY, pref);
-    fetch("/api/v1/auth/settings", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeader() },
-      body: JSON.stringify({ preferences: { engine_pref: pref } }),
-    }).catch(() => {});
+  const handleNewEnginePref = async (pref: string) => {
+    try {
+      const res = await fetch("/api/v1/auth/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeader() },
+        body: JSON.stringify({ preferences: { engine_pref: pref } }),
+      });
+      const data = await res.json();
+      if (res.ok && data.active_provider) {
+        setActiveProvider(data.active_provider);
+        localStorage.setItem("iatronix_engine_pref", data.active_provider);
+        localStorage.setItem(LLM_PROVIDER_STORAGE_KEY, data.active_provider);
+      }
+    } catch (err) {
+      // If API call fails, revert UI to last known state by refetching
+      fetchBYOKKeys();
+    }
   };
 
   const fetchNcbiStatus = async () => {
