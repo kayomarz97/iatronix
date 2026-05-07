@@ -134,7 +134,7 @@ class TestResolveRefTokens:
         assert parsed["sections"][0]["content_items"][0]["source"] == ""
 
     def test_resolve_tokens_no_substring_match(self):
-        """REF_3 embedded in text without brackets does NOT match."""
+        """REF_3 embedded in text without brackets NOW matches (hardened regex)."""
         ref_map = {"REF_3": {"title": "Title3", "pmid": None, "url": None}}
         parsed = {
             "sections": [{
@@ -143,8 +143,8 @@ class TestResolveRefTokens:
         }
 
         _resolve_ref_tokens(parsed, ref_map)
-        # Should NOT be resolved (no brackets)
-        assert parsed["sections"][0]["content_items"][0]["source"] == "This trial REF_3 something"
+        # With widened regex, bare REF_3 is now resolved
+        assert parsed["sections"][0]["content_items"][0]["source"] == "Title3"
 
     def test_resolve_tokens_case_insensitive(self):
         """Regex is case-insensitive (ref_1 matches REF_1)."""
@@ -202,3 +202,198 @@ class TestPostProcessingOrder:
         assert parsed["sections"][0]["content_items"][0]["pmid"] == "12345"
         # Source should be title, not token
         assert parsed["sections"][0]["content_items"][0]["source"] == "Real Title"
+
+
+class TestRegexVariants:
+    """Tests for widened token regex handling punctuation and formatting variants."""
+
+    def test_regex_handles_punctuation(self):
+        """REF_5., (REF_5), \"REF_5\", REF5, Ref 5 all resolve."""
+        ref_map = {"REF_5": {"title": "Real Article", "pmid": "99999", "url": "https://..."}}
+        variants = [
+            "[REF_5]",
+            "REF_5.",
+            "(REF_5)",
+            '"REF_5"',
+            "REF5",
+            "Ref 5",
+            "[REF_5,",
+            "REF_5 and"
+        ]
+
+        for variant in variants:
+            parsed = {
+                "sections": [{
+                    "content_items": [{"source": variant, "text": "claim"}]
+                }]
+            }
+            _resolve_ref_tokens(parsed, ref_map)
+            source = parsed["sections"][0]["content_items"][0]["source"]
+            assert source == "Real Article", f"Failed for variant: {variant}"
+
+    def test_regex_rejects_substring_lookalike(self):
+        """REFERENCE_5, PREF_5, REF_5A do NOT match (source unchanged)."""
+        ref_map = {"REF_5": {"title": "Real Article", "pmid": "99999", "url": "https://..."}}
+        non_matches = [
+            "REFERENCE_5",
+            "PREF_5",
+            "REF_5A",
+            "REF_ABC",
+            "XREF_5"
+        ]
+
+        for non_match in non_matches:
+            parsed = {
+                "sections": [{
+                    "content_items": [{"source": non_match, "text": "claim"}]
+                }]
+            }
+            _resolve_ref_tokens(parsed, ref_map)
+            source = parsed["sections"][0]["content_items"][0]["source"]
+            # Pattern doesn't match, so source should remain unchanged
+            assert source == non_match, f"Should not match or resolve: {non_match}"
+
+
+class TestMultiTokenSource:
+    """Tests for handling multiple [REF_N] tokens in source field."""
+
+    def test_multi_token_source(self):
+        """[REF_3, REF_4] populates additional_sources."""
+        ref_map = {
+            "REF_3": {"title": "Article 3", "pmid": "333", "url": "https://3"},
+            "REF_4": {"title": "Article 4", "pmid": "444", "url": "https://4"}
+        }
+        parsed = {
+            "sections": [{
+                "content_items": [{"source": "[REF_3, REF_4]", "text": "claim"}]
+            }]
+        }
+
+        _resolve_ref_tokens(parsed, ref_map)
+        item = parsed["sections"][0]["content_items"][0]
+        assert item["source"] == "Article 3"
+        assert item["pmid"] == "333"
+        assert len(item.get("additional_sources", [])) == 1
+        assert item["additional_sources"][0]["title"] == "Article 4"
+        assert item["additional_sources"][0]["pmid"] == "444"
+
+
+class TestBackfillLogic:
+    """Tests for per-claim backfill and hallucination filtering."""
+
+    def test_per_claim_backfill_picks_distinct_articles(self):
+        """Per-claim backfill function picks articles based on token overlap."""
+        from app.services.rag_pipeline import _best_article_for_claim
+
+        articles = [
+            {"title": "Diabetes Management Guidelines", "source": "guideline", "pmid": "111"},
+            {"title": "Hypertension Treatment Review", "source": "systematic_review", "pmid": "222"},
+            {"title": "Drug Interactions Study", "source": "clinical_trial", "pmid": "333"}
+        ]
+
+        diabetes_claim = "Treatment of type 2 diabetes with insulin and metformin"
+        hypertension_claim = "Blood pressure control in elderly patients"
+        interactions_claim = "Drug-drug interactions between common medications"
+
+        best_for_diabetes = _best_article_for_claim(diabetes_claim, articles)
+        best_for_hypertension = _best_article_for_claim(hypertension_claim, articles)
+        best_for_interactions = _best_article_for_claim(interactions_claim, articles)
+
+        # All should return an article (not None)
+        assert best_for_diabetes is not None
+        assert best_for_hypertension is not None
+        assert best_for_interactions is not None
+        # All should be valid articles
+        assert best_for_diabetes["pmid"] in ("111", "222", "333")
+        assert best_for_hypertension["pmid"] in ("111", "222", "333")
+        assert best_for_interactions["pmid"] in ("111", "222", "333")
+
+    def test_hallucinated_llm_ref_dropped(self):
+        """LLM ref with title not in fetched_data is dropped."""
+        from app.services.rag_pipeline import _is_grounded_ref
+
+        ref_map_index = {
+            "pmids": {"99999"},
+            "ncts": set(),
+            "dois": set(),
+            "titles": {"real article"}
+        }
+
+        hallucinated_ref = {
+            "title": "Totally Made Up Study",
+            "pmid": None,
+            "url": "https://fake.example.com"
+        }
+
+        is_grounded = _is_grounded_ref(hallucinated_ref, ref_map_index)
+        assert not is_grounded
+
+    def test_grounded_ref_by_pmid(self):
+        """LLM ref with PMID in ref_map is grounded."""
+        from app.services.rag_pipeline import _is_grounded_ref
+
+        ref_map_index = {
+            "pmids": {"99999"},
+            "ncts": set(),
+            "dois": set(),
+            "titles": set()
+        }
+
+        grounded_ref = {
+            "title": "Some Title",
+            "pmid": "99999",
+            "url": "https://pubmed.ncbi.nlm.nih.gov/99999/"
+        }
+
+        is_grounded = _is_grounded_ref(grounded_ref, ref_map_index)
+        assert is_grounded
+
+
+class TestQuarantineLogic:
+    """Tests for dropping orphan claims without source/url/pmid."""
+
+    def test_quarantine_orphan_claim(self):
+        """Claim with no source/url/pmid after backfill → dropped."""
+        from app.services.rag_pipeline import _quarantine_sourceless_items
+
+        parsed = {
+            "sections": [{
+                "content_items": [
+                    {"text": "Valid claim", "source": "Article Title", "pmid": None},
+                    {"text": "Orphan claim", "source": "", "url": None, "pmid": None},
+                    {"text": "Expert claim", "source": "Expert opinion", "url": None, "pmid": None},
+                ]
+            }],
+            "references": [
+                {"title": "Good Ref", "source": "PubMed", "pmid": "111", "url": None},
+                {"title": "Bad Ref", "source": "Expert opinion", "pmid": None, "url": None},
+            ]
+        }
+
+        _quarantine_sourceless_items(parsed)
+
+        items = parsed["sections"][0]["content_items"]
+        assert len(items) == 1
+        assert items[0]["text"] == "Valid claim"
+
+        refs = parsed["references"]
+        assert len(refs) == 1
+        assert refs[0]["title"] == "Good Ref"
+
+    def test_quarantine_keeps_url_only_item(self):
+        """Item with only URL (no source/pmid) is kept."""
+        from app.services.rag_pipeline import _quarantine_sourceless_items
+
+        parsed = {
+            "sections": [{
+                "content_items": [
+                    {"text": "URL-only claim", "source": "", "url": "https://example.com", "pmid": None},
+                ]
+            }],
+            "references": []
+        }
+
+        _quarantine_sourceless_items(parsed)
+
+        items = parsed["sections"][0]["content_items"]
+        assert len(items) == 1

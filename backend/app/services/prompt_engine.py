@@ -201,14 +201,14 @@ RESPOND WITH A SINGLE JSON OBJECT — no markdown fences, no prose outside the J
       "text": "Evidence-based claim in GFM markdown. Use **bold** for key terms, tables for structured data, bullets for multi-part claims.",
       "loe": "I | II | III | null",
       "cor": "I | IIa | IIb | III-no-benefit | III-harm | null",
-      "source": "Use the [REF_N] token shown above the article in the data block (e.g. '[REF_3]'). The pipeline resolves this to the article's title and URL. Use 'Expert opinion' ONLY if the data block has zero relevant entries.",
+      "source": "MUST be one of the [REF_N] tokens listed in the data block preamble (e.g. [REF_1] through [REF_{{max_n}}]). Do NOT invent titles. Use 'Expert opinion' ONLY if the data block has zero relevant entries.",
       "pmid": "12345678 or null"
     }}
   ],
   "references": [
     {{
       "title": "Exact article or guideline title from the data block",
-      "source": "Use the [REF_N] token (e.g. '[REF_3]'). The pipeline resolves to real title/source. Use 'Expert opinion' ONLY if data block is empty.",
+      "source": "MUST be one of the [REF_N] tokens from the data block preamble. Use 'Expert opinion' ONLY if data block is empty.",
       "pmid": "12345678 or null",
       "url": "Copy the URL exactly from the data block if present, otherwise null",
       "year": "2024 or null"
@@ -236,14 +236,14 @@ RESPOND WITH A SINGLE JSON OBJECT — no markdown fences, no prose outside the J
       "text": "Evidence-based claim in GFM markdown. Use **bold** for key terms, tables for structured data, bullets for multi-part claims.",
       "loe": "I | II | III | null",
       "cor": "I | IIa | IIb | III-no-benefit | III-harm | null",
-      "source": "Use the [REF_N] token shown above the article in the data block (e.g. '[REF_3]'). The pipeline resolves this to the article's title and URL. Use 'Expert opinion' ONLY if the data block has zero relevant entries.",
+      "source": "MUST be one of the [REF_N] tokens listed in the data block preamble (e.g. [REF_1] through [REF_{max_n}]). Do NOT invent titles. Use 'Expert opinion' ONLY if the data block has zero relevant entries.",
       "pmid": "12345678 or null"
     }
   ],
   "references": [
     {
       "title": "Exact article or guideline title from the data block",
-      "source": "Use the [REF_N] token (e.g. '[REF_3]'). The pipeline resolves to real title/source. Use 'Expert opinion' ONLY if data block is empty.",
+      "source": "MUST be one of the [REF_N] tokens from the data block preamble. Use 'Expert opinion' ONLY if data block is empty.",
       "pmid": "12345678 or null",
       "url": "Copy the URL exactly from the data block if present, otherwise null",
       "year": "2024 or null"
@@ -663,6 +663,11 @@ def _build_adaptive_data_block(
     parts: list[str] = []
 
     ref_map = build_ref_map(fetched_data) if (fetched_data and settings.citation_ref_tokens_enabled) else {}
+
+    if ref_map:
+        valid_tokens = ", ".join(sorted(ref_map.keys()))
+        max_n = len(ref_map)
+        parts.append(f"=== VALID CITATION TOKENS ===\nUse ONLY these tokens for [source] fields: {valid_tokens}\n(Range: [REF_1] through [REF_{max_n}])\n")
 
     if fetched_data and not fetched_data.fallback_to_llm:
         if query_type == "drug" and fetched_data.drug_data and fetched_data.drug_data.fetch_success:

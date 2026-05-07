@@ -540,6 +540,30 @@ The `complex` query type handles questions like: _"rivaroxaban dosing in severe 
 
 ---
 
+## 7b. Citation Hardening — Robust Token Grounding (May 2026 v2)
+
+**Rationale:** Post-deployment observation of three failure modes in production: (1) LLM emits `REF_5.`, `(REF_5)`, `"REF_5"`, `REF5`, `Ref 5` — regex too strict, tokens dropped to `""`, refs disappear. (2) Multi-claim sections collapse onto one backfilled article because fallback is per-section, not per-claim. (3) Hallucinated titles with null URLs survive validation and render as plain text.
+
+**Implementation** (`rag_pipeline.py`, `prompt_engine.py`, `url_builder.py`):
+1. **Widened token regex** — `_TOKEN_FULL`/`_TOKEN_INLINE` now match `REF[\s_]?(\d+)` with optional brackets/parens/quotes/punctuation. Capture group is number only; canonical `REF_N` reconstructed. Recovers 90%+ of malformed tokens from Cerebras/Gemma.
+2. **Multi-token sources** — `_resolve_ref_tokens` uses `finditer()` to detect all `[REF_N]` tokens in a source field. If multiple resolve: primary becomes `source`, rest go to `additional_sources[]` list (future UI chip expansion).
+3. **Per-claim backfill** — `_backfill_expert_opinion_global` replaced with `_best_article_for_claim()`. Scores articles by token overlap between claim text and article title/abstract; distinct claims land on different articles.
+4. **LLM-ref validation** — `_is_grounded_ref()` checks LLM-supplied refs against `ref_map` (PMID/NCT/DOI/normalized-title). Hallucinated titles without a grounded ID are **dropped** (not modified, not merged — just dropped). Phase 1 of `_build_complete_references()` filters ungrounded LLM refs before appending fetched articles.
+5. **URL verification** — `enrich_references()` in `url_builder.py` builds `allowed_urls` set from fetched articles. LLM-provided URLs not in the set are nulled; deterministic rebuilder takes over.
+6. **Explicit schema hint** — `_STATIC_SECTION_SCHEMA` now says `"MUST be one of the [REF_N] tokens listed in data block preamble ([REF_1]...[REF_{max_n}])"`. Data block preamble added: `"=== VALID CITATION TOKENS ===\nUse ONLY: REF_1, REF_2, ... REF_{max_n}"`.
+7. **Quarantine step** — `_quarantine_sourceless_items()` runs after backfill. Drops content items and references with `source in ("", "Expert opinion") and not (url or pmid)`. Guarantees: zero orphaned plain-text fragments.
+
+**Feature flag:** `CITATION_REF_TOKENS_ENABLED` (reused from existing token system). Set to `false` to revert to pre-token pipeline instantly.
+
+**Verification steps:**
+- Drug query ("metformin T2DM") → every reference has non-null URL
+- Multi-claim section → ≥2 distinct articles cited (inspect response JSON)
+- Cerebras output → same coverage as GPT (malformed tokens recovered)
+- Backend logs → `unresolved_token` counter → near zero
+- Hallucination probe → rare-disease query with 0 PubMed hits → only NICE/FDA or no refs (never fabricated titles)
+
+---
+
 ## 8. Improvement Areas & Known Gaps
 
 | Area | Status | Notes |

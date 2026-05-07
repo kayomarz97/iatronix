@@ -262,7 +262,7 @@ def enrich_references(data: dict, fetched_data=None) -> None:
     Mutate data in-place: fill Reference.url using deterministic rules only.
 
     Priority order:
-      1. Existing url — validated; nulled if unsafe.
+      1. Existing url — validated against allowed URLs from fetched_data; nulled if not found.
       2. PMID lookup from fetched_data abstracts (title match) — only for PubMed sources.
       3. PMID inline in source/title text.
       4. DOI inline in source/title text.
@@ -270,6 +270,8 @@ def enrich_references(data: dict, fetched_data=None) -> None:
       6. Source-name pattern → known base URL.
       7. null (no invented URLs).
     """
+    from app.services.prompt_engine import build_ref_map
+
     pmid_index = build_pmid_index(fetched_data)
     nctid_index = build_nctid_index(fetched_data)
     valid_pmids = set(pmid_index.values())
@@ -277,6 +279,14 @@ def enrich_references(data: dict, fetched_data=None) -> None:
     refs = data.get("references")
     if not refs:
         return
+
+    allowed_urls = set()
+    if fetched_data:
+        try:
+            ref_map = build_ref_map(fetched_data)
+            allowed_urls = {art.get("url") for art in ref_map.values() if art.get("url")}
+        except Exception:
+            pass
 
     NON_PUBMED_SOURCES = {
         "fda", "nice", "cochrane", "who", "esc", "aha", "acc",
@@ -300,9 +310,14 @@ def enrich_references(data: dict, fetched_data=None) -> None:
             ref["url"] = candidate
             continue
 
-        # Step 1: validate existing URL
+        # Step 1: validate existing URL against allowed URLs from fetched_data
         if existing:
-            ref["url"] = existing if is_safe_url(existing) else None
+            if allowed_urls and existing not in allowed_urls:
+                ref["url"] = None
+            elif not allowed_urls and not is_safe_url(existing):
+                ref["url"] = None
+            else:
+                ref["url"] = existing
             if ref["url"]:
                 continue
 
