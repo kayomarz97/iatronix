@@ -9,12 +9,15 @@ from __future__ import annotations
 import html
 import json
 import logging
+import math
 import re
 from typing import TYPE_CHECKING, Any, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import JsonOutputParser
 from pydantic import BaseModel, ValidationError
+
+from app.config import get_settings
 
 if TYPE_CHECKING:
     from app.schemas.internal import FetchedData, SearchResult
@@ -198,14 +201,14 @@ RESPOND WITH A SINGLE JSON OBJECT — no markdown fences, no prose outside the J
       "text": "Evidence-based claim in GFM markdown. Use **bold** for key terms, tables for structured data, bullets for multi-part claims.",
       "loe": "I | II | III | null",
       "cor": "I | IIa | IIb | III-no-benefit | III-harm | null",
-      "source": "[SOURCE: label from the data block — MUST match exactly]",
+      "source": "Use the [REF_N] token shown above the article in the data block (e.g. '[REF_3]'). The pipeline resolves this to the article's title and URL. Use 'Expert opinion' ONLY if the data block has zero relevant entries.",
       "pmid": "12345678 or null"
     }}
   ],
   "references": [
     {{
       "title": "Exact article or guideline title from the data block",
-      "source": "PubMed | NICE | FDA | MedlinePlus | [SOURCE: label from data block]",
+      "source": "Use the [REF_N] token (e.g. '[REF_3]'). The pipeline resolves to real title/source. Use 'Expert opinion' ONLY if data block is empty.",
       "pmid": "12345678 or null",
       "url": "Copy the URL exactly from the data block if present, otherwise null",
       "year": "2024 or null"
@@ -215,10 +218,10 @@ RESPOND WITH A SINGLE JSON OBJECT — no markdown fences, no prose outside the J
 
 CRITICAL: Never use "Clinical Consensus", "Expert Consensus", "Clinical Opinion", or any invented source name. The ONLY acceptable fallback when the data block has NO relevant entries is "Expert opinion".
 
-EVERY content_item.source MUST cite a [SOURCE: ...] label from the fetched data block. Sources outside the block are FORBIDDEN.
-Never write "NA", "N/A", "n.a.", "unknown", or "none" as a source value. You MUST use the exact [SOURCE: ...] label from the data block. "Expert opinion" is ONLY acceptable when the data block contains NO relevant entries at all.
+EVERY content_item.source MUST use a [REF_N] token from the fetched data block. Sources outside the block are FORBIDDEN.
+Never write "NA", "N/A", "n.a.", "unknown", or "none" as a source value. You MUST use the [REF_N] token. "Expert opinion" is ONLY acceptable when the data block contains NO relevant entries at all.
 If loe and cor are both null (evidence not gradeable), source is EVEN MORE critical — it is the only attribution the reader has. Never leave source null or empty.
-references: List ALL sources from the data block that informed this section. Include a reference for every [SOURCE: ...] label cited in content_items. If fetched data was provided, there MUST be at least 1 reference. Only omit if the data block contained no relevant entries for this section.
+references: List ALL sources from the data block that informed this section. Include a reference for every [REF_N] token cited in content_items. If fetched data was provided, there MUST be at least 1 reference. Only omit if the data block contained no relevant entries for this section.
 Keep text length 100–200 words per item.
 """
 
@@ -233,14 +236,14 @@ RESPOND WITH A SINGLE JSON OBJECT — no markdown fences, no prose outside the J
       "text": "Evidence-based claim in GFM markdown. Use **bold** for key terms, tables for structured data, bullets for multi-part claims.",
       "loe": "I | II | III | null",
       "cor": "I | IIa | IIb | III-no-benefit | III-harm | null",
-      "source": "[SOURCE: label from the data block — MUST match exactly]",
+      "source": "Use the [REF_N] token shown above the article in the data block (e.g. '[REF_3]'). The pipeline resolves this to the article's title and URL. Use 'Expert opinion' ONLY if the data block has zero relevant entries.",
       "pmid": "12345678 or null"
     }
   ],
   "references": [
     {
       "title": "Exact article or guideline title from the data block",
-      "source": "PubMed | NICE | FDA | MedlinePlus | [SOURCE: label from data block]",
+      "source": "Use the [REF_N] token (e.g. '[REF_3]'). The pipeline resolves to real title/source. Use 'Expert opinion' ONLY if data block is empty.",
       "pmid": "12345678 or null",
       "url": "Copy the URL exactly from the data block if present, otherwise null",
       "year": "2024 or null"
@@ -248,11 +251,11 @@ RESPOND WITH A SINGLE JSON OBJECT — no markdown fences, no prose outside the J
   ]
 }
 
-EVERY content_item.source MUST cite a [SOURCE: ...] label from the fetched data block. Sources outside the block are FORBIDDEN.
-Never write "NA", "N/A", "n.a.", "unknown", or "none" as a source value. You MUST use the exact [SOURCE: ...] label from the data block. "Expert opinion" is ONLY acceptable when the data block contains NO relevant entries at all.
+EVERY content_item.source MUST use a [REF_N] token from the fetched data block. Sources outside the block are FORBIDDEN.
+Never write "NA", "N/A", "n.a.", "unknown", or "none" as a source value. You MUST use the [REF_N] token. "Expert opinion" is ONLY acceptable when the data block contains NO relevant entries at all.
 CRITICAL: Never use "Clinical Consensus", "Expert Consensus", "Clinical Opinion", or any invented source name. The ONLY acceptable fallback when the data block has NO relevant entries is "Expert opinion".
 If loe and cor are both null (evidence not gradeable), source is EVEN MORE critical — it is the only attribution the reader has. Never leave source null or empty.
-references: List ALL sources from the data block that informed this section. Include a reference for every [SOURCE: ...] label cited in content_items. If fetched data was provided, there MUST be at least 1 reference. Only omit if the data block contained no relevant entries for this section.
+references: List ALL sources from the data block that informed this section. Include a reference for every [REF_N] token cited in content_items. If fetched data was provided, there MUST be at least 1 reference. Only omit if the data block contained no relevant entries for this section.
 Keep text length 100–200 words per item.
 """
 
@@ -267,10 +270,131 @@ _STATIC_SECTION_SYSTEM = (
 )
 
 
-def _format_drug_block(drug_result: Any) -> str:
+def build_ref_map(fetched_data: Optional[Any]) -> dict[str, dict]:
+    """Pure function to build [REF_N] token map from all fetched sources.
+
+    Returns {"REF_1": {"title", "pmid"|None, "nct_id"|None, "url"|None, "source"}, ...}
+    Deterministic order using composite sort key: (source_priority, pmid_int_or_inf, nct_id, title_lower)
+    Dedupes by (pmid, nct_id, title_lower) triple to prevent duplicate tokens.
+    """
+    if not fetched_data:
+        return {}
+
+    SOURCE_PRIORITY = {
+        "PubMed": 0,
+        "clinical_trial": 1,
+        "ClinicalTrials.gov": 1,
+        "NICE": 2,
+        "FDA": 3,
+        "DailyMed": 4,
+    }
+
+    seen: set[tuple] = set()
+    articles: list[dict] = []
+
+    # Iterate all data objects and their lists
+    for data_attr in ("drug_data", "disease_data", "procedure_data", "evidence_data", "condition_data"):
+        obj = getattr(fetched_data, data_attr, None)
+        if obj is None:
+            continue
+
+        # Collect abstracts from all lists
+        for list_attr in ("guideline_abstracts", "systematic_review_abstracts", "clinical_trial_abstracts", "practice_guideline_abstracts"):
+            for abstract in getattr(obj, list_attr, None) or []:
+                if not isinstance(abstract, dict):
+                    continue
+                pmid = abstract.get("pmid")
+                nct_id = abstract.get("nct_id")
+                title = (abstract.get("title") or "").strip()
+                if not title:
+                    continue
+
+                # Dedup check
+                dedup_key = (pmid, nct_id, title.lower())
+                if dedup_key in seen:
+                    continue
+                seen.add(dedup_key)
+
+                # Infer source
+                source = abstract.get("journal") or abstract.get("collective_name") or "PubMed"
+                url = None
+                if pmid:
+                    url = f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
+                elif nct_id:
+                    url = f"https://clinicaltrials.gov/study/{nct_id}"
+                elif abstract.get("doi"):
+                    url = f"https://doi.org/{abstract['doi']}"
+
+                articles.append({
+                    "title": title,
+                    "pmid": pmid,
+                    "nct_id": nct_id,
+                    "source": source,
+                    "url": url,
+                })
+
+        # Collect NICE recommendations
+        for rec in getattr(obj, "nice_recommendations", None) or []:
+            if not isinstance(rec, dict):
+                continue
+            title = (rec.get("title") or "").strip()
+            if not title:
+                continue
+            dedup_key = (None, None, title.lower())
+            if dedup_key in seen:
+                continue
+            seen.add(dedup_key)
+
+            articles.append({
+                "title": title,
+                "pmid": None,
+                "nct_id": None,
+                "source": "NICE",
+                "url": rec.get("url"),
+            })
+
+    # Handle drug label URLs
+    drug_obj = getattr(fetched_data, "drug_data", None)
+    if drug_obj:
+        label_url = getattr(drug_obj, "label_url", None)
+        if label_url:
+            title = f"FDA Drug Label"
+            dedup_key = (None, None, title.lower())
+            if dedup_key not in seen:
+                seen.add(dedup_key)
+                articles.append({
+                    "title": title,
+                    "pmid": None,
+                    "nct_id": None,
+                    "source": "FDA" if "fda.gov" in label_url.lower() else "DailyMed",
+                    "url": label_url,
+                })
+
+    # Sort by composite key: (source_priority, pmid_int_or_inf, nct_id, title_lower)
+    def sort_key(art: dict) -> tuple:
+        source = art.get("source", "")
+        priority = SOURCE_PRIORITY.get(source, 99)
+        pmid = art.get("pmid")
+        pmid_int = int(pmid) if pmid and str(pmid).isdigit() else math.inf
+        nct_id = art.get("nct_id") or ""
+        title_lower = (art.get("title") or "").lower()
+        return (priority, pmid_int, nct_id, title_lower)
+
+    sorted_articles = sorted(articles, key=sort_key)
+
+    # Assign [REF_N] tokens
+    ref_map = {}
+    for i, art in enumerate(sorted_articles, start=1):
+        ref_map[f"REF_{i}"] = art
+
+    return ref_map
+
+
+def _format_drug_block(drug_result: Any, ref_map: Optional[dict[str, dict]] = None) -> str:
     """Format a drug result object into a readable text block.
 
     Supports both legacy response objects and current DrugFetchResult shapes.
+    If ref_map is provided, looks up FDA label URL token if present.
     """
     lines: list[str] = []
 
@@ -362,8 +486,9 @@ def _format_drug_block(drug_result: Any) -> str:
     return "\n".join(lines)
 
 
-def _format_abstracts(abstracts: list[dict | str]) -> str:
-    """Format PubMed abstracts into a readable block. Sorted by PMID for cache-key stability."""
+def _format_abstracts(abstracts: list[dict | str], ref_map: Optional[dict[str, dict]] = None) -> str:
+    """Format PubMed abstracts into a readable block. Sorted by PMID for cache-key stability.
+    If ref_map is provided, prepends [REF_N] token when article is found in map."""
     def _sort_key(a: dict | str) -> str:
         if isinstance(a, dict):
             return str(a.get("pmid") or a.get("title") or "")
@@ -385,6 +510,16 @@ def _format_abstracts(abstracts: list[dict | str]) -> str:
             doi = a.get("doi", "")
             label = f"[SOURCE: {title}]"
 
+            # Check if this article is in ref_map and prepend token
+            token = None
+            if ref_map:
+                for token_key, art_meta in ref_map.items():
+                    if (pmid and str(pmid) == str(art_meta.get("pmid"))) or \
+                       (nct_id and str(nct_id) == str(art_meta.get("nct_id"))) or \
+                       (title.lower() == (art_meta.get("title") or "").lower()):
+                        token = token_key
+                        break
+
             # Build URL section based on available identifiers
             url_section = ""
             if pmid:
@@ -394,7 +529,10 @@ def _format_abstracts(abstracts: list[dict | str]) -> str:
             elif doi:
                 url_section = f"URL: https://doi.org/{doi}"
 
-            parts = [label, f"Title: {title}", f"Source: {source} ({year})"]
+            parts = []
+            if token:
+                parts.append(f"[{token}]")
+            parts.extend([label, f"Title: {title}", f"Source: {source} ({year})"])
             if pmid:
                 parts.append(f"PMID: {pmid}")
             if nct_id:
@@ -408,11 +546,23 @@ def _format_abstracts(abstracts: list[dict | str]) -> str:
     return "\n\n".join(formatted)
 
 
-def _format_nice_recs(recs: list[dict]) -> str:
-    """Format NICE recommendations."""
+def _format_nice_recs(recs: list[dict], ref_map: Optional[dict[str, dict]] = None) -> str:
+    """Format NICE recommendations. If ref_map is provided, prepends [REF_N] token when found."""
     lines = []
     for rec in recs[:5]:
-        line = f"- {rec.get('recommendation', rec.get('text', ''))}"
+        # Check if this rec is in ref_map
+        token = None
+        if ref_map:
+            rec_title = rec.get('title', rec.get('recommendation', rec.get('text', ''))).strip()
+            for token_key, art_meta in ref_map.items():
+                if rec_title.lower() == (art_meta.get("title") or "").lower() and art_meta.get("source") == "NICE":
+                    token = token_key
+                    break
+
+        if token:
+            line = f"[{token}] - {rec.get('recommendation', rec.get('text', ''))}"
+        else:
+            line = f"- {rec.get('recommendation', rec.get('text', ''))}"
         url = rec.get("url")
         if url:
             line += f"\n  URL: {url}"
@@ -512,31 +662,34 @@ def _build_adaptive_data_block(
     """Build a formatted data block from fetched API data for injection into the adaptive prompt."""
     parts: list[str] = []
 
+    settings = get_settings()
+    ref_map = build_ref_map(fetched_data) if (fetched_data and settings.citation_ref_tokens_enabled) else {}
+
     if fetched_data and not fetched_data.fallback_to_llm:
         if query_type == "drug" and fetched_data.drug_data and fetched_data.drug_data.fetch_success:
-            parts.append("=== DRUG DATA (FDA/RxNorm) ===\n" + _format_drug_block(fetched_data.drug_data))
+            parts.append("=== DRUG DATA (FDA/RxNorm) ===\n" + _format_drug_block(fetched_data.drug_data, ref_map))
             if fetched_data.condition_data:
                 cd = fetched_data.condition_data
                 if hasattr(cd, "guideline_abstracts") and cd.guideline_abstracts:
                     parts.append(
                         "=== CONDITION MANAGEMENT GUIDELINES ===\n"
-                        + _format_abstracts(cd.guideline_abstracts[:6])
+                        + _format_abstracts(cd.guideline_abstracts[:6], ref_map)
                     )
 
         elif query_type == "disease" and fetched_data.disease_data and fetched_data.disease_data.fetch_success:
             d = fetched_data.disease_data
             if d.guideline_abstracts:
-                parts.append("=== DISEASE GUIDELINES ===\n" + _format_abstracts(d.guideline_abstracts))
+                parts.append("=== DISEASE GUIDELINES ===\n" + _format_abstracts(d.guideline_abstracts, ref_map))
             if d.systematic_review_abstracts:
-                parts.append("=== SYSTEMATIC REVIEWS ===\n" + _format_abstracts(d.systematic_review_abstracts))
+                parts.append("=== SYSTEMATIC REVIEWS ===\n" + _format_abstracts(d.systematic_review_abstracts, ref_map))
             if d.medlineplus_summary:
                 parts.append(f"=== MEDLINEPLUS SUMMARY ===\n{d.medlineplus_summary}")
             if d.nice_recommendations:
-                parts.append("=== NICE RECOMMENDATIONS ===\n" + _format_nice_recs(d.nice_recommendations))
+                parts.append("=== NICE RECOMMENDATIONS ===\n" + _format_nice_recs(d.nice_recommendations, ref_map))
 
         elif query_type == "comparative" and fetched_data.comparative_drug_data:
             for i, drug in enumerate(fetched_data.comparative_drug_data[:3], 1):
-                parts.append(f"=== DRUG {i} DATA ===\n" + _format_drug_block(drug))
+                parts.append(f"=== DRUG {i} DATA ===\n" + _format_drug_block(drug, ref_map))
                 # Per-drug evidence abstracts
                 per_drug_abs = (
                     (drug.guideline_abstracts or []) +
@@ -544,44 +697,44 @@ def _build_adaptive_data_block(
                     (drug.systematic_review_abstracts or [])
                 )
                 if per_drug_abs:
-                    parts.append(f"=== DRUG {i} EVIDENCE ===\n" + _format_abstracts(per_drug_abs[:8]))
+                    parts.append(f"=== DRUG {i} EVIDENCE ===\n" + _format_abstracts(per_drug_abs[:8], ref_map))
             # Head-to-head comparative evidence (currently fetched but never injected)
             if fetched_data.comparative_evidence and fetched_data.comparative_evidence.fetch_success:
                 ce = fetched_data.comparative_evidence
                 if ce.clinical_trial_abstracts:
-                    parts.append("=== HEAD-TO-HEAD CLINICAL TRIALS ===\n" + _format_abstracts(ce.clinical_trial_abstracts[:6]))
+                    parts.append("=== HEAD-TO-HEAD CLINICAL TRIALS ===\n" + _format_abstracts(ce.clinical_trial_abstracts[:6], ref_map))
                 if ce.systematic_review_abstracts:
-                    parts.append("=== HEAD-TO-HEAD SYSTEMATIC REVIEWS ===\n" + _format_abstracts(ce.systematic_review_abstracts[:4]))
+                    parts.append("=== HEAD-TO-HEAD SYSTEMATIC REVIEWS ===\n" + _format_abstracts(ce.systematic_review_abstracts[:4], ref_map))
                 if ce.guideline_abstracts:
-                    parts.append("=== COMPARATIVE GUIDELINES ===\n" + _format_abstracts(ce.guideline_abstracts[:4]))
+                    parts.append("=== COMPARATIVE GUIDELINES ===\n" + _format_abstracts(ce.guideline_abstracts[:4], ref_map))
 
         elif query_type == "procedure" and fetched_data.procedure_data and fetched_data.procedure_data.fetch_success:
             d = fetched_data.procedure_data
             if d.guideline_abstracts:
-                parts.append("=== PROCEDURE GUIDELINES ===\n" + _format_abstracts(d.guideline_abstracts))
+                parts.append("=== PROCEDURE GUIDELINES ===\n" + _format_abstracts(d.guideline_abstracts, ref_map))
             if d.practice_guideline_abstracts:
-                parts.append("=== PRACTICE GUIDELINES ===\n" + _format_abstracts(d.practice_guideline_abstracts))
+                parts.append("=== PRACTICE GUIDELINES ===\n" + _format_abstracts(d.practice_guideline_abstracts, ref_map))
 
         elif query_type == "evidence" and fetched_data.evidence_data and fetched_data.evidence_data.fetch_success:
             d = fetched_data.evidence_data
             if d.clinical_trial_abstracts:
-                parts.append("=== CLINICAL TRIALS / RCTs ===\n" + _format_abstracts(d.clinical_trial_abstracts))
+                parts.append("=== CLINICAL TRIALS / RCTs ===\n" + _format_abstracts(d.clinical_trial_abstracts, ref_map))
             if d.systematic_review_abstracts:
-                parts.append("=== SYSTEMATIC REVIEWS ===\n" + _format_abstracts(d.systematic_review_abstracts))
+                parts.append("=== SYSTEMATIC REVIEWS ===\n" + _format_abstracts(d.systematic_review_abstracts, ref_map))
             if d.guideline_abstracts:
-                parts.append("=== GUIDELINES ===\n" + _format_abstracts(d.guideline_abstracts))
+                parts.append("=== GUIDELINES ===\n" + _format_abstracts(d.guideline_abstracts, ref_map))
 
         elif query_type == "complex":
             # Complex multi-condition queries: drug data, primary disease, per-comorbidity data
             if fetched_data.drug_data and fetched_data.drug_data.fetch_success:
-                parts.append("=== DRUG DATA (FDA/RxNorm) ===\n" + _format_drug_block(fetched_data.drug_data))
+                parts.append("=== DRUG DATA (FDA/RxNorm) ===\n" + _format_drug_block(fetched_data.drug_data, ref_map))
             if fetched_data.condition_data and fetched_data.condition_data.fetch_success:
                 cd = fetched_data.condition_data
                 if getattr(cd, "guideline_abstracts", None):
                     primary_name = getattr(cd, "disease_name", None) or "Primary disease"
                     parts.append(
                         f"=== PRIMARY DISEASE GUIDELINES — {primary_name} ===\n"
-                        + _format_abstracts(cd.guideline_abstracts[:3])
+                        + _format_abstracts(cd.guideline_abstracts[:3], ref_map)
                     )
             if getattr(fetched_data, "comorbidity_data", None):
                 for cd in fetched_data.comorbidity_data:
@@ -589,7 +742,7 @@ def _build_adaptive_data_block(
                         comorbidity_name = getattr(cd, "disease_name", None) or "Comorbidity"
                         summary = (getattr(cd, "guideline_summary", None) or "").strip()
                         abstracts = getattr(cd, "guideline_abstracts", None) or []
-                        abstract_block = _format_abstracts(abstracts[:3]) if abstracts else ""
+                        abstract_block = _format_abstracts(abstracts[:3], ref_map) if abstracts else ""
                         combined = "\n\n".join(x for x in (summary, abstract_block) if x)
                         parts.append(
                             f"[SOURCE: COMORBIDITY GUIDELINES — {comorbidity_name}]\n"
@@ -607,7 +760,7 @@ def _build_adaptive_data_block(
             if _sub and getattr(_sub, "pubmed_abstracts", None):
                 _cross_abs.extend(_sub.pubmed_abstracts)  # type: ignore[attr-defined]
         if _cross_abs:
-            parts.append("=== PUBMED ARTICLES ===\n" + _format_abstracts(_cross_abs[:15]))
+            parts.append("=== PUBMED ARTICLES ===\n" + _format_abstracts(_cross_abs[:15], ref_map))
 
     if not parts:
         parts.append(

@@ -155,6 +155,9 @@ class Settings(BaseSettings):
     parallel_bluf_max_tokens: int = 6144  # BLUF+titles+flowcharts+tables phase token budget
     parallel_sections_max_concurrent: int = 3  # max simultaneous LLM calls — keeps token/min under Anthropic limits
 
+    # Citation token grounding — [REF_N] tokens for deterministic source attribution
+    citation_ref_tokens_enabled: bool = True
+
     # Smart PubMed expansion + snowballing
     pubmed_expansion_enabled: bool = True
     snowball_enabled: bool = True
