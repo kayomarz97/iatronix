@@ -486,6 +486,27 @@ def _format_drug_block(drug_result: Any, ref_map: Optional[dict[str, dict]] = No
     return "\n".join(lines)
 
 
+def _build_ref_map_indexes(ref_map: Optional[dict[str, dict]]) -> dict:
+    """Pre-build O(1) indexes over ref_map. Pure function — safe across calls.
+    Returns {"by_pmid": {...}, "by_nct": {...}, "by_title": {...}}."""
+    by_pmid: dict[str, str] = {}
+    by_nct: dict[str, str] = {}
+    by_title: dict[str, str] = {}
+    if not ref_map:
+        return {"by_pmid": by_pmid, "by_nct": by_nct, "by_title": by_title}
+    for token_key, art_meta in ref_map.items():
+        p = str(art_meta.get("pmid") or "").strip()
+        if p:
+            by_pmid[p] = token_key
+        n = str(art_meta.get("nct_id") or "").strip()
+        if n:
+            by_nct[n] = token_key
+        t = (art_meta.get("title") or "").strip().lower()
+        if t:
+            by_title[t] = token_key
+    return {"by_pmid": by_pmid, "by_nct": by_nct, "by_title": by_title}
+
+
 def _format_abstracts(abstracts: list[dict | str], ref_map: Optional[dict[str, dict]] = None) -> str:
     """Format PubMed abstracts into a readable block. Sorted by PMID for cache-key stability.
     If ref_map is provided, prepends [REF_N] token when article is found in map."""
@@ -496,6 +517,7 @@ def _format_abstracts(abstracts: list[dict | str], ref_map: Optional[dict[str, d
 
     sorted_abstracts = sorted(abstracts, key=_sort_key)
     formatted = []
+    _idx = _build_ref_map_indexes(ref_map)
     for a in sorted_abstracts:
         if isinstance(a, dict):
             title = a.get("title", "No Title")
@@ -510,15 +532,15 @@ def _format_abstracts(abstracts: list[dict | str], ref_map: Optional[dict[str, d
             doi = a.get("doi", "")
             label = f"[SOURCE: {title}]"
 
-            # Check if this article is in ref_map and prepend token
+            # O(1) lookup — same matching semantics as the previous O(N²) loop
             token = None
             if ref_map:
-                for token_key, art_meta in ref_map.items():
-                    if (pmid and str(pmid) == str(art_meta.get("pmid"))) or \
-                       (nct_id and str(nct_id) == str(art_meta.get("nct_id"))) or \
-                       (title.lower() == (art_meta.get("title") or "").lower()):
-                        token = token_key
-                        break
+                if pmid and str(pmid) in _idx["by_pmid"]:
+                    token = _idx["by_pmid"][str(pmid)]
+                elif nct_id and str(nct_id) in _idx["by_nct"]:
+                    token = _idx["by_nct"][str(nct_id)]
+                elif title and title.lower() in _idx["by_title"]:
+                    token = _idx["by_title"][title.lower()]
 
             # Build URL section based on available identifiers
             url_section = ""

@@ -57,6 +57,7 @@ from app.services.drug_linker import process_text_nodes
 from app.services.json_repair import parse_llm_json
 from app.services.llm_factory import create_llm, get_provider
 from app.services.langgraph_search import run_search_graph
+from app.services.article_registry import ArticleRegistry, build_article_registry
 from app.services.prompt_engine import (
     build_adaptive_messages,
     build_bluf_only_messages,
@@ -1319,17 +1320,24 @@ def _filter_expert_references(refs: list) -> list:
     ]
 
 
-def _resolve_ref_tokens(parsed: dict, ref_map: dict) -> None:
+def _resolve_ref_tokens(parsed: dict, ref_map: dict, registry: "ArticleRegistry | None" = None) -> None:
     """Replace [REF_N] tokens with real article metadata. Must run BEFORE sanitize_response_pmids.
 
     Matches tokens in content_items.source and references.source/title fields.
     Hallucinated tokens ([REF_99] not in map) fall through to backfill.
+    Marks registry articles used_inline=True when their token is consumed.
     """
     if not ref_map:
         return
 
     _TOKEN_FULL = re.compile(r'^\s*[\[\("]?\s*REF[\s_]?(\d+)\s*[\]\)"]?\s*[.;,]?\s*$', re.IGNORECASE)
     _TOKEN_INLINE = re.compile(r'\b\[?\(?"?\s*REF[\s_]?(\d+)(?![A-Za-z0-9])\s*"?\)?\]?', re.IGNORECASE)
+
+    def _mark(key: str) -> None:
+        if registry is not None:
+            ra = registry.lookup_token(key)
+            if ra is not None:
+                ra.used_inline = True
 
     for section in parsed.get("sections", []):
         if not isinstance(section, dict):
@@ -1353,6 +1361,7 @@ def _resolve_ref_tokens(parsed: dict, ref_map: dict) -> None:
                     art = ref_map.get(key)
                     if art:
                         resolved_articles.append(art)
+                        _mark(key)
 
             if resolved_articles:
                 primary = resolved_articles[0]
@@ -1513,6 +1522,63 @@ def _backfill_expert_opinion_global(parsed: dict, fetched_data: "FetchedData | N
                         item["url"] = best["url"]
 
 
+def _title_rescue_pass(parsed: dict, registry: "ArticleRegistry") -> None:
+    """Recover free-form titles emitted by non-Anthropic models.
+
+    For each content_item whose source is non-empty, not a real authority,
+    and has no PMID/url, attempt registry.best_match. Only mutates when a
+    match is found. Marks the matched article used_inline=True.
+    """
+    if not registry or not registry.items:
+        return
+    for section in parsed.get("sections", []):
+        if not isinstance(section, dict):
+            continue
+        for item in section.get("content_items", []):
+            if not isinstance(item, dict):
+                continue
+            src = (item.get("source") or "").strip()
+            if not src:
+                continue
+            if src in ("Expert opinion", "__UNRESOLVED_TOKEN__"):
+                continue
+            if item.get("pmid") or item.get("url"):
+                continue
+            ra = registry.lookup_id(title=src)
+            if ra is None:
+                ra = registry.best_match(item.get("text", "") + " " + src, source_hint=src)
+            if ra is not None:
+                item["source"] = ra.title
+                if ra.pmid:
+                    item["pmid"] = ra.pmid
+                item["url"] = ra.url
+                ra.used_inline = True
+
+
+def _backfill_from_registry(parsed: dict, registry: "ArticleRegistry") -> None:
+    """Replace empty / Expert-opinion / unresolved-token sources via registry.best_match."""
+    if not registry or not registry.items:
+        return
+    for section in parsed.get("sections", []):
+        if not isinstance(section, dict):
+            continue
+        for item in section.get("content_items", []):
+            if not isinstance(item, dict):
+                continue
+            src = (item.get("source") or "").strip()
+            if src not in ("", "Expert opinion", "__UNRESOLVED_TOKEN__"):
+                continue
+            if item.get("pmid"):
+                continue
+            ra = registry.best_match(item.get("text", ""), source_hint=src)
+            if ra is not None:
+                item["source"] = ra.title
+                if ra.pmid:
+                    item["pmid"] = ra.pmid
+                item["url"] = ra.url
+                ra.used_inline = True
+
+
 def _inject_fetched_refs(fetched_data) -> list[dict]:
     """Build reference dicts from ALL fetched article data (no cap).
 
@@ -1586,7 +1652,7 @@ def _is_grounded_ref(llm_ref: dict, ref_map_index: dict, fetched_articles: list[
                 art_tokens = set(re.findall(r'\b\w+\b', art_text))
                 if art_tokens:
                     overlap = len(ref_tokens & art_tokens) / len(ref_tokens | art_tokens)
-                    if overlap >= 0.5:
+                    if overlap >= 0.30:
                         return True
 
     # Tier 3: Authority source with fetched articles present
@@ -3413,24 +3479,21 @@ async def process_query(
         from app.services.prompt_engine import build_ref_map
 
         ref_map = build_ref_map(fetched_data) if (fetched_data and settings.citation_ref_tokens_enabled) else {}
+        registry = build_article_registry(fetched_data) if (fetched_data and settings.citation_ref_tokens_enabled) else ArticleRegistry()
 
-        _resolve_ref_tokens(parsed, ref_map)              # 1. Resolve [REF_N] tokens
+        _resolve_ref_tokens(parsed, ref_map, registry)    # 1. Resolve [REF_N] tokens; mark registry used_inline
+        _title_rescue_pass(parsed, registry)              # 1b. Rescue free-form titles (Cerebras etc.)
         sanitize_response_pmids(parsed, fetched_data)     # 2. Validate PMIDs
         _normalize_consensus_sources(parsed)              # 3. Normalize consensus sources
-        # Build complete references: LLM-cited + ALL fetched articles + NICE + FDA
-        _llm_refs = parsed.get("references", [])
-        _all_fake = _llm_refs and all(
-            _is_expert_source((r.get("source") or r.get("title") or "") if isinstance(r, dict) else str(r))
-            for r in _llm_refs
-        )
-        if _all_fake:
-            _llm_refs = []  # discard fake-only; real data will come from fetched
-        _raw_refs = _build_complete_references(_llm_refs, fetched_data)
+        _backfill_from_registry(parsed, registry)         # 4. Per-claim backfill via registry.best_match
+        _quarantine_sourceless_items(parsed, fetched_data)  # 5. Demote ungrounded (rare now)
+        # 6. Final reference list = registry.to_reference_list() (cited first, then retrieved)
+        _raw_refs = registry.to_reference_list() if registry.items else []
+        # If registry empty (no fetched_data), preserve any LLM-supplied refs that pass safety
+        if not _raw_refs:
+            _raw_refs = parsed.get("references", []) or []
         parsed["references"] = _raw_refs
-        _backfill_expert_opinion_global(parsed, fetched_data)  # 4. Backfill remaining expert opinion from fetched_data
-        _quarantine_sourceless_items(parsed, fetched_data)     # 5. Demote ungrounded claims if fetched_data available
-        _raw_refs = parsed.get("references", [])
-        enrich_references({"references": _raw_refs}, fetched_data)
+        enrich_references({"references": _raw_refs}, fetched_data)  # validator pass-through
         _raw_refs = _filter_expert_references(_raw_refs)
         _references = [
             AdaptiveReference(**r) if isinstance(r, dict) else AdaptiveReference(title=str(r))
