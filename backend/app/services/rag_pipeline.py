@@ -1374,7 +1374,7 @@ def _resolve_ref_tokens(parsed: dict, ref_map: dict) -> None:
                 else:
                     item["additional_sources"] = []
             elif _TOKEN_INLINE.search(src) or _TOKEN_FULL.match(src):
-                item["source"] = ""
+                item["source"] = "__UNRESOLVED_TOKEN__"
                 item["additional_sources"] = []
 
     # Resolve tokens in parsed["references"]
@@ -1443,25 +1443,30 @@ def _best_article_for_claim(claim_text: str, articles: list[dict]) -> dict | Non
     return best_article or articles[0]
 
 
-def _quarantine_sourceless_items(parsed: dict) -> None:
-    """Drop content_items and references that lack source/url/pmid after backfill.
+def _quarantine_sourceless_items(parsed: dict, fetched_data: "FetchedData | None" = None) -> None:
+    """Demote (not drop) content_items lacking real grounding after backfill.
 
-    Guarantees: every claim shown to the user has at least one of {source name, URL, PMID}.
+    If fetched_data is available (no live API failure), demote ungrounded claims to "Expert opinion"
+    with low confidence. If no fetched_data, skip quarantine entirely to preserve training knowledge.
     """
+    if not fetched_data:
+        # No live API data; keep all content without aggressive filtering
+        return
+
     for section in parsed.get("sections", []):
         if not isinstance(section, dict):
             continue
         items = section.get("content_items", [])
-        filtered = []
         for item in items:
             if not isinstance(item, dict):
                 continue
-            has_source = bool((item.get("source") or "").strip()) and item.get("source") != "Expert opinion"
+            has_real_source = bool((item.get("source") or "").strip()) and item.get("source") != "Expert opinion"
             has_url = bool(item.get("url"))
             has_pmid = bool(item.get("pmid"))
-            if has_source or has_url or has_pmid:
-                filtered.append(item)
-        section["content_items"] = filtered
+            if not (has_real_source or has_url or has_pmid):
+                # Demote: set to expert opinion with low confidence
+                item["source"] = "Expert opinion"
+                item["confidence"] = "low"
 
     refs = parsed.get("references", [])
     filtered_refs = []
@@ -1497,7 +1502,7 @@ def _backfill_expert_opinion_global(parsed: dict, fetched_data: "FetchedData | N
             if not isinstance(item, dict):
                 continue
             src = (item.get("source") or "").strip()
-            if src in ("", "Expert opinion") and not item.get("pmid"):
+            if src in ("", "Expert opinion", "__UNRESOLVED_TOKEN__") and not item.get("pmid"):
                 claim_text = item.get("text", "")
                 best = _best_article_for_claim(claim_text, all_articles)
                 if best:
@@ -1548,21 +1553,50 @@ def _inject_fetched_refs(fetched_data) -> list[dict]:
     return refs
 
 
-def _is_grounded_ref(llm_ref: dict, ref_map_index: dict) -> bool:
-    """Check if LLM-supplied ref corresponds to a real fetched article.
+def _is_grounded_ref(llm_ref: dict, ref_map_index: dict, fetched_articles: list[dict] | None = None) -> bool:
+    """Check if LLM-supplied ref has evidence of grounding in fetched data.
 
-    Matches by PMID, NCT, DOI, or normalized title against the union of fetched articles.
+    Tiered check:
+    1. PMID/NCT/DOI exact match → grounded
+    2. Title token overlap >= 0.5 → grounded
+    3. Source authority match with fetched articles present → grounded by association
+    4. Otherwise → not grounded (but claim text may still be backfilled)
     """
     pmid = str(llm_ref.get("pmid") or "").strip()
     nct = (llm_ref.get("nct_id") or "").strip().upper()
     doi = (llm_ref.get("doi") or "").strip().lower()
-    title_norm = re.sub(r'\W+', ' ', (llm_ref.get("title") or "")).strip().lower()
-    return (
-        (pmid and pmid in ref_map_index["pmids"]) or
-        (nct and nct in ref_map_index["ncts"]) or
-        (doi and doi in ref_map_index["dois"]) or
-        (title_norm and title_norm in ref_map_index["titles"])
-    )
+    title = (llm_ref.get("title") or "").strip()
+    title_norm = re.sub(r'\W+', ' ', title).strip().lower()
+    source = (llm_ref.get("source") or "").strip().lower()
+
+    # Tier 1: ID exact match
+    if pmid and pmid in ref_map_index["pmids"]:
+        return True
+    if nct and nct in ref_map_index["ncts"]:
+        return True
+    if doi and doi in ref_map_index["dois"]:
+        return True
+
+    # Tier 2: Title token overlap >= 0.5
+    if title_norm and fetched_articles:
+        ref_tokens = set(re.findall(r'\b\w+\b', title_norm))
+        if ref_tokens:
+            for article in fetched_articles:
+                art_text = f"{article.get('title', '')} {article.get('abstract', '')[:200]}".lower()
+                art_tokens = set(re.findall(r'\b\w+\b', art_text))
+                if art_tokens:
+                    overlap = len(ref_tokens & art_tokens) / len(ref_tokens | art_tokens)
+                    if overlap >= 0.5:
+                        return True
+
+    # Tier 3: Authority source with fetched articles present
+    if source and fetched_articles:
+        known_authorities = {"pubmed", "nice", "fda", "dailymed", "clinicaltrials", "rxnorm", "medlineplus"}
+        for authority in known_authorities:
+            if authority in source:
+                return True
+
+    return False
 
 
 def _build_complete_references(llm_refs: list, fetched_data) -> list:
@@ -1579,9 +1613,11 @@ def _build_complete_references(llm_refs: list, fetched_data) -> list:
 
     # Build ref_map_index for grounding validation
     ref_map_index = {"pmids": set(), "ncts": set(), "dois": set(), "titles": set()}
+    fetched_articles_list: list[dict] = []
     if fetched_data:
         ref_map = build_ref_map(fetched_data)
-        for art in ref_map.values():
+        fetched_articles_list = list(ref_map.values())
+        for art in fetched_articles_list:
             pmid = str(art.get("pmid") or "").strip()
             if pmid:
                 ref_map_index["pmids"].add(pmid)
@@ -1599,7 +1635,7 @@ def _build_complete_references(llm_refs: list, fetched_data) -> list:
     for r in llm_refs:
         if not isinstance(r, dict):
             continue
-        if fetched_data and not _is_grounded_ref(r, ref_map_index):
+        if fetched_data and not _is_grounded_ref(r, ref_map_index, fetched_articles_list):
             continue
         pmid = str(r.get("pmid") or "").strip()
         nct_id = str(r.get("nct_id") or "").strip()
@@ -2553,23 +2589,32 @@ async def process_query(
             "cerebras":   "cerebras_api_key",
             "openai":     "openai_api_key",
         }
-        # Try preferred provider first, then cerebras, then anthropic, then openai
-        _provider_priority = []
-        if _pref_provider and _pref_provider in _provider_col_map:
-            _provider_priority.append(_pref_provider)
-        for _p in ("cerebras", "anthropic", "openai"):
-            if _p not in _provider_priority:
-                _provider_priority.append(_p)
 
-        for _try_provider in _provider_priority:
-            _col = _provider_col_map[_try_provider]
+        # Honor user's engine_pref: if it has a key, use it. Otherwise fall back to priority order.
+        if _pref_provider and _pref_provider in _provider_col_map:
+            _col = _provider_col_map[_pref_provider]
             _enc = getattr(user, _col, None)
             if _enc:
                 _decrypted = decrypt_key(_enc)
                 if _decrypted:
                     user_llm_key = _decrypted
-                    user_llm_provider = _try_provider
-                    break
+                    user_llm_provider = _pref_provider
+
+        # Fallback: try other providers in priority order if preferred provider has no key
+        if user_llm_key is None:
+            _provider_priority = []
+            for _p in ("cerebras", "anthropic", "openai"):
+                if _p not in _provider_priority:
+                    _provider_priority.append(_p)
+            for _try_provider in _provider_priority:
+                _col = _provider_col_map[_try_provider]
+                _enc = getattr(user, _col, None)
+                if _enc:
+                    _decrypted = decrypt_key(_enc)
+                    if _decrypted:
+                        user_llm_key = _decrypted
+                        user_llm_provider = _try_provider
+                        break
 
         # Final fallback: legacy encrypted_llm_key (backward compat for users not yet migrated)
         if user_llm_key is None and user.encrypted_llm_key:
@@ -3383,7 +3428,7 @@ async def process_query(
         _raw_refs = _build_complete_references(_llm_refs, fetched_data)
         parsed["references"] = _raw_refs
         _backfill_expert_opinion_global(parsed, fetched_data)  # 4. Backfill remaining expert opinion from fetched_data
-        _quarantine_sourceless_items(parsed)                   # 5. Drop orphan claims without source/url/pmid
+        _quarantine_sourceless_items(parsed, fetched_data)     # 5. Demote ungrounded claims if fetched_data available
         _raw_refs = parsed.get("references", [])
         enrich_references({"references": _raw_refs}, fetched_data)
         _raw_refs = _filter_expert_references(_raw_refs)
