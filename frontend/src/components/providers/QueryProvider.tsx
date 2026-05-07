@@ -140,26 +140,23 @@ export function QueryProvider({ children }: { children: ReactNode }) {
           const adaptiveResp = response.response as AdaptiveResponse;
 
           // Defensive: never shrink on done event. If post-processed sections are shorter
-          // than streamed, keep streamed version and merge references from post-processed.
+          // than streamed, keep streamed sections. References are at response level.
           let finalSections = adaptiveResp?.sections || [];
           const streamed = streamingSections;
           const postProcessed = finalSections;
 
           // Check if post-processed is shorter than streamed (by character count per section)
           if (streamed.length === postProcessed.length) {
-            const shouldUseMerge = streamed.some((s, i) => {
+            const shouldUseStreamed = streamed.some((s, i) => {
               const streamedText = (s.content_items || [])
                 .reduce((acc, item) => acc + (item.text || ""), "");
               const postText = (postProcessed[i]?.content_items || [])
                 .reduce((acc, item) => acc + (item.text || ""), "");
               return streamedText.length > postText.length;
             });
-            if (shouldUseMerge) {
-              // Merge: keep streamed content, use post-processed references
-              finalSections = streamed.map((s, i) => ({
-                ...s,
-                references: postProcessed[i]?.references,
-              }));
+            if (shouldUseStreamed) {
+              // Keep streamed sections instead of post-processed (which are shorter)
+              finalSections = streamed;
             }
           }
 
