@@ -90,6 +90,9 @@ ALLOWED_DOMAINS: frozenset[str] = frozenset(
         "www.blood.org",
         "ashpublications.org",
         "www.haematologica.org",
+        # AI research and aggregators
+        "www.semanticscholar.org",
+        "www.ncbi.nlm.nih.gov",  # NCBI Books
     }
 )
 
