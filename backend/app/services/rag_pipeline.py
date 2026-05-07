@@ -3244,9 +3244,7 @@ async def process_query(
     try:
         # Post-processing chain — order is load-bearing for source attribution
         from app.services.prompt_engine import build_ref_map
-        from app.config import get_settings
 
-        settings = get_settings()
         ref_map = build_ref_map(fetched_data) if (fetched_data and settings.citation_ref_tokens_enabled) else {}
 
         _resolve_ref_tokens(parsed, ref_map)              # 1. Resolve [REF_N] tokens

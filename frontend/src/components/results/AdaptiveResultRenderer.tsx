@@ -137,6 +137,7 @@ function getSourceFallbackUrl(source: string | undefined, pmid: string | undefin
   if (s.includes("nice")) return "https://www.nice.org.uk/guidance";
   if (s.includes("cochrane")) return "https://www.cochranelibrary.com/search";
   if (s.includes("who")) return "https://www.who.int/publications/";
+  if (s.includes("esc") || s.includes("escardio")) return "https://www.escardio.org/Guidelines";
   if (s.includes("clinicaltrials")) return "https://clinicaltrials.gov/";
   if (s.includes("medlineplus")) return "https://medlineplus.gov/";
   if (s.includes("dailymed")) return "https://dailymed.nlm.nih.gov/dailymed/";
@@ -421,6 +422,68 @@ function MedicalImageRenderer({ images }: { images?: AdaptiveImage[] }) {
 }
 
 // ── Main renderer ────────────────────────────────────────────────────────────
+function ComparativeLayout({
+  sections,
+  fetchSources,
+  tables,
+}: {
+  sections: AdaptiveSection[];
+  fetchSources?: string[];
+  tables?: Array<{ title: string; headers: string[]; rows: string[][] }>;
+}) {
+  const filtered = sections.filter(s => (s.content_items?.length ?? 0) > 0 || s.content);
+  const titleLower = new Map(filtered.map(s => [s.title.toLowerCase(), s]));
+
+  // Group sections by role
+  const profileSections = filtered.filter(s => {
+    const t = s.title.toLowerCase();
+    return !t.includes("comparison") && !t.includes("interaction") && !t.includes("preference") &&
+           !t.includes("evidence") && !t.includes("summary");
+  });
+
+  const comparisonSections = filtered.filter(s => {
+    const t = s.title.toLowerCase();
+    return t.includes("comparison") || t.includes("interaction");
+  });
+
+  const guidanceSections = filtered.filter(s => {
+    const t = s.title.toLowerCase();
+    return t.includes("evidence") || t.includes("preference") || t.includes("positioning");
+  });
+
+  return (
+    <>
+      {/* Drug/Entity Profiles */}
+      {profileSections.length > 0 && (
+        <div className="space-y-4">
+          {profileSections.map((section, i) => (
+            <SectionCard key={i} section={section} index={i} fetchSources={fetchSources} />
+          ))}
+        </div>
+      )}
+
+      {/* Comparison Zone */}
+      {(comparisonSections.length > 0 || (tables && tables.length > 0)) && (
+        <div className="space-y-4">
+          <TableRenderer tables={tables} />
+          {comparisonSections.map((section, i) => (
+            <SectionCard key={i} section={section} index={i} fetchSources={fetchSources} />
+          ))}
+        </div>
+      )}
+
+      {/* Guidance Zone */}
+      {guidanceSections.length > 0 && (
+        <div className="space-y-4">
+          {guidanceSections.map((section, i) => (
+            <SectionCard key={i} section={section} index={i} fetchSources={fetchSources} />
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
 export function AdaptiveResultRenderer({ data, fetchSources, hideEvidenceBar, isFallback, fallbackModel }: Props) {
   const router = useRouter();
 
@@ -471,11 +534,17 @@ export function AdaptiveResultRenderer({ data, fetchSources, hideEvidenceBar, is
         }
       />
 
-      {data.sections
-        .filter(s => (s.content_items?.length ?? 0) > 0 || s.content)
-        .map((section, i) => (
-          <SectionCard key={i} section={section} index={i} fetchSources={fetchSources} />
-        ))}
+      {data.query_type === "comparative" ? (
+        // Comparative layout: group sections by role
+        <ComparativeLayout sections={data.sections} fetchSources={fetchSources} tables={data.tables} />
+      ) : (
+        // Standard layout: render all sections
+        data.sections
+          .filter(s => (s.content_items?.length ?? 0) > 0 || s.content)
+          .map((section, i) => (
+            <SectionCard key={i} section={section} index={i} fetchSources={fetchSources} />
+          ))
+      )}
 
       {!hideEvidenceBar && <EvidenceQualityBar sections={data.sections} />}
 

@@ -265,6 +265,7 @@ class DrugFetchResult:
     data_source: str = "unknown"
     fetch_success: bool = False
     data_sources: list = field(default_factory=list)
+    label_url: Optional[str] = None  # human-readable label page URL from fetch (DailyMed or FDA)
 
 
 @dataclass
@@ -318,6 +319,7 @@ class FetchedData:
     fallback_to_llm: bool = False
     data_sources: list = field(default_factory=list)
     images: list = field(default_factory=list)  # [{url, caption, license, source}]
+    patient_context: dict = field(default_factory=dict)  # extracted from query: age, renal, hepatic, weight, concurrent_drugs, pregnancy
 
 
 # Local Indian drug repositories were intentionally removed.
@@ -547,6 +549,17 @@ def _merge_fda_label(result: DrugFetchResult, data: dict | None) -> None:
     result.generic_name = _first(openfda.get("generic_name")) or result.generic_name
     result.brand_name = _first(openfda.get("brand_name")) or result.brand_name
     result.drug_class = _first(openfda.get("pharm_class_epc")) or result.drug_class
+
+    # Store FDA application number URL if not already set (DailyMed takes priority)
+    if not result.label_url:
+        app_raw = _first(openfda.get("application_number"))
+        if app_raw:
+            app_num = re.sub(r"[^0-9]", "", app_raw)
+            if app_num:
+                result.label_url = (
+                    f"https://www.accessdata.fda.gov/scripts/cder/daf/"
+                    f"index.cfm?event=overview.process&ApplNo={app_num}"
+                )
 
     result.mechanism_raw = _truncate(_first(r.get("mechanism_of_action")), 400)
     result.indications_raw = _truncate(_first(r.get("indications_and_usage")), 800)
@@ -1404,6 +1417,8 @@ async def _fetch_nice(client: httpx.AsyncClient, entity: str) -> list:
                         "title": item.get("title", ""),
                         "text": text[:400],
                         "year": pub_date[:4] if pub_date else None,
+                        "url": f"https://www.nice.org.uk/guidance/{item_id}",
+                        "recommendation": text[:400],
                     }
                 )
 
@@ -1498,6 +1513,7 @@ async def _fetch_dailymed(
         return None
 
     result = DrugFetchResult(generic_name=drug_name, data_source="dailymed")
+    result.label_url = f"https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid={setid}"
 
     # DailyMed SPL sections are keyed by LOINC code
     SECTION_MAP = {
