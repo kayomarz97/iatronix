@@ -129,19 +129,9 @@ const mdComponents: React.ComponentProps<typeof ReactMarkdown>["components"] = {
   td: ({ children }) => <td className="border border-border px-2 py-1">{children}</td>,
 };
 
-// ── Source-aware fallback URL helper ───────────────────────────────────────────
-function getSourceFallbackUrl(source: string | undefined, pmid: string | undefined): string | null {
-  const s = (source || "").toLowerCase();
-  if (pmid && (!s || s.includes("pubmed"))) return `https://pubmed.ncbi.nlm.nih.gov/${pmid}/`;
-  if (s.includes("fda")) return "https://www.accessdata.fda.gov/scripts/cder/daf/";
-  if (s.includes("nice")) return "https://www.nice.org.uk/guidance";
-  if (s.includes("cochrane")) return "https://www.cochranelibrary.com/search";
-  if (s.includes("who")) return "https://www.who.int/publications/";
-  if (s.includes("esc") || s.includes("escardio")) return "https://www.escardio.org/Guidelines";
-  if (s.includes("clinicaltrials")) return "https://clinicaltrials.gov/";
-  if (s.includes("medlineplus")) return "https://medlineplus.gov/";
-  if (s.includes("dailymed")) return "https://dailymed.nlm.nih.gov/dailymed/";
-  if (pmid) return `https://pubmed.ncbi.nlm.nih.gov/${pmid}/`;
+// ── Source-aware fallback URL helper (article-level only — no homepages) ──────
+function getSourceFallbackUrl(_source: string | undefined, pmid: string | undefined): string | null {
+  if (pmid && /^\d+$/.test(pmid)) return `https://pubmed.ncbi.nlm.nih.gov/${pmid}/`;
   return null;
 }
 
@@ -167,8 +157,8 @@ function ClaimRow({ item, fetchSources }: { item: AdaptiveContentItem; fetchSour
           </span>
         )
       ) : (
-        <span className="text-[10px] text-muted-foreground/60 max-w-[120px] text-right leading-tight italic">
-          {fetchSources?.[0] ?? "Medical database"}
+        <span className="text-[10px] text-amber-600 max-w-[120px] text-right leading-tight italic" title="Not backed by a fetched article — based on training knowledge">
+          Unverified
         </span>
       )}
     </>
@@ -556,11 +546,41 @@ export function AdaptiveResultRenderer({ data, fetchSources, hideEvidenceBar, is
 
       {data.references.length > 0 && (
         <ResultSection title="References" eyebrow="Sources" id="references">
-          <ul className="space-y-2">
-            {data.references.map((ref, i) => (
-              <ReferenceRow key={i} ref={ref} index={i} />
-            ))}
-          </ul>
+          {(() => {
+            const cited = data.references.filter((r) => r.used_inline);
+            const retrieved = data.references.filter((r) => !r.used_inline);
+            return (
+              <>
+                {cited.length > 0 && (
+                  <>
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Cited in this answer</p>
+                    <ul className="space-y-2 mb-3">
+                      {cited.map((ref, i) => (
+                        <ReferenceRow key={`c-${i}`} ref={ref} index={i} />
+                      ))}
+                    </ul>
+                  </>
+                )}
+                {retrieved.length > 0 && (
+                  <>
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Additional sources retrieved</p>
+                    <ul className="space-y-2">
+                      {retrieved.map((ref, i) => (
+                        <ReferenceRow key={`r-${i}`} ref={ref} index={cited.length + i} />
+                      ))}
+                    </ul>
+                  </>
+                )}
+                {cited.length === 0 && retrieved.length === 0 && (
+                  <ul className="space-y-2">
+                    {data.references.map((ref, i) => (
+                      <ReferenceRow key={i} ref={ref} index={i} />
+                    ))}
+                  </ul>
+                )}
+              </>
+            );
+          })()}
         </ResultSection>
       )}
 

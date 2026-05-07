@@ -579,6 +579,21 @@ The `complex` query type handles questions like: _"rivaroxaban dosing in severe 
 
 ---
 
+## 7c. Article Registry (June 2026)
+
+`backend/app/services/article_registry.py` is the post-fetch source of truth for the final reference list and per-claim backfill. Construction:
+  registry = build_article_registry(fetched_data)
+- Every `RegistryArticle` carries: `ref_token`, `title`, `source`, `source_type`, `pmid`, `nct_id`, `doi`, `url` (always present), `year`, `origin_section`, `used_inline`.
+- Lookup: `registry.lookup_token("REF_3")`, `registry.lookup_id(pmid=..., title=...)`.
+- Backfill: `registry.best_match(claim_text, source_hint)` → tiered (ID substring, Jaccard ≥0.30, source authority).
+- Output: `registry.to_reference_list()` returns the complete list (cited first, then retrieved-only).
+
+The registry does NOT alter the LLM-facing prompt bytes. The cached prefix is produced by the unchanged `prompt_engine.build_ref_map`, so prompt-cache hit rate is preserved.
+
+When adding a new fetcher, ensure each item has at least one of: `pmid`, `nct_id`, `doi`, `nbk_id`, `paper_id`, or a pre-validated `url`. The registry will silently exclude items that cannot be URL-resolved — no homepage fallbacks anywhere in the system.
+
+---
+
 ## 8. Improvement Areas & Known Gaps
 
 | Area | Status | Notes |

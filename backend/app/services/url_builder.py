@@ -93,53 +93,9 @@ ALLOWED_DOMAINS: frozenset[str] = frozenset(
     }
 )
 
-# ── Source-name → base URL (matched case-insensitively) ──────────────────────
-_SOURCE_URL_MAP: list[tuple[str, str]] = [
-    # Order matters — more specific first
-    ("fda drug label", "https://www.accessdata.fda.gov/scripts/cder/daf/"),
-    ("fda", "https://www.accessdata.fda.gov/scripts/cder/daf/"),
-    ("nice", "https://www.nice.org.uk/guidance"),
-    ("cochrane", "https://www.cochranelibrary.com/search"),
-    ("clinicaltrials.gov", "https://clinicaltrials.gov/study/"),
-    ("pubmed", "https://pubmed.ncbi.nlm.nih.gov/"),
-    ("esc", "https://www.escardio.org/Guidelines"),
-    ("who", "https://www.who.int/publications/"),
-    ("aha/acc", "https://www.ahajournals.org/"),
-    ("aha", "https://www.ahajournals.org/"),
-    ("acc", "https://www.acc.org/guidelines"),
-    ("idsa", "https://www.idsociety.org/practice-guideline/"),
-    ("nccn", "https://www.nccn.org/guidelines/"),
-    ("gold", "https://www.goldcopd.org/gold-reports/"),
-    ("kdigo", "https://kdigo.org/guidelines/"),
-    ("ada", "https://www.diabetes.org/"),
-    ("acog", "https://www.acog.org/clinical/"),
-    ("ema", "https://www.ema.europa.eu/"),
-    ("bmj", "https://www.bmj.com/"),
-    ("isid", "https://www.isid.org/"),
-    ("ssc", "https://www.sccm.org/"),
-    ("sccm", "https://www.sccm.org/"),
-    ("ats", "https://www.thoracic.org/"),
-    ("ers", "https://www.ersnet.org/"),
-    ("asm", "https://www.asm.org/"),
-    ("aasld", "https://www.aasld.org/"),
-    ("easl", "https://easl.eu/"),
-    ("esh", "https://www.eshonline.org/"),
-    ("isth", "https://www.isth.org/"),
-    # Major journals
-    ("nejm", "https://www.nejm.org/"),
-    ("lancet", "https://www.thelancet.com/"),
-    ("jama", "https://jamanetwork.com/"),
-    ("annals", "https://www.annals.org/"),
-    ("chest", "https://journal.chestnet.org/"),
-    ("nature", "https://www.nature.com/"),
-    ("uptodate", "https://www.uptodate.com/"),
-    ("bmj best practice", "https://bestpractice.bmj.com/"),
-    ("bnf", "https://bnf.nice.org.uk/"),
-    ("dailymed", "https://dailymed.nlm.nih.gov/"),
-    ("medlineplus", "https://medlineplus.gov/"),
-    ("micromedex", "https://www.uptodate.com/"),
-    ("indian pharmacopoeia", "https://www.drugs.com/"),
-]
+# Source-name → homepage table removed (May 2026): homepages without article IDs
+# are useless to clinicians. Article-level URLs are constructed from validated
+# IDs (PMID/NCT/DOI/setid) by article_registry.py.
 
 
 # ── Public API ────────────────────────────────────────────────────────────────

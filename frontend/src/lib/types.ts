@@ -34,14 +34,20 @@ export interface AdaptiveContentItem {
   source?: string;
   pmid?: string;
   url?: string;
+  additional_sources?: { title?: string; source?: string; pmid?: string; url?: string }[];
 }
 
 export interface AdaptiveReference {
   title: string;
   source?: string;
+  source_type?: string;
   pmid?: string;
+  nct_id?: string;
+  doi?: string;
   url?: string;
-  year?: string;
+  year?: string | number;
+  used_inline?: boolean;
+  ref_token?: string;
 }
 
 export interface AdaptiveSection {
