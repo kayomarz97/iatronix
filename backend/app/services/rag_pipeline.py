@@ -1401,16 +1401,23 @@ def _build_complete_references(llm_refs: list, fetched_data) -> list:
     seen_titles: set[str] = set()
     result: list[dict] = []
 
-    # Phase 1: keep LLM-cited refs as-is (they have section context + evidence grades)
+    # Phase 1: keep LLM-cited refs, but build URL from PMID/NCT if missing
     for r in llm_refs:
         if not isinstance(r, dict):
             continue
-        pmid = (r.get("pmid") or "").strip()
+        pmid = str(r.get("pmid") or "").strip()
+        nct_id = str(r.get("nct_id") or "").strip()
         title = (r.get("title") or "").strip().lower()
         if pmid:
-            seen_pmids.add(str(pmid))
+            seen_pmids.add(pmid)
         if title:
             seen_titles.add(title)
+        # Build URL from PMID/NCT if LLM didn't provide one (GPT/Cerebras rarely include URLs)
+        if not r.get("url"):
+            if pmid and pmid.isdigit():
+                r["url"] = f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
+            elif nct_id and nct_id.isdigit():
+                r["url"] = f"https://clinicaltrials.gov/study/{nct_id}"
         result.append(r)
 
     if fetched_data is None:
