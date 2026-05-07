@@ -17,7 +17,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import JsonOutputParser
 from pydantic import BaseModel, ValidationError
 
-from app.config import get_settings
+from app.config import settings
 
 if TYPE_CHECKING:
     from app.schemas.internal import FetchedData, SearchResult
@@ -662,7 +662,6 @@ def _build_adaptive_data_block(
     """Build a formatted data block from fetched API data for injection into the adaptive prompt."""
     parts: list[str] = []
 
-    settings = get_settings()
     ref_map = build_ref_map(fetched_data) if (fetched_data and settings.citation_ref_tokens_enabled) else {}
 
     if fetched_data and not fetched_data.fallback_to_llm:
