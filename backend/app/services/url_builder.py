@@ -293,13 +293,12 @@ def enrich_references(data: dict, fetched_data=None) -> None:
 
         existing = ref.get("url")
 
-        # Step 0.5: direct PMID field → guaranteed article-level URL (most reliable path)
-        ref_pmid_direct = (ref.get("pmid") or "").strip() if isinstance(ref.get("pmid"), str) else str(ref.get("pmid") or "").strip()
-        if not existing and ref_pmid_direct and ref_pmid_direct.isdigit() and ref_pmid_direct in valid_pmids:
+        # Step 0.5: direct PMID field → guaranteed article-level URL (no validation needed)
+        ref_pmid_direct = str(ref.get("pmid") or "").strip()
+        if not existing and ref_pmid_direct and ref_pmid_direct.isdigit():
             candidate = f"https://pubmed.ncbi.nlm.nih.gov/{ref_pmid_direct}/"
-            ref["url"] = candidate if is_safe_url(candidate) else None
-            if ref["url"]:
-                continue
+            ref["url"] = candidate
+            continue
 
         # Step 1: validate existing URL
         if existing:
@@ -360,8 +359,8 @@ def enrich_references(data: dict, fetched_data=None) -> None:
         # Step 6: source-name pattern homepages — REMOVED. Homepages (pubmed.ncbi.nlm.nih.gov/) without article-level URLs are useless.
         # If a source has a meaningful article URL, it will be in the data block and handled by Steps 0.5–5.
 
-        # Step 7: leave null
-        ref["url"] = None
+        # Step 7: NEVER null existing URL — preserve what caller built. Only null if genuinely unfixable.
+        # (Removed ref["url"] = None — this was nuking URLs from _build_complete_references)
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
