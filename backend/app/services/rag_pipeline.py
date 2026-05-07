@@ -1319,37 +1319,110 @@ def _filter_expert_references(refs: list) -> list:
     ]
 
 
-def _backfill_expert_opinion_global(parsed: dict) -> None:
-    """Replace 'Expert opinion' in content_items with a real reference title.
+def _resolve_ref_tokens(parsed: dict, ref_map: dict) -> None:
+    """Replace [REF_N] tokens with real article metadata. Must run BEFORE sanitize_response_pmids.
 
-    Uses global parsed["references"] so all code paths benefit (parallel pipeline,
-    single-call, chat-service). Call AFTER sanitize_response_pmids so backfilled
-    PMIDs are guaranteed to be real fetched PMIDs or None.
+    Matches tokens in content_items.source and references.source/title fields.
+    Hallucinated tokens ([REF_99] not in map) fall through to backfill.
     """
-    global_refs = [
-        r for r in parsed.get("references", [])
-        if isinstance(r, dict) and r.get("title") and r["title"] != "Expert opinion"
-    ]
-    if not global_refs:
+    if not ref_map:
         return
 
-    first_ref = global_refs[0]
-    backfill_title = first_ref.get("title", "")
-    backfill_pmid = first_ref.get("pmid")
-
-    if not backfill_title:
-        return
+    _TOKEN_FULL = re.compile(r'^\s*\[?\s*(REF_\d+)\s*\]?\s*$', re.IGNORECASE)
+    _TOKEN_INLINE = re.compile(r'\[(REF_\d+)\]', re.IGNORECASE)
 
     for section in parsed.get("sections", []):
         if not isinstance(section, dict):
             continue
         for item in section.get("content_items", []):
-            if isinstance(item, dict):
-                src = item.get("source") or ""
-                if src in ("Expert opinion", "") and not item.get("pmid"):
-                    item["source"] = backfill_title
-                    if backfill_pmid:
-                        item["pmid"] = backfill_pmid
+            if not isinstance(item, dict):
+                continue
+            src = (item.get("source") or "").strip()
+            m = _TOKEN_FULL.match(src) or _TOKEN_INLINE.search(src)
+            if m:
+                key = m.group(1).upper()
+                art = ref_map.get(key)
+                if art:
+                    item["source"] = art["title"]
+                    if art.get("pmid"):
+                        item["pmid"] = art["pmid"]
+                    if art.get("url"):
+                        item["url"] = art["url"]
+                else:
+                    # Hallucinated token — strip to "" so backfill picks it up
+                    item["source"] = ""
+
+    # Resolve tokens in parsed["references"]
+    for ref in parsed.get("references", []):
+        if not isinstance(ref, dict):
+            continue
+        for field in ("source", "title"):
+            val = (ref.get(field) or "").strip()
+            m = _TOKEN_FULL.match(val) or _TOKEN_INLINE.search(val)
+            if m:
+                key = m.group(1).upper()
+                art = ref_map.get(key)
+                if art:
+                    ref["title"] = art["title"]
+                    ref["source"] = art["source"]
+                    ref["pmid"] = art.get("pmid")
+                    ref["url"] = art.get("url")
+                    break
+
+
+def _backfill_expert_opinion_global(parsed: dict, fetched_data: "FetchedData | None" = None) -> None:
+    """Replace 'Expert opinion' in content_items with a real reference from fetched_data.
+
+    Uses the same ref_map as token resolution to ensure identical universe of articles.
+    Guarantees every content_item gets a real source when any article was fetched.
+    Call AFTER _resolve_ref_tokens and sanitize_response_pmids.
+    """
+    from app.services.prompt_engine import build_ref_map
+
+    ref_map = build_ref_map(fetched_data) if fetched_data else {}
+    all_articles = list(ref_map.values())
+    if not all_articles:
+        return
+
+    SECTION_PRIORITY = {
+        "treatment": ["clinical_trial", "systematic_review", "guideline"],
+        "management": ["clinical_trial", "systematic_review", "guideline"],
+        "guideline": ["practice_guideline", "guideline"],
+        "recommendation": ["practice_guideline", "guideline"],
+        "pathophys": ["systematic_review", "guideline"],
+        "mechanism": ["systematic_review", "guideline"],
+        "dosing": ["FDA", "DailyMed", "practice_guideline"],
+        "pharmacology": ["FDA", "DailyMed"],
+    }
+
+    for section in parsed.get("sections", []):
+        if not isinstance(section, dict):
+            continue
+        title_lower = (section.get("title") or "").lower()
+        preferred_sources = next(
+            (prefs for kw, prefs in SECTION_PRIORITY.items() if kw in title_lower),
+            None,
+        )
+        # Pick best-match article: first article whose source matches a preferred label,
+        # else fall through to first article in deterministic order
+        chosen = None
+        if preferred_sources:
+            for label in preferred_sources:
+                chosen = next((a for a in all_articles if label.lower() in a["source"].lower()), None)
+                if chosen:
+                    break
+        chosen = chosen or all_articles[0]
+
+        for item in section.get("content_items", []):
+            if not isinstance(item, dict):
+                continue
+            src = (item.get("source") or "").strip()
+            if src in ("", "Expert opinion") and not item.get("pmid"):
+                item["source"] = chosen["title"]
+                if chosen.get("pmid"):
+                    item["pmid"] = chosen["pmid"]
+                if chosen.get("url"):
+                    item["url"] = chosen["url"]
 
 
 def _inject_fetched_refs(fetched_data) -> list[dict]:
@@ -3169,8 +3242,16 @@ async def process_query(
 
     # Build AdaptiveResponse from parsed dict
     try:
-        sanitize_response_pmids(parsed, fetched_data)
-        _normalize_consensus_sources(parsed)
+        # Post-processing chain — order is load-bearing for source attribution
+        from app.services.prompt_engine import build_ref_map
+        from app.config import get_settings
+
+        settings = get_settings()
+        ref_map = build_ref_map(fetched_data) if (fetched_data and settings.citation_ref_tokens_enabled) else {}
+
+        _resolve_ref_tokens(parsed, ref_map)              # 1. Resolve [REF_N] tokens
+        sanitize_response_pmids(parsed, fetched_data)     # 2. Validate PMIDs
+        _normalize_consensus_sources(parsed)              # 3. Normalize consensus sources
         # Build complete references: LLM-cited + ALL fetched articles + NICE + FDA
         _llm_refs = parsed.get("references", [])
         _all_fake = _llm_refs and all(
@@ -3181,7 +3262,7 @@ async def process_query(
             _llm_refs = []  # discard fake-only; real data will come from fetched
         _raw_refs = _build_complete_references(_llm_refs, fetched_data)
         parsed["references"] = _raw_refs
-        _backfill_expert_opinion_global(parsed)
+        _backfill_expert_opinion_global(parsed, fetched_data)  # 4. Backfill remaining expert opinion from fetched_data
         _raw_refs = parsed.get("references", [])
         enrich_references({"references": _raw_refs}, fetched_data)
         _raw_refs = _filter_expert_references(_raw_refs)
