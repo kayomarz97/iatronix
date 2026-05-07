@@ -64,7 +64,7 @@ from app.services.prompt_engine import (
 )
 from app.services.query_classifier import classify_query_llm, detect_intent
 from app.services.safety_checker import check_safety
-from app.services.url_builder import enrich_references, sanitize_response_pmids
+from app.services.url_builder import enrich_references, sanitize_response_pmids, is_safe_url
 from app.services.source_router import route_query
 from app.services.ranking import rank_article_list
 
@@ -1352,11 +1352,11 @@ def _backfill_expert_opinion_global(parsed: dict) -> None:
                         item["pmid"] = backfill_pmid
 
 
-def _inject_fetched_refs(fetched_data, max_refs: int = 8) -> list[dict]:
-    """Build reference dicts from fetched PubMed abstracts.
+def _inject_fetched_refs(fetched_data) -> list[dict]:
+    """Build reference dicts from ALL fetched article data (no cap).
 
-    Used when the LLM (e.g. Cerebras/GPT) fails to return a references array.
-    Guaranteed real PMIDs — no hallucination possible.
+    Ensures complete reference list (LLM-cited + all fetched articles).
+    Guaranteed real PMIDs/URLs — no hallucination possible.
     """
     refs: list[dict] = []
     if fetched_data is None:
@@ -1373,18 +1373,126 @@ def _inject_fetched_refs(fetched_data, max_refs: int = 8) -> list[dict]:
                     continue
                 title = abstract.get("title", "").strip()
                 pmid = abstract.get("pmid")
+                nct_id = abstract.get("nct_id")
                 if not title:
                     continue
                 refs.append({
                     "title": title,
                     "source": abstract.get("journal") or abstract.get("collective_name") or "PubMed",
                     "pmid": str(pmid) if pmid else None,
-                    "nct_id": abstract.get("nct_id"),
+                    "nct_id": nct_id,
                     "year": abstract.get("year"),
+                    "url": (
+                        f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
+                        if pmid else
+                        f"https://clinicaltrials.gov/study/{nct_id}"
+                        if nct_id else None
+                    ),
                 })
-                if len(refs) >= max_refs:
-                    return refs
     return refs
+
+
+def _build_complete_references(llm_refs: list, fetched_data) -> list:
+    """Merge LLM-cited refs with ALL fetched articles + NICE + FDA, deduped by PMID/title.
+
+    Ensures the response shows every source consulted, not just what the LLM chose to mention.
+    """
+    seen_pmids: set[str] = set()
+    seen_titles: set[str] = set()
+    result: list[dict] = []
+
+    # Phase 1: keep LLM-cited refs as-is (they have section context + evidence grades)
+    for r in llm_refs:
+        if not isinstance(r, dict):
+            continue
+        pmid = (r.get("pmid") or "").strip()
+        title = (r.get("title") or "").strip().lower()
+        if pmid:
+            seen_pmids.add(str(pmid))
+        if title:
+            seen_titles.add(title)
+        result.append(r)
+
+    if fetched_data is None:
+        return result
+
+    # Phase 2: append ALL fetched abstracts not already cited
+    for data_attr in ("drug_data", "disease_data", "procedure_data", "evidence_data", "condition_data"):
+        obj = getattr(fetched_data, data_attr, None)
+        if obj is None:
+            continue
+        for list_attr in ("guideline_abstracts", "systematic_review_abstracts",
+                          "clinical_trial_abstracts", "practice_guideline_abstracts"):
+            for abstract in getattr(obj, list_attr, None) or []:
+                if not isinstance(abstract, dict):
+                    continue
+                pmid = (abstract.get("pmid") or "").strip()
+                if pmid:
+                    pmid = str(pmid)
+                title = (abstract.get("title") or "").strip()
+                if not title:
+                    continue
+                title_lower = title.lower()
+                # Skip if already in LLM refs
+                if (pmid and pmid in seen_pmids) or (title_lower in seen_titles):
+                    continue
+                if pmid:
+                    seen_pmids.add(pmid)
+                seen_titles.add(title_lower)
+                nct_id = abstract.get("nct_id")
+                result.append({
+                    "title": title,
+                    "source": abstract.get("journal") or abstract.get("collective_name") or "PubMed",
+                    "pmid": pmid or None,
+                    "nct_id": nct_id,
+                    "year": abstract.get("year"),
+                    "url": (
+                        f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
+                        if pmid else
+                        f"https://clinicaltrials.gov/study/{nct_id}"
+                        if nct_id else None
+                    ),
+                })
+
+    # Phase 3: append NICE recommendations from all data objects
+    for data_attr in ("drug_data", "disease_data", "evidence_data", "condition_data"):
+        obj = getattr(fetched_data, data_attr, None)
+        if obj is None:
+            continue
+        for rec in getattr(obj, "nice_recommendations", None) or []:
+            if not isinstance(rec, dict):
+                continue
+            title = (rec.get("title") or "").strip()
+            url = rec.get("url", "")
+            if not title or title.lower() in seen_titles:
+                continue
+            seen_titles.add(title.lower())
+            result.append({
+                "title": title,
+                "source": "NICE",
+                "pmid": None,
+                "year": rec.get("year"),
+                "url": url if is_safe_url(url) else None,
+            })
+
+    # Phase 4: append FDA/DailyMed label as a single reference
+    drug_obj = getattr(fetched_data, "drug_data", None)
+    if drug_obj:
+        label_url = getattr(drug_obj, "label_url", None)
+        drug_name = getattr(drug_obj, "brand_name", None) or getattr(drug_obj, "generic_name", None)
+        if label_url and drug_name:
+            title = f"{drug_name} — FDA Label"
+            if title.lower() not in seen_titles:
+                seen_titles.add(title.lower())
+                result.append({
+                    "title": title,
+                    "source": "FDA / DailyMed",
+                    "pmid": None,
+                    "year": None,
+                    "url": label_url if is_safe_url(label_url) else None,
+                })
+
+    return result
 
 
 def _coerce_evidenced_claims(obj: object) -> None:
@@ -3056,14 +3164,16 @@ async def process_query(
     try:
         sanitize_response_pmids(parsed, fetched_data)
         _normalize_consensus_sources(parsed)
-        # If model (e.g. Cerebras/GPT) returned no references OR only fake consensus ones, inject real fetched data
-        _refs_before_inject = parsed.get("references", [])
-        _all_fake = _refs_before_inject and all(
+        # Build complete references: LLM-cited + ALL fetched articles + NICE + FDA
+        _llm_refs = parsed.get("references", [])
+        _all_fake = _llm_refs and all(
             _is_expert_source((r.get("source") or r.get("title") or "") if isinstance(r, dict) else str(r))
-            for r in _refs_before_inject
+            for r in _llm_refs
         )
-        if (not _refs_before_inject or _all_fake) and fetched_data:
-            parsed["references"] = _inject_fetched_refs(fetched_data)
+        if _all_fake:
+            _llm_refs = []  # discard fake-only; real data will come from fetched
+        _raw_refs = _build_complete_references(_llm_refs, fetched_data)
+        parsed["references"] = _raw_refs
         _backfill_expert_opinion_global(parsed)
         _raw_refs = parsed.get("references", [])
         enrich_references({"references": _raw_refs}, fetched_data)
