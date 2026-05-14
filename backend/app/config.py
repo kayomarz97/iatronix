@@ -192,6 +192,10 @@ class Settings(BaseSettings):
         True  # retry LLM call when response is critically sparse
     )
 
+    # Stance Neutralization Layer — separate kill-switches
+    stance_neutralizer_enabled: bool = True
+    reference_filter_v2_enabled: bool = True
+
     # Cloudflare R2 Storage (for PDF uploads)
     r2_account_id: str = ""
     r2_access_key_id: str = ""
