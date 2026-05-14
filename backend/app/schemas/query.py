@@ -229,6 +229,8 @@ class AdaptiveResponse(BaseModel):
     flowcharts: list[dict] = []
     images: list[dict] = []
     extended_data: Optional[dict] = None
+    response_schema_version: str = "2026-06-01"  # Bump on schema changes for cache invalidation
+    stance_metadata: Optional[dict] = None  # Audit-only: {"stance": "affirming"|"negating"|"neutral", "loaded_terms": [...]}
 
 
 # --- Text Nodes ---
