@@ -237,6 +237,86 @@ class ArticleRegistry:
             })
         return out
 
+    def attach_orphans_to_references(self, parsed: dict) -> None:
+        """Ensure every fetched article appears in the final reference list.
+
+        For each RegistryArticle in self.items, check if it's already in
+        parsed["references"]. If not, add it (marked used_inline=False).
+        Uses the same normalization as _norm_title to avoid duplicates.
+
+        This rescues fetched articles that weren't cited inline.
+        """
+        if not parsed or "references" not in parsed:
+            return
+
+        existing_refs = parsed["references"] or []
+        if not isinstance(existing_refs, list):
+            return
+
+        # Build a set of existing references by normalized title + ID for dedup
+        existing_dedup = set()
+        for ref in existing_refs:
+            if not isinstance(ref, dict):
+                continue
+            pmid = ref.get("pmid")
+            nct_id = ref.get("nct_id")
+            doi = ref.get("doi")
+            title = ref.get("title")
+            norm_title = _norm_title(title) if title else ""
+            dedup_key = (pmid, nct_id, doi, norm_title)
+            existing_dedup.add(dedup_key)
+
+        # Add registry items that aren't already in references
+        for article in self.items:
+            norm_title = _norm_title(article.title)
+            dedup_key = (article.pmid, article.nct_id, article.doi, norm_title)
+            if dedup_key not in existing_dedup:
+                new_ref = {
+                    "title": article.title,
+                    "source": article.source,
+                    "source_type": article.source_type,
+                    "pmid": article.pmid,
+                    "nct_id": article.nct_id,
+                    "doi": article.doi,
+                    "url": article.url,
+                    "year": article.year,
+                    "ref_token": article.ref_token,
+                    "used_inline": False,
+                }
+                existing_refs.append(new_ref)
+                existing_dedup.add(dedup_key)
+
+        parsed["references"] = existing_refs
+
+    def best_match_min_jaccard(
+        self, claim_text: str, min_jaccard: float = 0.30
+    ) -> Optional[RegistryArticle]:
+        """Match claim_text against registry titles using Jaccard similarity.
+
+        Returns the article with the highest Jaccard score, or None if < min_jaccard.
+        """
+        if not self.items or not claim_text:
+            return None
+
+        claim_tokens = set(re.findall(r"\b\w+\b", claim_text.lower()))
+        if not claim_tokens:
+            return None
+
+        best: Optional[RegistryArticle] = None
+        best_score = 0.0
+        for r in self.items:
+            title_tokens = set(re.findall(r"\b\w+\b", r.title.lower()))
+            if not title_tokens:
+                continue
+            inter = len(claim_tokens & title_tokens)
+            union = len(claim_tokens | title_tokens)
+            score = inter / union if union else 0.0
+            if score > best_score:
+                best_score = score
+                best = r
+
+        return best if best_score >= min_jaccard else None
+
 
 # ── Builder ───────────────────────────────────────────────────────────────────
 
