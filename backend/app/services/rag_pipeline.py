@@ -58,6 +58,7 @@ from app.services.json_repair import parse_llm_json
 from app.services.llm_factory import create_llm, get_provider
 from app.services.langgraph_search import run_search_graph
 from app.services.article_registry import ArticleRegistry, build_article_registry
+from app.services.stance_neutralizer import neutralize_query, StanceResult
 from app.services.prompt_engine import (
     build_adaptive_messages,
     build_bluf_only_messages,
@@ -1452,9 +1453,15 @@ def _best_article_for_claim(claim_text: str, articles: list[dict]) -> dict | Non
     return best_article or articles[0]
 
 
-def _quarantine_sourceless_items(parsed: dict, fetched_data: "FetchedData | None" = None) -> None:
+def _quarantine_sourceless_items(
+    parsed: dict,
+    fetched_data: "FetchedData | None" = None,
+    registry: "ArticleRegistry | None" = None,
+) -> None:
     """Demote (not drop) content_items lacking real grounding after backfill.
 
+    For references without any ID (pmid/nct_id/doi/url), require a registry match
+    (title-token Jaccard >= 0.5) to survive — this blocks hallucinated refs.
     If fetched_data is available (no live API failure), demote ungrounded claims to "Expert opinion"
     with low confidence. If no fetched_data, skip quarantine entirely to preserve training knowledge.
     """
@@ -1477,21 +1484,28 @@ def _quarantine_sourceless_items(parsed: dict, fetched_data: "FetchedData | None
                 item["source"] = "Expert opinion"
                 item["confidence"] = "low"
 
+    # Updated reference filter (v2): registry-anchored
     refs = parsed.get("references", [])
     filtered_refs = []
     for ref in refs:
         if not isinstance(ref, dict):
             continue
-        has_url = bool(ref.get("url"))
-        has_pmid = bool(ref.get("pmid"))
-        has_grounded_source = bool((ref.get("source") or "").strip()) and ref.get("source") not in ("", "Expert opinion")
-        if has_url or has_pmid or has_grounded_source:
+        has_id = any(ref.get(k) for k in ("url", "pmid", "nct_id", "doi"))
+        if has_id:
+            # Has identifier — keep it
             filtered_refs.append(ref)
+            continue
+        # No identifier — require registry match (Jaccard >= 0.5) to survive
+        if registry:
+            ref_text = (ref.get("title") or "") + " " + (ref.get("source") or "")
+            if registry.best_match_min_jaccard(ref_text, min_jaccard=0.5):
+                filtered_refs.append(ref)
+        # Else: drop ref (hallucinated without identifier AND no registry match)
     parsed["references"] = filtered_refs
 
 
 def _backfill_expert_opinion_global(parsed: dict, fetched_data: "FetchedData | None" = None) -> None:
-    """Replace 'Expert opinion' and empty sources in content_items with per-claim backfill.
+    """Replace 'Expert opinion' and empty sources in content_items + references with per-claim backfill.
 
     Per-claim resolution uses title similarity. Section-level keyword preference is kept as tie-breaker.
     Call AFTER _resolve_ref_tokens and sanitize_response_pmids.
@@ -1503,6 +1517,7 @@ def _backfill_expert_opinion_global(parsed: dict, fetched_data: "FetchedData | N
     if not all_articles:
         return
 
+    # Process content_items
     for section in parsed.get("sections", []):
         if not isinstance(section, dict):
             continue
@@ -1520,6 +1535,21 @@ def _backfill_expert_opinion_global(parsed: dict, fetched_data: "FetchedData | N
                         item["pmid"] = best["pmid"]
                     if best.get("url"):
                         item["url"] = best["url"]
+
+    # Extended: Process references — replace "Expert opinion" sources with real article data if available
+    for ref in parsed.get("references", []):
+        if not isinstance(ref, dict):
+            continue
+        src = (ref.get("source") or "").strip()
+        if src == "Expert opinion" and not ref.get("pmid") and not ref.get("nct_id"):
+            ref_text = (ref.get("title") or "") + " " + (ref.get("source") or "")
+            best = _best_article_for_claim(ref_text, all_articles)
+            if best:
+                ref["source"] = best["title"]
+                if best.get("pmid"):
+                    ref["pmid"] = best["pmid"]
+                if best.get("url"):
+                    ref["url"] = best["url"]
 
 
 def _title_rescue_pass(parsed: dict, registry: "ArticleRegistry") -> None:
@@ -2760,8 +2790,8 @@ async def process_query(
         else settings.model_classify
     )
 
-    # Run merged analysis+expansion, Redis cache check in parallel
-    _combined, _cache_prefetch = await asyncio.gather(
+    # Run merged analysis+expansion, Redis cache check, and stance neutralization in parallel
+    _combined, _cache_prefetch, _stance_result = await asyncio.gather(
         _analyze_and_expand_query(
             request.query,
             model_id=_dspy_classify_model,
@@ -2769,11 +2799,22 @@ async def process_query(
             user_provider=user_llm_provider,
         ),
         cache_get(redis_client, request.query, speculative_type, normalized_request_model),
+        neutralize_query(
+            request.query,
+            model_id=_dspy_classify_model,
+            user_key=user_llm_key,
+            user_provider=user_llm_provider,
+        ),
         return_exceptions=True,
     )
     combined = _combined if not isinstance(_combined, Exception) else None
     _speculative_cache = _cache_prefetch if not isinstance(_cache_prefetch, Exception) else None
+    stance_result = _stance_result if isinstance(_stance_result, StanceResult) else None
     pubmed_expansion_terms: dict | None = None
+
+    # Extract neutral query for retrieval
+    retrieval_query = stance_result.neutral_clinical_question if stance_result else request.query
+    stance_meta = {"stance": stance_result.stance, "loaded_terms": stance_result.loaded_terms} if stance_result else None
 
     if combined:
         # New merged path: 1 Haiku call instead of 2
@@ -2935,9 +2976,10 @@ async def process_query(
         )
 
     # Parallel fetch: data API + vector search + semantic cache via LangGraph
+    # Use neutral query for retrieval to avoid stance-biased fetching
     _fetch_t0 = time.perf_counter()
     fetched_data, vector_results, _sem_result = await run_search_graph(
-        query=rewritten_query,
+        query=retrieval_query,
         original_query=request.query,
         query_type=query_type,
         routing=routing,
@@ -3486,7 +3528,10 @@ async def process_query(
         sanitize_response_pmids(parsed, fetched_data)     # 2. Validate PMIDs
         _normalize_consensus_sources(parsed)              # 3. Normalize consensus sources
         _backfill_from_registry(parsed, registry)         # 4. Per-claim backfill via registry.best_match
-        _quarantine_sourceless_items(parsed, fetched_data)  # 5. Demote ungrounded (rare now)
+        # 4b. Orphan rescue — attach fetched articles not yet in reference list
+        if settings.reference_filter_v2_enabled and registry:
+            registry.attach_orphans_to_references(parsed)
+        _quarantine_sourceless_items(parsed, fetched_data, registry)  # 5. Demote ungrounded + filter v2
         # 6. Final reference list = registry.to_reference_list() (cited first, then retrieved)
         _raw_refs = registry.to_reference_list() if registry.items else []
         # If registry empty (no fetched_data), preserve any LLM-supplied refs that pass safety
