@@ -594,6 +594,56 @@ When adding a new fetcher, ensure each item has at least one of: `pmid`, `nct_id
 
 ---
 
+## 7d. Stance Neutralization Layer (June 2026)
+
+`backend/app/services/stance_neutralizer.py` prevents sycophancy and retrieval bias from stance-loaded queries.
+
+### Problem
+- User query: "why is meropenem + sulbactam NOT rational?" → system fetches evidence supporting rejection, downplays evidence supporting use → one-sided synthesis.
+- User query: "is dapagliflozin safe in T1DM?" → system treats "safe?" as stance, fetches safety evidence, underweights benefit evidence.
+- Root cause: **retrieval is biased, and the framed question in the prompt encourages the LLM to mirror the user's stance**.
+
+### Solution
+1. **Stance extraction** (LLM-primary, heuristic fallback):
+   ```python
+   from app.services.stance_neutralizer import neutralize_query
+   result = await neutralize_query(raw_query, model_id, user_key, user_provider)
+   # Returns: StanceResult with:
+   #   - neutral_clinical_question: "meropenem + sulbactam combination therapy: clinical rationale, evidence base, and appropriate indications"
+   #   - stance: "negating" (from "NOT rational")
+   #   - loaded_terms: ["NOT rational"]
+   #   - confidence: 0.95
+   ```
+
+2. **Balanced retrieval**: Use `neutral_clinical_question` for `run_search_graph()` → PubMed/NICE fetch is stance-agnostic.
+
+3. **Balanced synthesis**: Prompt receives both:
+   - **Primary target**: `neutral_clinical_question` (what to answer)
+   - **Metadata**: `user_stance` + `original_user_phrasing` (in delimited block)
+   - **Guardrail**: `ANTI_SYCOPHANCY_RULES` in system prefix — explicit "present balanced evidence even if question phrasing suggests a desired conclusion"
+
+4. **Reference completeness fix**:
+   - `ArticleRegistry.attach_orphans_to_references(parsed)` ensures all fetched articles appear in final reference list.
+   - `_quarantine_sourceless_items()` (v2) uses registry match with Jaccard ≥0.5 to accept refs without identifiers — blocks hallucinations, rescues real articles.
+
+### Configuration
+- `STANCE_NEUTRALIZER_ENABLED` (default `true` on dev, `false` on prod) — instant kill-switch.
+- `REFERENCE_FILTER_V2_ENABLED` (default `true` on dev, `false` on prod) — independent control of orphan rescue + strict reference filter.
+
+### Testing Stance Extraction
+```bash
+pytest backend/tests/test_stance_neutralizer.py -v
+# Tests: "why is X NOT rational?", "is Y safe?", non-English short-circuit, fallback, feature-flag-off
+```
+
+### Testing Anti-Injection Hardening
+```bash
+pytest backend/tests/test_prompt_injection.py -v
+# Tests: delimiter escape, role hijack, markdown fence, control chars, etc.
+```
+
+---
+
 ## 8. Improvement Areas & Known Gaps
 
 | Area | Status | Notes |
