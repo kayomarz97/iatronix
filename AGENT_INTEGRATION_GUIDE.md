@@ -58,10 +58,11 @@ Next.js Proxy  →  FastAPI Backend (port 8000)
 | File | Role |
 |------|------|
 | `backend/app/services/rag_pipeline.py` | **Main orchestrator** — `process_query()` is the entry point for all queries |
+| `backend/app/services/evidence_floor.py` | **Evidence floor** — `has_minimum_evidence()` + `ensure_evidence()`: guarantees ≥1 citable source before LLM synthesis; raises `EvidenceFloorError` when exhausted |
 | `backend/app/services/data_fetcher.py` | Fetches from 10+ medical APIs in parallel; includes new NCBI Books + ClinicalTrials.gov sources |
-| `backend/app/services/ranking.py` | Ranks articles by multi-factor evidence score (study type, relevance, recency, fulltext, citations) — NEW |
+| `backend/app/services/ranking.py` | Ranks articles by multi-factor evidence score (study type, relevance, recency, fulltext, citations) |
 | `backend/app/services/url_builder.py` | Deterministic source-aware URL enrichment (7-step priority) — PMID lookup, NCT ID lookup, DOI, source pattern matching with non-PubMed source guards |
-| `backend/app/services/prompt_engine.py` | Builds prompts for each query type (format-mode and generate-mode) |
+| `backend/app/services/prompt_engine.py` | Builds prompts for each query type (always format-mode now — generate-mode removed) |
 | `backend/app/services/llm_factory.py` | Instantiates LLM clients (Claude, OpenAI, OpenRouter) from the user's BYOK key |
 | `backend/app/services/dspy_modules.py` | DSPy adaptive pipeline — analysis + generation signatures |
 | `backend/app/services/dspy_signatures.py` | DSPy I/O type definitions |

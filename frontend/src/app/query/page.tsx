@@ -297,8 +297,27 @@ function QueryContent() {
             </div>
           </div>
 
-          {/* Degraded response */}
-          {"message" in result.response && "suggestion" in result.response && (
+          {/* No-evidence info card — neutral style, no "Expert opinion" rendered */}
+          {"message" in result.response && "suggestion" in result.response &&
+           (result.response as DegradedResponse).error_code === "no_evidence" && (
+            <Card>
+              <div className="flex items-start gap-3">
+                <span className="text-2xl mt-0.5" aria-hidden>🔍</span>
+                <div>
+                  <p className="font-medium text-text-primary">
+                    {(result.response as DegradedResponse).message}
+                  </p>
+                  <p className="text-sm text-text-secondary mt-1">
+                    {(result.response as DegradedResponse).suggestion}
+                  </p>
+                </div>
+              </div>
+            </Card>
+          )}
+
+          {/* Degraded response (service errors, circuit-breaker, etc.) */}
+          {"message" in result.response && "suggestion" in result.response &&
+           (result.response as DegradedResponse).error_code !== "no_evidence" && (
             <Card variant="degraded">
               <p className="font-medium">
                 {(result.response as DegradedResponse).message}

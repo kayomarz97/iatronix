@@ -180,6 +180,7 @@ class DegradedResponse(BaseModel):
     message: str = "AI service temporarily unavailable"
     suggestion: str = "Try again in 30 seconds or switch model"
     cached_similar: Optional["QueryResponse"] = None
+    error_code: Optional[str] = None  # "no_evidence" when evidence floor exhausted
 
 
 # --- Adaptive (DSPy) ---
@@ -297,6 +298,7 @@ class QueryResponse(BaseModel):
     rewritten_query: Optional[str] = None
     fetch_sources: list[str] = []
     token_usage: Optional[TokenUsage] = None
+    debug: Optional[dict] = None  # populated when X-Test-Mode: 1 header is sent; never in prod
 
 
 DegradedResponse.model_rebuild()
