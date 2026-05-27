@@ -23,6 +23,7 @@ export interface DegradedResponse {
   message: string;
   suggestion: string;
   cached_similar?: QueryResponse | null;
+  error_code?: string | null;  // "no_evidence" when evidence floor exhausted
 }
 
 // --- Adaptive (DSPy) ---
@@ -167,6 +168,7 @@ export interface QueryResponse {
   rewritten_query?: string | null;
   fetch_sources?: string[];
   token_usage?: TokenUsage | null;
+  debug?: Record<string, unknown> | null;
 }
 
 export interface ModelInfo {

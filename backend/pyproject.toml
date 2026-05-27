@@ -43,6 +43,9 @@ dependencies = [
 asyncio_mode = "auto"
 testpaths = ["tests"]
 addopts = "--ignore=tests/test_dspy_comparison.py"
+markers = [
+    "citation: citation grounding, evidence floor, and token-density tests",
+]
 
 [tool.setuptools.packages.find]
 include = ["app*"]

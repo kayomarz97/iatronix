@@ -57,8 +57,11 @@ async def fetch_node(state: SearchState) -> dict:
         )
         return {"fetched_data": result}
     except asyncio.TimeoutError:
-        logger.warning("search_graph: API fetch timed out — using generate mode")
-        return {"fetched_data": FetchedData(query_type=state["query_type"], fallback_to_llm=True)}
+        logger.warning("search_graph: API fetch timed out — returning empty data for evidence floor retry")
+        # Always False on timeout: the evidence floor in _expand_retrieval_if_needed will retry
+        # with progressive broadening before giving up. Bypassing that with a True value here
+        # would skip expansion entirely and fall through to generate mode.
+        return {"fetched_data": FetchedData(query_type=state["query_type"], fallback_to_llm=False)}
     except Exception as exc:
         logger.warning("search_graph: API fetch error: %s", exc)
         return {"fetched_data": None}

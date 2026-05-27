@@ -196,6 +196,11 @@ class Settings(BaseSettings):
     stance_neutralizer_enabled: bool = True
     reference_filter_v2_enabled: bool = True
 
+    # Evidence Floor — blocks ungrounded LLM "generate" mode answers
+    # When True: every answer goes through format mode with ≥1 citable source, or returns no_evidence.
+    # Set False only for emergency rollback if broadening loop misbehaves.
+    evidence_floor_enabled: bool = True
+
     # Cloudflare R2 Storage (for PDF uploads)
     r2_account_id: str = ""
     r2_access_key_id: str = ""

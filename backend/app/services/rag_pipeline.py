@@ -58,6 +58,7 @@ from app.services.json_repair import parse_llm_json
 from app.services.llm_factory import create_llm, get_provider
 from app.services.langgraph_search import run_search_graph
 from app.services.article_registry import ArticleRegistry, build_article_registry
+from app.services.evidence_floor import EvidenceFloorError, ensure_evidence, has_minimum_evidence
 from app.services.stance_neutralizer import neutralize_query, StanceResult
 from app.services.prompt_engine import (
     build_adaptive_messages,
@@ -855,29 +856,16 @@ async def _expand_retrieval_if_needed(
     notes.append(f"post-expansion retrieval score={score2}")
     notes.extend(reasons2)
     if not sufficient2:
-        # Third-pass: broad plain-text PubMed search with raw query — no MeSH constraints.
+        # Third-pass+: evidence floor tries progressive broadening (NCBI Bookshelf, MedlinePlus,
+        # openFDA, broad PubMed) before giving up. Raises EvidenceFloorError if exhausted,
+        # which propagates to process_query() for the structured no_evidence response.
         logger.info(
-            "retrieval insufficient after second-pass (score=%d) — attempting broad fallback search",
+            "retrieval insufficient after second-pass (score=%d) — invoking evidence floor",
             score2,
         )
-        try:
-            broad_result = await fetch_evidence_data(query)
-            if broad_result.fetch_success:
-                notes.append("broad fallback search returned evidence — merging")
-                fetched_data.evidence_data = _enrich_evidence_result(
-                    fetched_data.evidence_data, broad_result
-                )
-                score3, sufficient3, reasons3 = _retrieval_assessment(fetched_data, query_type)
-                notes.append(f"post-broad-fallback retrieval score={score3}")
-                notes.extend(reasons3)
-                if not sufficient3:
-                    fetched_data.fallback_to_llm = True
-            else:
-                notes.append("broad fallback search returned no evidence")
-                fetched_data.fallback_to_llm = True
-        except Exception:
-            logger.warning("Broad fallback search failed", exc_info=True)
-            fetched_data.fallback_to_llm = True
+        notes.append("evidence floor invoked for additional broadening")
+        fetched_data = await ensure_evidence(fetched_data, query, query_type)
+        notes.append("evidence floor succeeded — proceeding in format mode")
     return fetched_data, notes
 
 
@@ -3051,31 +3039,57 @@ async def process_query(
     # Initialize evidence confidence with default value
     _evidence_confidence = compute_evidence_confidence(fetched_data, query_type)
 
-    if use_api_fetch and fetched_data is not None and not fetched_data.fallback_to_llm:
-        fetched_data, retrieval_notes = await _expand_retrieval_if_needed(
-            query=request.query,
+    try:
+        if use_api_fetch and fetched_data is not None and not fetched_data.fallback_to_llm:
+            fetched_data, retrieval_notes = await _expand_retrieval_if_needed(
+                query=request.query,
+                query_type=query_type,
+                fetched_data=fetched_data,
+                entities=routing.entities if routing else (analysis_entities or []),
+                condition_context=condition_context,
+                response_focus=(query_analysis or {}).get("response_focus") if query_analysis else None,
+                rewritten_query=rewritten_query,
+                answer_entities=(query_analysis or {}).get("answer_entities") if query_analysis else None,
+            )
+
+            # Rank retrieved articles by evidence quality before LLM synthesis
+            if fetched_data and not fetched_data.fallback_to_llm:
+                _rank_fetched_abstracts(
+                    fetched_data,
+                    entities=routing.entities if routing else (analysis_entities or []),
+                    query_text=rewritten_query,
+                )
+                # Update evidence confidence after ranking
+                _evidence_confidence = compute_evidence_confidence(fetched_data, query_type)
+
+    except EvidenceFloorError:
+        latency_ms = int((time.time() - start_time) * 1000)
+        logger.info(
+            "process_query: evidence floor exhausted for query=%r — returning no_evidence",
+            request.query[:80],
+        )
+        return QueryResponse(
             query_type=query_type,
-            fetched_data=fetched_data,
-            entities=routing.entities if routing else (analysis_entities or []),
-            condition_context=condition_context,
-            response_focus=(query_analysis or {}).get("response_focus") if query_analysis else None,
-            rewritten_query=rewritten_query,
-            answer_entities=(query_analysis or {}).get("answer_entities") if query_analysis else None,
+            model_used=normalized_request_model,
+            response=DegradedResponse(
+                message=(
+                    "No citable sources found for this query across PubMed, NCBI Bookshelf, "
+                    "MedlinePlus, openFDA, and NICE. Please rephrase or add a more specific "
+                    "clinical term."
+                ),
+                suggestion=(
+                    "Try adding the specific drug name, disease, or procedure. "
+                    "You can also upload a relevant PDF for document-based answers."
+                ),
+                error_code="no_evidence",
+            ),
+            disclaimer=DISCLAIMER,
+            latency_ms=latency_ms,
+            validation_warnings=retrieval_notes + ["evidence_floor: all strategies exhausted"],
         )
 
-        # Rank retrieved articles by evidence quality before LLM synthesis
-        if fetched_data and not fetched_data.fallback_to_llm:
-            _rank_fetched_abstracts(
-                fetched_data,
-                entities=routing.entities if routing else (analysis_entities or []),
-                query_text=rewritten_query,
-            )
-            # Update evidence confidence after ranking
-            _evidence_confidence = compute_evidence_confidence(fetched_data, query_type)
-
-    prompt_mode = (
-        "format" if (fetched_data and not fetched_data.fallback_to_llm) else "generate"
-    )
+    # Evidence floor guarantees ≥1 citable source — always use format mode.
+    prompt_mode = "format"
     fetch_latency_ms = fetched_data.total_fetch_time_ms if fetched_data else 0
 
     # Scraping-only mode: skip LLM and return raw API data directly

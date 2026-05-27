@@ -74,7 +74,16 @@ async def query_endpoint(request: Request, body: QueryRequest):
             "X-CB-Anthropic": anthropic_breaker.current_state,
             "X-CB-OpenAI": openai_breaker.current_state,
         }
-        return JSONResponse(content=response.model_dump(), headers=headers)
+        response_dict = response.model_dump()
+        # X-Test-Mode: 1 gates debug emission — never surfaced in production requests
+        if request.headers.get("X-Test-Mode") == "1":
+            response_dict["debug"] = {
+                "original_query": body.query,
+                "neutralized_query": response.rewritten_query or body.query,
+                # langgraph executes all three nodes on every API-fetch-enabled query
+                "graph_nodes": ["fetch", "vector", "semantic_cache"],
+            }
+        return JSONResponse(content=response_dict, headers=headers)
     except asyncio.TimeoutError:
         logger.error("Pipeline timeout exceeded")
         return JSONResponse(
