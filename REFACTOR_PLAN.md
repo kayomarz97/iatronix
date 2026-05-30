@@ -67,9 +67,10 @@ providers:
     embedding_model: voyage-3                # via voyage_api_key
     default_model: claude-haiku-4-5-20251001
     models:
-      - { id: claude-haiku-4-5-20251001, display: "Claude Haiku 4.5", input: 0.80, output: 4.00, cache_write: 1.00, cache_read: 0.08, tier: 1, roles: [classify, generate] }
-      - { id: claude-sonnet-4-20250514, display: "Claude Sonnet 4", input: 3.00, output: 15.00, tier: 2, roles: [sonnet_fallback] }
-      - { id: claude-sonnet-4-6, display: "Claude Sonnet 4.6", input: 3.00, output: 15.00, tier: 2, roles: [vision] }
+      # Pricing/min_cache_tokens corrected from INTEGRATION_NOTES §D1 (old config.py + registry numbers were stale)
+      - { id: claude-haiku-4-5-20251001, display: "Claude Haiku 4.5", input: 1.00, output: 5.00, cache_write_5m: 1.25, cache_read: 0.10, min_cache_tokens: 4096, tier: 1, roles: [classify, generate] }
+      - { id: claude-sonnet-4-6, display: "Claude Sonnet 4.6", input: 3.00, output: 15.00, cache_read: 0.30, min_cache_tokens: 1024, tier: 2, roles: [sonnet_fallback, vision] }
+      # claude-sonnet-4-20250514 RETIRES 2026-06-15 (INTEGRATION_NOTES A1) — deliberately NOT the default; only used if a user pins it
   google:    { enabled: false, client_kind: google_genai, base_url: https://generativelanguage.googleapis.com, ... }
   xai:       { enabled: false, client_kind: openai_compatible, base_url: https://api.x.ai/v1, ... }
   openai:    { enabled: false, client_kind: openai_compatible, base_url: https://api.openai.com/v1, ... }
@@ -81,14 +82,18 @@ providers:
 class ProviderAdapter(Protocol):
     id: str
     def build_client(self, model_id, api_key, max_tokens, **kw): ...      # replaces create_llm branch
-    async def generate(self, blocks, model_id, api_key, **kw) -> LLMResult # uses apply_cache internally
+    async def generate(self, blocks, model_id, api_key, **kw) -> LLMResult # runs prepare/apply/read internally
     async def embed(self, texts, model_id, api_key) -> list[list[float]]
-    def apply_cache(self, blocks: PromptBlocks) -> ProviderMessages        # prefix_auto | cache_control | no-op
-    def supports_caching(self) -> bool
+    # --- 3-method cache lifecycle (INTEGRATION_NOTES §C — caching is 3 structural classes, not one) ---
+    def prepare_cache(self, blocks, ttl=None) -> CacheHandle | None        # Gemini: caches.create() if >= min_cache_tokens; others: None
+    def apply_cache(self, blocks, handle) -> ProviderMessages              # inline cache_control | no-op auto-prefix | set cached_content
+    def read_cache_usage(self, response) -> CacheUsage                     # normalize {cache_read, cache_write, uncached_input}
+    def release_cache(self, handle) -> None                                # Gemini: caches.delete(); others: no-op
+    def supports_caching(self, model_id) -> bool                           # per-MODEL (Cerebras caches only gpt-oss-120b/zai-glm-4.7)
     def supports_vision(self) -> bool
     async def validate_key(self, api_key) -> bool
 ```
-One adapter file per provider under `backend/app/services/providers/`. Adding a provider = new adapter + one YAML entry.
+One adapter file per provider under `backend/app/services/providers/`. Adding a provider = new adapter + one YAML entry. **Cache classes** (INTEGRATION_NOTES §C): `anthropic→inline`, `cerebras/openai/xai→auto_prefix`, `google→stateful`, `openrouter→conditional`.
 
 **Loader** (`backend/app/services/provider_registry.py`): parses YAML once at startup; exposes `enabled_providers()`, `provider_meta(id)`, `model_meta(id)`, `pricing(id)`, `default_model(provider|role)`, `allowed_providers()`. **Replaces** `model_registry._REGISTRY`, the `config.py` role fields + duplicate `cost_*` block, and `schemas/models.AVAILABLE_MODELS`.
 
