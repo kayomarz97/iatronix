@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse
 
 from app.api.v1 import health, models, query
-from app.api.v1 import auth_routes, documents, history as history_module
+from app.api.v1 import auth_routes, history as history_module
 from app.api.v1 import version as version_module
 from app.api.v1 import service_keys as service_keys_module
 from app.api.v1 import waves as waves_module
@@ -192,7 +192,6 @@ app.include_router(health.router, prefix="/api/v1")
 app.include_router(auth_routes.router, prefix="/api/v1")
 app.include_router(models.router, prefix="/api/v1")
 app.include_router(query.router, prefix="/api/v1")
-app.include_router(documents.router, prefix="/api/v1")
 app.include_router(history_module.router, prefix="/api/v1")
 app.include_router(version_module.router, prefix="/api/v1")
 app.include_router(service_keys_module.router, prefix="/api/v1")

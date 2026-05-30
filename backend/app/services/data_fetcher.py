@@ -2675,15 +2675,10 @@ async def _fetch_pubmed_clinical_trials(client: httpx.AsyncClient, query: str) -
 
 
 def _fire_and_forget_index(abstracts: list) -> None:
-    """Schedule fire-and-forget indexing of PubMed abstracts into pgvector."""
-    if not abstracts or not settings.vector_search_enabled:
-        return
-    try:
-        from app.services.ingestion import ingest_pubmed_abstracts
-
-        asyncio.create_task(ingest_pubmed_abstracts(abstracts))
-    except Exception:
-        logger.debug("Fire-and-forget indexing skipped", exc_info=True)
+    """No-op. The PDF/abstract vector-indexing pipeline (ingestion.py) was removed —
+    it was a disabled, half-migrated feature (local MiniLM -> Supabase/BYOK). Kept as a
+    no-op so the existing call sites stay valid; re-wire when the vector pipeline is rebuilt."""
+    return
 
 
 _IMAGE_ELIGIBLE_TYPES = {"disease", "procedure", "evidence", "comparative"}
