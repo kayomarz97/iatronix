@@ -10,6 +10,7 @@ Output: comparison table as specified in spicy-chasing-summit.md
 Run:
   python3 tests/test_dspy_comparison.py
 """
+import os
 import time
 import json
 import urllib.request
@@ -19,7 +20,12 @@ from typing import Any
 # ── Config ────────────────────────────────────────────────────────────────────
 BASE_NODSPY = "http://localhost:8201"
 BASE_DSPY   = "http://localhost:8202"
-API_KEY     = "iatx.iwn5urz42y58.4JOEB5N_U1ZJPqBke1UrNF1VY8yYF5e-MLPRyanAnQ8"
+API_KEY     = os.getenv("IATRONIX_TEST_API_KEY", "")
+if not API_KEY:
+    raise SystemExit(
+        "Set IATRONIX_TEST_API_KEY in the environment before running this benchmark.\n"
+        "(The previously hardcoded key was revoked — generate a fresh app key for a test user.)"
+    )
 
 TEST_QUERIES = [
     # (label, query, query_type)
