@@ -58,3 +58,9 @@ graphify-out/
 
 # Local reference files (not for version control)
 DEPLOY_COMMANDS.md
+
+# Local backup archives (never commit — bloats history, hurts scaling)
+*.zip
+
+# Runtime locks / scheduler state
+.claude/scheduled_tasks.lock
