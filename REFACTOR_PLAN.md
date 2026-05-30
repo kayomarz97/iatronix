@@ -8,23 +8,23 @@
 
 ---
 
-## 0. Decisions required before I touch code (the STOP gate)
+## 0. Decisions — RESOLVED (approved 2026-05-31)
 
-### Formal decisions (D1–D4, from the brief)
+### Formal decisions (D1–D4)
 
-- **D1 — Providers & enabled set.** Build adapters for **Anthropic, Cerebras, Google (Gemini), xAI (Grok)**, and keep **OpenAI + OpenRouter** (both already partially present). Registry `enabled`: **Cerebras + Anthropic = true**; **Google, Grok, OpenAI, OpenRouter = false** — fully wired so flipping one flag activates FE + BE. → *Confirm, or change which are enabled now.*
-- **D2 — Caching.** Preserve Cerebras prefix auto-cache **byte-for-byte** (AUDIT §6 — fragile, load-bearing); move Anthropic `cache_control` behind the adapter and consolidate its 3 duplicated paths; Google/Grok caching implemented from Phase 2.5 docs; **no-op (not error)** where unsupported. → *Confirm.*
-- **D3 — Deep-grounded answers.** Remove the training-data generate fallback (already half-gone — generate-mode is dead per AUDIT §7.4). Replace the thin-retrieval terminal with **parallel citation-chasing**: depth **≤ 5** per branch, branches **parallel**, total budget **≈ 120 s**, all **registry-configurable**; honest **"No evidence found"** only when genuinely nothing is found. → *Confirm the 5 / 120 s ceilings.*
-- **D4 — Dead-code scope.** Delete **only** the `reachable=false` items in AUDIT §5a; keep everything `reachable=true` (§5b) unless separately approved. → *Confirm.*
+- **D1 — Providers & enabled set. ✅ APPROVED (all-6, two-active).** Build & fully wire all six adapters (**Anthropic, Cerebras, Google/Gemini, xAI/Grok, OpenAI, OpenRouter**). Registry `enabled`: **Cerebras + Anthropic = true**; the other four = `false`. Within each *active* provider the user can **choose the model** (model picker driven by `/api/providers`). Flipping one `enabled` flag later activates a provider on FE + BE with no other edit.
+- **D2 — Caching. ✅ APPROVED.** Preserve Cerebras prefix auto-cache **byte-for-byte** (AUDIT §6); move Anthropic `cache_control` behind the adapter and consolidate its 3 duplicated paths; Google/Grok caching implemented from the Phase 2.5 docs; **no-op (not error)** where unsupported. *(Per-provider caching syntax differs — the verified syntaxes land in `INTEGRATION_NOTES.md`; `adapter.apply_cache()` hides the differences.)*
+- **D3 — Deep-grounded answers. ✅ APPROVED (depth 5 / ~120 s / parallel).** Remove the training-data generate fallback (already dead — AUDIT §7.4). Replace the thin-retrieval terminal with **parallel citation-chasing**: depth **≤ 5** per branch, branches **parallel**, total budget **≈ 120 s**, all **registry-configurable**; honest **"No evidence found"** only when genuinely nothing is found. ⚠ *Design note: the 120 s deep-search budget collides with `pipeline_timeout_seconds=120` / `proxy_timeout_seconds=130` (AUDIT §7.5). Per constraint #4 I will document the rationale and flag before changing any timing — likely the deep-search path gets its own longer request timeout while normal queries keep 120 s.*
+- **D4 — Dead-code scope. ✅ APPROVED.** Delete **only** the `reachable=false` items in AUDIT §5a; keep everything `reachable=true` (§5b).
 
-### Audit-surfaced decisions (E1–E4 — not in the brief, but I have doubts)
+### Audit-surfaced decisions (E1–E4)
 
-- **E1 — Two pre-existing defects (AUDIT §3).** (a) `ingestion.py:24` imports a non-existent `Embedder` → `ImportError`. (b) `backend/tests/test_dspy_comparison.py:~28` contains a **hardcoded API key** (committed secret). → *I recommend fixing (a) and removing (b)'s key as Phase 2.6 pre-work, and **you rotating that key** since it's been in git history.*
-- **E2 — `FAIL_CLOSED_EVIDENCE_ONLY` default mismatch (AUDIT §4).** `.env.example`/docs = `true`, `config.py:150` = `False`. The gate is currently dead (generate-mode removed), so behavior is unaffected, but the contradiction is a footgun. → *I recommend setting the code default to `True` to match intent + docs.*
-- **E3 — Waves vision path (`spirometry_ai.py`).** It hardcodes `MODEL_ID="claude-sonnet-4-6"` and the **raw `anthropic` SDK**, bypassing `llm_factory` (AUDIT §2 row 17). It's on the "must never break" list. → *I recommend modelling it as a `vision` role in the registry and routing it through the adapter, with the Waves flow regression-tested before/after.*
-- **E4 — Per-provider BYOK DB columns (`user.py:52-55`).** Collapsing to one keyed store is the "purest" single-config outcome but needs a data migration. → *I recommend keeping the existing columns for back-compat and **deriving the allowed-provider set from the registry** (column map stays, but no hardcoded allowlists). A full column→JSON migration can be a later, separate effort.*
+- **E1 — Two pre-existing defects. ✅ FIX ALL (Phase 2.6).** (a) `ingestion.py:24` imports a non-existent `Embedder` → fix the import. (b) `test_dspy_comparison.py:22` holds **an internal Iatronix app key** (`iatx.iwn5urz42y58.…`, *not* a paid LLM key — it authenticates as one test user to the app's own `/query`). Fix = read it from `os.getenv("IATRONIX_TEST_API_KEY")` **and revoke key-id `iwn5urz42y58` in the DB** (kills the leaked secret; no third-party billing exposure).
+- **E2 — `FAIL_CLOSED_EVIDENCE_ONLY` default mismatch. ✅ APPROVED.** Set the `config.py:150` code default to `True` to match `.env.example`/docs; document that the **Evidence Floor** is now the active grounding gate (the flag's own branch is dead until/unless generate-mode returns).
+- **E3 — Waves vision path. ✅ APPROVED.** Model `spirometry_ai.py` as a `vision` role in the registry and route it through the Anthropic adapter; regression-test the Waves flow before/after (it's on the "must never break" list).
+- **E4 — BYOK key storage. ✅ APPROVED — storage-agnostic dual-write.** Keep the Postgres Fernet columns **and** add a **Firestore (Admin SDK, server-side only, deny-all client rules, still Fernet-encrypted)** backend, both behind a new **`KeyStore` abstraction**. Pipeline reads/writes go through `keystore.*`, never a raw column. Dual-write to both stores; a config flag picks the **primary** (Postgres ⇄ Firestore) so migration is a flag flip with zero backfill. The allowed-provider set derives from the registry (no hardcoded allowlists). Firebase Admin SDK is already a dependency (auth), so Firestore access is incremental.
 
-> I will not proceed past Phase 2.6 until these are answered. Phases 3–10 below are the concrete plan that follows approval.
+> All gate decisions resolved. Phase 2.5 (docs) is in progress; Phase 2.6 onward proceeds per the plan below.
 
 ---
 
@@ -115,9 +115,10 @@ Each step = its own commit:
 3. **`refactor: route classifier/router/pipeline model selection through registry`** — `source_router.py`, `rag_pipeline.py` (`_default/_normalize_model_for_provider`, `_model_tier`, key-column map), `dspy_lm.py`, `cost_estimator.py`, `byok.py`, `embedder.py` — replace `provider == "..."` string branches with registry lookups (`role`/`tier`/`pricing`/`cache_strategy`).
 4. **`refactor: spirometry vision via registry vision role`** (E3) — `spirometry_ai.py` reads `vision` role from registry; routed via Anthropic adapter. Waves regression-tested.
 5. **`feat: GET /api/providers (enabled-only, no secrets)`** — `backend/app/api/v1/config_routes.py` (or new route); returns enabled providers/models from registry. Deprecate/redirect `/config/llm` + `/models` to it.
-6. **`refactor: collapse provider allowlists to registry`** — `schemas/auth.py` Literals, `auth_routes.py` allowlist, `circuit_breaker.py` breaker set → derive from registry (E4: keep DB columns, derive allowed set).
+6. **`refactor: collapse provider allowlists to registry`** — `schemas/auth.py` Literals, `auth_routes.py` allowlist, `circuit_breaker.py` breaker set → derive from registry (no hardcoded allowlists).
+6b. **`feat: KeyStore abstraction + Postgres & Firestore backends`** (E4) — new `backend/app/services/keystore/{base,postgres,firestore}.py`; `base.py` defines `KeyStore` (`get/set/delete(user, provider)`, Fernet in/out); Postgres backend wraps the existing columns; Firestore backend uses the **Admin SDK** (server-side, deny-all client security rules) with the same Fernet encryption. Dual-write both; `KEYSTORE_PRIMARY` config flag selects read primary (default `postgres`). Route **all** key reads/writes through it: `rag_pipeline.py` (key resolution), `auth_routes.py`, `byok.py`, `openrouter_oauth.py`, `waves.py`. No raw `users.*_api_key` access outside the Postgres backend.
 7. **`feat: Google + xAI adapters (enabled:false)`** — `backend/app/services/providers/{google,xai}.py` + `openai`/`openrouter` adapters folded in; built from `INTEGRATION_NOTES.md`.
-8. **`refactor: frontend renders providers/models from /api/providers`** — `frontend/src/lib/modelRegistry.ts`, `components/providers/QueryProvider.tsx`, `lib/constants.ts`, `app/settings/page.tsx`, `app/register/page.tsx`, `app/about/page.tsx` — remove hardcoded provider/model strings; generate key-entry UI + model picker from API.
+8. **`refactor: frontend renders providers/models from /api/providers`** — `frontend/src/lib/modelRegistry.ts`, `components/providers/QueryProvider.tsx`, `lib/constants.ts`, `app/settings/page.tsx`, `app/register/page.tsx`, `app/about/page.tsx` — remove hardcoded provider/model strings; generate key-entry UI **and the per-provider model picker** (D1) from the API response.
 - **Acceptance:** `grep -ri` for provider/model strings finds them **only** in `config/providers.yaml` + `backend/app/services/providers/` + adapter tests. Flipping `enabled` changes both `/api/providers` and the UI with no other edit.
 
 ### Phase 4 — Provider-agnostic caching
