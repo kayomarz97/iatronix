@@ -58,6 +58,7 @@ from app.services.json_repair import parse_llm_json
 from app.services.llm_factory import create_llm, get_provider
 from app.services.provider_registry import get_registry
 from app.services.providers import get_adapter
+from app.services.keystore import get_keystore
 from app.services.langgraph_search import run_search_graph
 from app.services.article_registry import ArticleRegistry, build_article_registry
 from app.services.evidence_floor import EvidenceFloorError, ensure_evidence, has_minimum_evidence
@@ -2670,42 +2671,24 @@ async def process_query(
             user_llm_provider = "openrouter"
             use_chat_service = True
 
-    # Fall back to per-provider BYOK columns (preferred path going forward)
+    # Fall back to per-provider BYOK keys via the KeyStore (preferred path going forward).
     if user_llm_key is None and user:
-        from app.services.byok import decrypt_key
-        # Determine target provider from preferences, then legacy llm_provider field
+        from app.services.byok import decrypt_key  # for the legacy encrypted_llm_key fallback below
+        keystore = get_keystore()
+        # Honor engine_pref first, then a fixed priority order.
         _pref_provider = (getattr(user, "preferences", {}) or {}).get("engine_pref") or user.llm_provider
-        _provider_col_map = {
-            "anthropic":  "anthropic_api_key",
-            "cerebras":   "cerebras_api_key",
-            "openai":     "openai_api_key",
-        }
-
-        # Honor user's engine_pref: if it has a key, use it. Otherwise fall back to priority order.
-        if _pref_provider and _pref_provider in _provider_col_map:
-            _col = _provider_col_map[_pref_provider]
-            _enc = getattr(user, _col, None)
-            if _enc:
-                _decrypted = decrypt_key(_enc)
-                if _decrypted:
-                    user_llm_key = _decrypted
-                    user_llm_provider = _pref_provider
-
-        # Fallback: try other providers in priority order if preferred provider has no key
-        if user_llm_key is None:
-            _provider_priority = []
-            for _p in ("cerebras", "anthropic", "openai"):
-                if _p not in _provider_priority:
-                    _provider_priority.append(_p)
-            for _try_provider in _provider_priority:
-                _col = _provider_col_map[_try_provider]
-                _enc = getattr(user, _col, None)
-                if _enc:
-                    _decrypted = decrypt_key(_enc)
-                    if _decrypted:
-                        user_llm_key = _decrypted
-                        user_llm_provider = _try_provider
-                        break
+        _provider_priority = [_pref_provider] if _pref_provider else []
+        for _p in ("cerebras", "anthropic", "openai"):
+            if _p not in _provider_priority:
+                _provider_priority.append(_p)
+        for _try_provider in _provider_priority:
+            if not _try_provider:
+                continue
+            _decrypted = keystore.get(user, _try_provider)
+            if _decrypted:
+                user_llm_key = _decrypted
+                user_llm_provider = _try_provider
+                break
 
         # Final fallback: legacy encrypted_llm_key (backward compat for users not yet migrated)
         if user_llm_key is None and user.encrypted_llm_key:

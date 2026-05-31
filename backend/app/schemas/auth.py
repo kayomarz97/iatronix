@@ -85,7 +85,7 @@ class LlmKeyRequest(BaseModel):
 
 
 class ProviderKeyStatus(BaseModel):
-    provider: Literal["anthropic", "cerebras", "openai", "openrouter"]
+    provider: str  # validated against the registry's allowed providers at the route
     is_set: bool
     masked: Optional[str] = None  # e.g. "sk-••••••rT9k"
 
@@ -96,7 +96,7 @@ class LLMKeysResponse(BaseModel):
 
 
 class SaveLLMKeyRequest(BaseModel):
-    provider: Literal["anthropic", "cerebras", "openai", "openrouter"]
+    provider: str  # validated against the registry's allowed providers at the route
     key: str
 
 
