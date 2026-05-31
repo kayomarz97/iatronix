@@ -56,6 +56,8 @@ from app.services.semantic_cache import (
 from app.services.drug_linker import process_text_nodes
 from app.services.json_repair import parse_llm_json
 from app.services.llm_factory import create_llm, get_provider
+from app.services.provider_registry import get_registry
+from app.services.providers import get_adapter
 from app.services.langgraph_search import run_search_graph
 from app.services.article_registry import ArticleRegistry, build_article_registry
 from app.services.evidence_floor import EvidenceFloorError, ensure_evidence, has_minimum_evidence
@@ -969,8 +971,15 @@ def _is_critically_sparse(data: dict, query_type: str) -> tuple[bool, list[str]]
 # Model tier ranking — higher number = more capable
 # Used to ensure user's model choice is never downgraded by routing
 def _model_tier(model_id: str) -> int:
-    """Return a tier number for a model — higher = more capable."""
-    m = model_id.lower()
+    """Return a tier number for a model — higher = more capable.
+
+    Registry-first (each model carries a `tier`); falls back to the legacy
+    substring heuristic for model ids not present in the registry.
+    """
+    meta = get_registry().model_meta(model_id or "")
+    if meta and meta.get("tier") is not None:
+        return int(meta["tier"])
+    m = (model_id or "").lower()
     if "opus" in m:
         return 3
     if "sonnet" in m:
@@ -2029,13 +2038,10 @@ async def _log_search_history(
 
 
 def _default_model_for_provider(provider: str | None) -> str:
-    if provider == "openrouter":
-        return settings.openrouter_default_model
-    if provider == "openai":
-        return settings.openai_default_model
-    if provider == "cerebras":
-        return settings.cerebras_default_model
-    return settings.model_haiku
+    """Provider's default model from the registry (anthropic/Haiku as last resort)."""
+    reg = get_registry()
+    dm = reg.default_model(provider) if provider else None
+    return dm or reg.default_model("anthropic") or settings.model_haiku
 
 
 def _normalize_model_for_provider(
@@ -2043,17 +2049,18 @@ def _normalize_model_for_provider(
     provider: str | None,
     model_explicit: bool,
 ) -> str:
-    if provider == "openrouter":
-        return model_id if "/" in model_id else settings.openrouter_default_model
-    if provider == "openai":
-        return model_id if "/" not in model_id else settings.openai_default_model
-    if provider == "anthropic":
-        return model_id if "/" not in model_id else settings.model_haiku
-    if provider == "cerebras":
-        return model_id if model_id else settings.cerebras_default_model
+    """Resolve the effective model id for a provider.
+
+    Delegates to the adapter's registry-driven ``resolve_model`` (which replaces
+    the old per-provider ``"/"`` heuristics with a single ownership rule and
+    preserves BYOK passthrough for unknown model ids).
+    """
+    reg = get_registry()
+    if provider and provider in reg.allowed_providers():
+        return get_adapter(provider).resolve_model(model_id)
     if model_explicit:
         return model_id
-    return model_id or settings.model_haiku
+    return model_id or reg.default_model("anthropic") or settings.model_haiku
 
 
 def _sanitize_entities(entities: list[str] | None) -> list[str]:
@@ -2770,13 +2777,16 @@ async def process_query(
     # Used only for cache hint before real LLM classification; doesn't affect final result
     speculative_type = "complex"
 
-    # For non-Anthropic providers, use their own model for classification.
-    # settings.model_classify is an Anthropic Haiku ID; other providers need their own models.
-    _dspy_classify_model = (
-        normalized_request_model
-        if provider_for_request in ("openrouter", "cerebras", "openai", "gemini")
-        else settings.model_classify
-    )
+    # Anthropic classifies with its cheap classify-role model (Haiku); every other
+    # provider uses the user's own model. Registry-driven (settings.model_classify is
+    # the Anthropic Haiku id and matches the registry's anthropic classify role).
+    if provider_for_request == "anthropic":
+        _dspy_classify_model = (
+            get_registry().default_model_for_role("anthropic", "classify")
+            or settings.model_classify
+        )
+    else:
+        _dspy_classify_model = normalized_request_model
 
     # Run merged analysis+expansion, Redis cache check, and stance neutralization in parallel
     _combined, _cache_prefetch, _stance_result = await asyncio.gather(
