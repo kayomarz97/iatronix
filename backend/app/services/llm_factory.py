@@ -1,11 +1,20 @@
+"""LLM client factory — thin, registry-backed shim over the provider adapters.
+
+Public contract is unchanged (``create_llm`` / ``get_provider`` /
+``handle_llm_api_error`` / ``get_alternative_model``) so all existing callers
+keep working. Provider routing + client construction now come from
+``config/providers.yaml`` via the adapter layer (no hardcoded prefix dispatch
+or per-provider client branches here).
+"""
+
 import logging
 from typing import Optional
 
 from fastapi import HTTPException, status
-from langchain_anthropic import ChatAnthropic
-from langchain_openai import ChatOpenAI
 
 from app.config import settings
+from app.services.provider_registry import get_registry
+from app.services.providers import get_adapter, resolve_provider
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +27,6 @@ def handle_llm_api_error(e: Exception, model_id: str, provider: str) -> None:
     error_msg = str(e).lower()
 
     if provider == "anthropic":
-        # Check for NotFoundError or 404 in error message
         if "notfound" in error_msg or "404" in error_msg or "model" in error_msg and "does not exist" in error_msg:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -37,7 +45,6 @@ def handle_llm_api_error(e: Exception, model_id: str, provider: str) -> None:
                     "settings_url": "/settings",
                 },
             ) from e
-    # Re-raise unknown errors as 500
     raise HTTPException(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         detail={
@@ -48,22 +55,8 @@ def handle_llm_api_error(e: Exception, model_id: str, provider: str) -> None:
 
 
 def get_provider(model_id: str) -> str:
-    """Determine provider from model ID."""
-    if "/" in model_id:
-        return "openrouter"
-    if model_id.startswith("gemini") or model_id.startswith("models/gemini"):
-        return "gemini"
-    # Cerebras models must be checked before OpenAI (gpt-oss-* is Cerebras-exclusive)
-    if (
-        model_id.startswith("gpt-oss")
-        or model_id.startswith("llama")
-        or model_id.startswith("qwen")
-        or model_id.startswith("mistral")
-    ):
-        return "cerebras"
-    if model_id.startswith("gpt-") or model_id.startswith("o1") or model_id.startswith("o3"):
-        return "openai"
-    return "anthropic"
+    """Determine provider id from a model id (registry-first, prefix fallback)."""
+    return resolve_provider(model_id)
 
 
 def create_llm(
@@ -72,15 +65,16 @@ def create_llm(
     user_key: Optional[str] = None,
     user_provider: Optional[str] = None,
 ):
-    """Create LLM client.
+    """Create a BYOK LLM client for ``model_id``.
 
-    Uses only the user's own BYOK key.
+    Uses only the user's own key. Provider + client construction are delegated
+    to the registry-driven adapter for the resolved provider.
     """
     effective_max_tokens = (
         max_tokens if max_tokens is not None else settings.llm_max_tokens
     )
 
-    provider = user_provider or get_provider(model_id)
+    provider = resolve_provider(model_id, user_provider)
     api_key = user_key
 
     if not api_key:
@@ -93,65 +87,27 @@ def create_llm(
             },
         )
 
-    if provider == "anthropic":
-        return ChatAnthropic(
-            model=model_id if "/" not in model_id else settings.model_sonnet,
-            api_key=api_key,
-            max_tokens=effective_max_tokens,
-            timeout=settings.llm_timeout_seconds,
-            max_retries=2,  # LangChain handles exponential backoff; reduces transient 429/overload errors
-        )
-    elif provider == "gemini":
-        try:
-            from langchain_google_genai import ChatGoogleGenerativeAI
-        except ImportError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail={
-                    "error": "gemini_unavailable",
-                    "message": "Gemini support requires langchain-google-genai. Contact support.",
-                },
-            ) from exc
-        return ChatGoogleGenerativeAI(
-            model=model_id,
-            google_api_key=api_key,
-            max_output_tokens=effective_max_tokens,
-            timeout=settings.llm_timeout_seconds,
-        )
-    elif provider == "openai":
-        return ChatOpenAI(
-            model=model_id if "/" not in model_id else settings.openai_default_model,
-            api_key=api_key,
-            max_tokens=effective_max_tokens,
-            timeout=settings.llm_timeout_seconds,
-            max_retries=1,
-        )
-    elif provider == "openrouter":
-        return ChatOpenAI(
-            model=model_id if "/" in model_id else settings.openrouter_default_model,
-            api_key=api_key,
-            base_url=settings.openrouter_api_base,
-            max_tokens=effective_max_tokens,
-            timeout=settings.llm_timeout_seconds,
-        )
-    elif provider == "cerebras":
-        effective_model = model_id if model_id else settings.cerebras_default_model
-        return ChatOpenAI(
-            model=effective_model,
-            api_key=api_key,
-            base_url=settings.cerebras_api_base,
-            max_tokens=effective_max_tokens,         # paid tier: no artificial cap needed
-            timeout=settings.llm_timeout_seconds,
-            max_retries=1,
-        )
-    else:
+    if provider not in get_registry().allowed_providers():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={
                 "error": "unsupported_provider",
-                "message": f"Provider '{provider}' is not supported. Use 'anthropic', 'openai', 'cerebras', or 'openrouter'.",
+                "message": f"Provider '{provider}' is not supported. Enable it in config/providers.yaml.",
             },
         )
+
+    adapter = get_adapter(provider)
+    try:
+        return adapter.build_client(model_id, api_key, effective_max_tokens)
+    except ImportError as exc:
+        # e.g. langchain-google-genai not installed for the gemini client_kind
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": f"{provider}_unavailable",
+                "message": f"Support for provider '{provider}' is not installed. Contact support.",
+            },
+        ) from exc
 
 
 def get_alternative_model(model_id: str) -> str | None:
