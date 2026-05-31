@@ -105,7 +105,9 @@ providers:
       # claude-sonnet-4-20250514 RETIRES 2026-06-15 — intentionally omitted as a default.
 
   # ---- WIRED BUT DISABLED (flip `enabled: true` to activate FE + BE) ------
-  google:
+  # Provider id is "gemini" to match the existing codebase vocabulary
+  # (gemini_api_key column, embedder/rag_pipeline checks). Display says Google.
+  gemini:
     display: "Google (Gemini)"
     enabled: false
     client_kind: google_genai

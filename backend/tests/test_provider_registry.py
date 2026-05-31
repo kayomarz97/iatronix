@@ -23,9 +23,9 @@ def test_real_registry_loads_and_enabled_set():
     assert set(reg.enabled_providers().keys()) == {"cerebras", "anthropic"}
     # all six are wired (one-flag-away), even if disabled
     assert set(reg.allowed_providers()) == {
-        "cerebras", "anthropic", "google", "xai", "openai", "openrouter"
+        "cerebras", "anthropic", "gemini", "xai", "openai", "openrouter"
     }
-    for off in ("google", "xai", "openai", "openrouter"):
+    for off in ("gemini", "xai", "openai", "openrouter"):
         assert reg.is_enabled(off) is False
 
 
@@ -58,7 +58,7 @@ def test_key_columns_and_cache_classes():
     assert reg.key_column("openrouter") == "openrouter_key"
     assert reg.cache_class("anthropic") == "inline"
     assert reg.cache_class("cerebras") == "auto_prefix"
-    assert reg.cache_class("google") == "stateful"
+    assert reg.cache_class("gemini") == "stateful"
     assert reg.cache_class("openrouter") == "conditional"
 
 
