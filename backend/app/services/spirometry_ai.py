@@ -39,7 +39,17 @@ def _clean_json(text: str) -> str:
     return text.strip()
 
 
-MODEL_ID = "claude-sonnet-4-6"
+_DEFAULT_VISION_MODEL = "claude-sonnet-4-6"
+
+
+def _vision_model() -> str:
+    """Resolve the Anthropic vision model from the registry's `vision` role."""
+    try:
+        from app.services.provider_registry import get_registry
+
+        return get_registry().default_model_for_role("anthropic", "vision") or _DEFAULT_VISION_MODEL
+    except Exception:
+        return _DEFAULT_VISION_MODEL
 
 
 def extract_data_with_claude(image_path: str, api_key: str) -> tuple[Dict[str, Any], str, int, int]:
@@ -48,6 +58,8 @@ def extract_data_with_claude(image_path: str, api_key: str) -> tuple[Dict[str, A
     Returns (extracted_data, model_id, input_tokens, output_tokens).
     """
     import anthropic
+
+    model_id = _vision_model()
 
     path = Path(image_path)
     suffix = path.suffix.lower()
@@ -60,7 +72,7 @@ def extract_data_with_claude(image_path: str, api_key: str) -> tuple[Dict[str, A
 
     client = anthropic.Anthropic(api_key=api_key)
     response = client.messages.create(
-        model=MODEL_ID,
+        model=model_id,
         max_tokens=1024,
         messages=[{
             "role": "user",
@@ -74,7 +86,7 @@ def extract_data_with_claude(image_path: str, api_key: str) -> tuple[Dict[str, A
     usage = response.usage
     input_tokens = getattr(usage, "input_tokens", 0) or 0
     output_tokens = getattr(usage, "output_tokens", 0) or 0
-    return json.loads(_clean_json(content)), MODEL_ID, input_tokens, output_tokens
+    return json.loads(_clean_json(content)), model_id, input_tokens, output_tokens
 
 
 def apply_diagnostic_logic(data: Dict[str, Any]) -> List[Dict[str, str]]:
