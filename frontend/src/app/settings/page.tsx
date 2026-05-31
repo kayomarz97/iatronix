@@ -5,7 +5,7 @@ import { Monitor, Moon, Sun, Edit2, Check, X } from "lucide-react";
 import { API_KEY_STORAGE_KEY, LLM_PROVIDER_STORAGE_KEY } from "@/lib/constants";
 import { useTheme } from "@/hooks/useTheme";
 import { saveServiceKey, deleteServiceKey, listServiceKeys } from "@/lib/api";
-import { getLLMConfig, type LLMConfig } from "@/lib/modelRegistry";
+import { getLLMConfig, getProviders, type LLMConfig, type ProviderPublic } from "@/lib/modelRegistry";
 // Voyage AI hidden — reserved for future re-enable
 
 const POSITIONS = [
@@ -46,6 +46,7 @@ export default function SettingsPage() {
   const [byokMessages, setByokMessages] = useState<Record<string, string>>({});
   const [byokLoading, setByokLoading] = useState<Record<string, boolean>>({});
   const [llmConfig, setLlmConfig] = useState<LLMConfig | null>(null);
+  const [providersInfo, setProvidersInfo] = useState<Record<string, ProviderPublic>>({});
   const [activeProvider, setActiveProvider] = useState<string>("cerebras");
 
   const [profile, setProfile] = useState<{
@@ -95,6 +96,7 @@ export default function SettingsPage() {
     fetchNcbiStatus();
     fetchBYOKKeys();
     getLLMConfig().then(setLlmConfig);
+    getProviders().then((r) => setProvidersInfo(r.providers)).catch(() => {});
   }, []);
 
   const getApiKey = () => localStorage.getItem(API_KEY_STORAGE_KEY) || "";
@@ -591,7 +593,7 @@ export default function SettingsPage() {
             Choose which provider to use for queries. Add the corresponding key below first.
           </p>
           <div className="flex gap-2">
-            {Object.entries(llmConfig.providers).filter(([p]) => p === "cerebras" || p === "anthropic").map(([prov, info]) => {
+            {Object.entries(llmConfig.providers).map(([prov, info]) => {
               const keyStatus = byokKeys.find((k) => k.provider === prov);
               const isActive = activeProvider === prov;
               const hasKey = keyStatus?.is_set;
@@ -624,7 +626,7 @@ export default function SettingsPage() {
       )}
 
       {/* ── BYOK Keys (independent per-provider) ── */}
-      {(["cerebras", "anthropic"] as const).map((prov) => {
+      {(Object.keys(providersInfo).length ? Object.keys(providersInfo) : ["cerebras", "anthropic"]).map((prov) => {
         const keyStatus = byokKeys.find((k) => k.provider === prov);
         const isSet = keyStatus?.is_set ?? false;
         const masked = keyStatus?.masked;
@@ -632,11 +634,10 @@ export default function SettingsPage() {
         const msg = byokMessages[prov] || "";
         const busy = byokLoading[prov] || false;
         const provInfo = llmConfig?.providers[prov];
-        const title = prov === "cerebras" ? "Cerebras API Key (BYOK)" : "Anthropic API Key (BYOK)";
-        const desc = prov === "cerebras"
-          ? "Default provider — GPT-OSS 120B. Fast, accurate medical reasoning. Your key is encrypted at rest."
-          : "Claude Haiku 4.5 via Anthropic. Your key is encrypted at rest, never exposed server-side.";
-        const placeholder = prov === "cerebras" ? "csk-..." : "sk-ant-...";
+        const pInfo = providersInfo[prov];
+        const title = `${pInfo?.display ?? prov} API Key (BYOK)`;
+        const desc = pInfo?.blurb ?? "Your key is encrypted at rest, never exposed server-side.";
+        const placeholder = pInfo?.key_prefix ? `${pInfo.key_prefix}...` : "API key";
 
         return (
           <section key={prov} className="space-y-3">
@@ -687,11 +688,11 @@ export default function SettingsPage() {
               </div>
             </div>
 
-            {prov === "cerebras" && (
+            {pInfo?.signup_url && (
               <div className="flex gap-2 items-center text-xs">
-                <span style={{ color: "var(--text-muted)" }}>Get free API key at</span>
-                <a href="https://cloud.cerebras.ai" target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline">
-                  cloud.cerebras.ai
+                <span style={{ color: "var(--text-muted)" }}>Get an API key at</span>
+                <a href={pInfo.signup_url} target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline">
+                  {pInfo.signup_url.replace(/^https?:\/\//, "")}
                 </a>
               </div>
             )}

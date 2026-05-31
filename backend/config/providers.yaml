@@ -38,6 +38,8 @@ providers:
     base_url: https://api.cerebras.ai/v1
     key_column: cerebras_api_key
     key_prefix: "csk-"
+    signup_url: https://cloud.cerebras.ai
+    blurb: "Default provider. Fast, accurate medical reasoning. Your key is encrypted at rest."
     cache_class: auto_prefix
     supports_vision: false
     embedding_model: null
@@ -70,6 +72,8 @@ providers:
     base_url: https://api.anthropic.com
     key_column: anthropic_api_key
     key_prefix: "sk-ant-"
+    signup_url: https://console.anthropic.com
+    blurb: "Claude models. Your key is encrypted at rest, never exposed server-side."
     cache_class: inline
     supports_vision: true
     embedding_model: voyage-3         # via the user's voyage_api_key (service key)
