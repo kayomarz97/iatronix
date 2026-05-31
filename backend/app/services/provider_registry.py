@@ -142,6 +142,8 @@ class ProviderRegistry:
                 "display": p.get("display", pid),
                 "supports_vision": bool(p.get("supports_vision")),
                 "key_prefix": p.get("key_prefix", ""),
+                "signup_url": p.get("signup_url"),
+                "blurb": p.get("blurb"),
                 "default_model": p.get("default_model"),
                 "models": [
                     {
