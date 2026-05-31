@@ -380,24 +380,48 @@ When adding a new data source, the URL propagation is **automatic** if you follo
 - **Purpose:** Enables accurate `fetch_sources` reporting to frontend for `DataSourceBadges` component
 - **Implementation:** Loop through all `FetchedData` sub-results and `comparative_drug_data`, collect unique source strings, assign to `fetched.data_sources`
 
-### 6.3 Add a New LLM Provider
+### 6.3 Add a New LLM Provider  (PROVIDER-AGNOSTIC REFACTOR — June 2026)
 
-**Step 1 — Register in the model registry (required):**
-Edit `backend/app/services/model_registry.py` and add one entry to `_REGISTRY`:
-```python
-"your-model-id": {"provider": "yourprovider", "display": "Your Model Name", "input": 0.50, "output": 1.00},
+The single source of truth is now **`backend/config/providers.yaml`** loaded by
+`backend/app/services/provider_registry.py`. Adding/enabling a provider or model
+is **one file** in the common case.
+
+**Step 1 — Add a registry entry (usually the ONLY step):**
+Edit `backend/config/providers.yaml`:
+```yaml
+  yourprovider:
+    display: "Your Provider"
+    enabled: true                 # false = wired but inactive (one flag to activate)
+    client_kind: openai_compatible  # anthropic | openai_compatible | google_genai
+    base_url: https://api.yourprovider.com/v1
+    key_column: yourprovider_api_key
+    key_prefix: "yp-"
+    signup_url: https://yourprovider.com/keys
+    cache_class: auto_prefix       # inline | auto_prefix | stateful | conditional
+    supports_vision: false
+    embedding_model: null
+    default_model: your-model-id
+    models:
+      - { id: your-model-id, display: "Your Model", input: 0.5, output: 1.0,
+          context_window: 128000, supports_caching: true, tier: 2, roles: [generate, classify] }
 ```
-This automatically propagates pricing, display names, and frontend labels everywhere.
+This propagates everywhere: routing (`resolve_provider`), client construction
+(`ProviderAdapter.build_client` by `client_kind`), pricing/display, `GET
+/api/v1/providers`, and the **frontend key-entry card + model picker** (rendered
+from `/api/v1/providers` — no FE edit). Flipping `enabled` activates FE + BE.
 
-**Step 2 — Add to the BYOK key column map (if adding a new provider type):**
-- Add `your_provider_api_key` column to `backend/app/models/user.py`
-- Add migration in `backend/app/main.py` lifespan startup (ALTER TABLE IF NOT EXISTS)
-- Add to `_PROVIDER_COLUMN_MAP` in `backend/app/api/v1/auth_routes.py`
-- Add to `_provider_col_map` in `backend/app/services/rag_pipeline.py` LLM key resolution
+**Step 2 — Only if the provider needs a NEW DB key column:**
+- Add `yourprovider_api_key` to `backend/app/models/user.py`
+- Add `ALTER TABLE users ADD COLUMN IF NOT EXISTS yourprovider_api_key VARCHAR` in the `main.py` lifespan
+- The allowlist + provider→column map + key read/write all derive from the
+  registry via the **KeyStore** (`backend/app/services/keystore/`) — nothing else to edit.
 
-**Step 3 — Add to `llm_factory.py`:** add a new branch to the provider switch. The factory returns an object with a `.complete(prompt, max_tokens)` interface. Follow the existing Anthropic/OpenAI pattern.
+**Step 3 — Only if the provider needs a NEW client kind or caching strategy:**
+- New client class → add a branch in `ProviderAdapter.build_client` (base.py) keyed on a new `client_kind`.
+- Bespoke caching → subclass `ProviderAdapter` and override `assemble_messages` (e.g. `providers/anthropic.py` cache_control). `cache_class: auto_prefix` needs no code (server prefix cache).
 
-**No frontend changes needed** — the engine toggle reads provider list from `GET /api/v1/config/llm`, which is built from `model_registry.py`. The new provider appears automatically.
+**No `model_registry.py` / `llm_factory.py` branch / frontend edits needed** for
+the common case — they are all registry-driven now.
 
 ### 6.5 OpenRouter OAuth + ChatService (added 2026-04)
 
