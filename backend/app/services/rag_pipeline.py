@@ -2373,6 +2373,7 @@ async def _call_llm_simple(
     data_block: str,
     user_text: str,
     dynamic_system: str = "",
+    model_id: str | None = None,
 ) -> tuple[str | None, dict]:
     """Non-streaming single LLM call. Returns (raw text or None, usage dict).
 
@@ -2384,35 +2385,19 @@ async def _call_llm_simple(
                dynamic_system (varies per call) follows without cache_control.
     Cerebras/others: concatenate in stable order (static → data → dynamic) for auto-cache prefix match.
     """
-    from langchain_core.messages import HumanMessage, SystemMessage
+    from app.services.providers import get_adapter, PromptBlocks
 
     try:
-        if provider == "anthropic":
-            sys_content: list[dict] = []
-            # Block 1 — long-static prefix, long-TTL cache (reused across many queries)
-            sys_content.append({
-                "type": "text",
-                "text": static_system,
-                "cache_control": {"type": "ephemeral"},
-            })
-            # Block 2 — data block, short-TTL cache (reused across all parallel section calls of one query)
-            if data_block:
-                block: dict = {"type": "text", "text": data_block}
-                if len(data_block) > 1024:  # Anthropic minimum: 1024 tokens ≈ 4096 chars; use chars as proxy
-                    block["cache_control"] = {"type": "ephemeral"}
-                sys_content.append(block)
-            # Block 3 — dynamic instructions, no cache_control (varies per section)
-            if dynamic_system:
-                sys_content.append({"type": "text", "text": dynamic_system})
-            msgs = [SystemMessage(content=sys_content), HumanMessage(content=user_text)]
-        else:
-            # Cerebras + others: stable prefix order for auto-cache hit on the common prefix
-            parts = [static_system]
-            if data_block:
-                parts.append(data_block)
-            if dynamic_system:
-                parts.append(dynamic_system)
-            msgs = [SystemMessage(content="\n\n".join(parts)), HumanMessage(content=user_text)]
+        blocks = PromptBlocks(
+            static_system=static_system,
+            dynamic_system=dynamic_system,
+            data_block=data_block,
+            user_text=user_text,
+        )
+        # Caching is encapsulated per provider: Anthropic emits cache_control blocks
+        # (gated on the model token-floor); auto-prefix providers concat static->data->
+        # dynamic. The pipeline no longer branches on provider name here.
+        msgs = get_adapter(provider).assemble_messages(blocks, model_id=model_id)
 
         result = await llm.ainvoke(msgs)
         usage = getattr(result, "usage_metadata", None) or {}
@@ -2525,7 +2510,7 @@ async def _run_parallel_pipeline(
     else:
         bluf_llm = create_llm(effective_model, max_tokens=settings.parallel_bluf_max_tokens,
                               user_key=user_llm_key, user_provider=user_llm_provider)
-        bluf_raw, bluf_usage = await _call_llm_simple(bluf_llm, provider, bluf_static, bluf_data, bluf_user, bluf_dynamic)
+        bluf_raw, bluf_usage = await _call_llm_simple(bluf_llm, provider, bluf_static, bluf_data, bluf_user, bluf_dynamic, model_id=effective_model)
     bluf_parsed = parse_llm_json(bluf_raw) if bluf_raw else None
     if not bluf_parsed:
         logger.warning("parallel_pipeline: BLUF call failed or unparseable")
@@ -2584,7 +2569,7 @@ async def _run_parallel_pipeline(
         # Semaphore limits concurrent LLM calls to stay under token-per-minute limits.
         # Quality is unaffected — each section still gets its full prompt and token budget.
         async with _section_sem:
-            raw, usage = await _call_llm_simple(sec_llm, provider, sec_static, sec_data, sec_user, sec_dynamic)
+            raw, usage = await _call_llm_simple(sec_llm, provider, sec_static, sec_data, sec_user, sec_dynamic, model_id=effective_model)
         sec = parse_llm_json(raw) if raw else None
         # Emit as soon as this section is ready — don't wait for all sections to finish
         if sec is not None and structured_callback:
