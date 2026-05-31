@@ -115,6 +115,20 @@ class ProviderAdapter:
             kwargs["base_url"] = self.base_url
         return ChatOpenAI(**kwargs)
 
+    # -- message assembly (caching lives here, per cache_class) --------------
+    def assemble_messages(self, blocks: "PromptBlocks", model_id: Optional[str] = None) -> list:
+        """Default (auto_prefix: Cerebras/OpenAI/xAI): stable static -> data ->
+        dynamic concat as ONE SystemMessage, keeping the longest invariant (static)
+        leading so the server's prefix auto-cache matches. Byte-identical ordering
+        is load-bearing — do not reorder or interpolate before static."""
+        from langchain_core.messages import HumanMessage, SystemMessage
+
+        parts = [p for p in (blocks.static_system, blocks.data_block, blocks.dynamic_system) if p]
+        return [
+            SystemMessage(content="\n\n".join(parts)),
+            HumanMessage(content=blocks.user_text),
+        ]
+
     # -- capability flags ----------------------------------------------------
     def supports_caching(self, model_id: Optional[str] = None) -> bool:
         if model_id:
