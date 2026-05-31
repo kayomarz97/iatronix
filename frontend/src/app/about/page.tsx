@@ -236,6 +236,12 @@ export default function AboutPage() {
             </div>
           ))}
         </div>
+        <a
+          href="/lessons"
+          style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", marginTop: "0.85rem", fontSize: "0.875rem", fontWeight: 600, color: "var(--primary)" }}
+        >
+          Read the full Engineering Journal &rarr;
+        </a>
       </section>
 
       {/* BYOK */}

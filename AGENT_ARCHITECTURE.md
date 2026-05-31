@@ -191,6 +191,42 @@ When a user has an OAuth-linked `openrouter_key` (not a manually pasted key):
 4. On 402/429/500 from primary → falls back to `openrouter_gemma_fallback`
 5. Emits `model_info` SSE event with `is_fallback=True` so frontend shows amber badge
 
+## Provider-Agnostic Architecture (June 2026 refactor) — READ THIS FOR PROVIDER/MODEL WORK
+
+**Single source of truth:** `backend/config/providers.yaml` (loaded by
+`backend/app/services/provider_registry.py`). All 6 providers are wired
+(Cerebras + Anthropic `enabled: true`; Google/Gemini, xAI/Grok, OpenAI,
+OpenRouter `enabled: false`). Edit this one file to add/enable a provider or
+model; it drives backend routing AND the frontend (which renders key cards +
+model picker from `GET /api/v1/providers`). See AGENT_INTEGRATION_GUIDE §6.3.
+
+| Concern | Where it lives now |
+|---------|--------------------|
+| Provider/model catalog, pricing, defaults, enabled flags, cache class | `config/providers.yaml` (NOT model_registry.py / config.py role fields) |
+| Provider routing (model id → provider) | `providers.resolve_provider` (registry-first, prefix fallback; preserves gpt-oss→cerebras) |
+| LLM client construction | `providers/base.py ProviderAdapter.build_client` by `client_kind` (anthropic / openai_compatible / google_genai) |
+| Per-provider caching | `adapter.assemble_messages` — `providers/anthropic.py` (cache_control, gated on per-model min_cache_tokens) vs base auto-prefix concat. `_call_llm_simple` no longer branches on provider. |
+| BYOK key storage | `services/keystore/` — Postgres (authoritative) + optional Firestore mirror (`KEYSTORE_FIRESTORE_ENABLED`), dual-write, `keystore.get/set/clear`. No raw `users.*_api_key` access outside the Postgres backend. |
+| Provider endpoints | `GET /api/v1/providers` (canonical, enabled-only, secret-free); `/config/llm` + `/models` registry-backed for back-compat |
+| Circuit breakers | `circuit_breaker.py` — one per registry provider |
+
+**Adapter interface** (`providers/base.py`): `build_client`, `assemble_messages`
+(caching), `resolve_model`, `read_cache_usage`, `supports_caching(model_id)`,
+`supports_vision`. Adding a provider = registry entry (+ adapter subclass only
+for a new client kind or bespoke caching).
+
+**Deep-grounded answers (Phase 5):** when retrieval is thin (≥1 article, low
+confidence), `deep_search.py` fans out **bounded parallel citation-chasing**
+(depth 5, ~120s, registry-configurable `deep_search`) via `deep_search_sources.icite_fetcher`
+(iCite forward+backward) before the evidence floor; merges grounded articles or
+preserves the honest "no evidence" terminal. Flag: `DEEP_SEARCH_ENABLED` (off
+until verified). LangGraph expression: `citation_graph.py` (bounded cyclic
+sub-graph). Anti-sycophancy + uncited-claim eval: `answer_quality.py`.
+
+**Stale-doc note:** `model_registry.py` still exists (used by rag_pipeline for
+some pricing/display) but is no longer the catalog; `schemas/models.AVAILABLE_MODELS`
+is superseded by the registry-backed `/models`.
+
 ## Cerebras BYOK (Default Provider — Paid Tier)
 
 Cerebras provides an OpenAI-compatible API for open-source model inference.
