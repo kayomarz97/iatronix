@@ -19,6 +19,8 @@ from app.schemas.auth import (
 )
 from app.middleware.firebase_auth import invalidate_user_cache
 from app.services.byok import encrypt_key, validate_user_key, decrypt_key, mask_key
+from app.services.keystore import get_keystore
+from app.services.provider_registry import get_registry
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -162,11 +164,11 @@ async def update_preferences(
     return {"preferences": current, "active_provider": active_prov, "message": "Preferences updated"}
 
 
+# provider -> DB key column, derived from the registry (no hardcoded provider set)
 _PROVIDER_COLUMN_MAP = {
-    "anthropic": "anthropic_api_key",
-    "cerebras":  "cerebras_api_key",
-    "openai":    "openai_api_key",
-    "openrouter": "openrouter_key",
+    p: get_registry().key_column(p)
+    for p in get_registry().allowed_providers()
+    if get_registry().key_column(p)
 }
 
 
@@ -181,8 +183,9 @@ async def get_llm_keys(
     db_user = result.scalar_one()
 
     statuses = []
-    for provider, col in _PROVIDER_COLUMN_MAP.items():
-        encrypted = getattr(db_user, col, None)
+    keystore = get_keystore()
+    for provider in _PROVIDER_COLUMN_MAP:
+        encrypted = keystore.get_encrypted(db_user, provider)
         if encrypted:
             plain = decrypt_key(encrypted)
             masked = mask_key(plain) if plain else None
@@ -205,19 +208,21 @@ async def save_llm_key(
     result = await session.execute(select(User).where(User.id == user.id))
     db_user = result.scalar_one()
 
-    col = _PROVIDER_COLUMN_MAP[req.provider]
-    if getattr(db_user, col, None):
+    if req.provider not in _PROVIDER_COLUMN_MAP:
+        raise HTTPException(400, f"Unknown provider: {req.provider}")
+    keystore = get_keystore()
+    if keystore.get_encrypted(db_user, req.provider):
         raise HTTPException(409, "Remove the existing key for this provider before adding a new one.")
 
     validation_result = await validate_user_key(req.key, req.provider)
     if not validation_result["valid"]:
         raise HTTPException(422, validation_result.get("detail", "Invalid API key"))
 
-    setattr(db_user, col, encrypt_key(req.key))
-    # Keep legacy fields in sync so existing pipeline code still works
+    # Keep legacy fields in sync so existing pipeline code still works.
     db_user.encrypted_llm_key = encrypt_key(req.key)
     db_user.llm_provider = req.provider
-    await session.commit()
+    # Writes the per-provider column (+ Firestore mirror when enabled) and commits.
+    await keystore.set(db_user, req.provider, req.key, session)
     invalidate_user_cache(user.firebase_uid)
 
     return await get_llm_keys(request, session)
@@ -237,15 +242,13 @@ async def delete_llm_key_by_provider(
     result = await session.execute(select(User).where(User.id == user.id))
     db_user = result.scalar_one()
 
-    col = _PROVIDER_COLUMN_MAP[provider]
-    setattr(db_user, col, None)
-
     # Clear legacy fields if this was the active provider
     if db_user.llm_provider == provider:
         db_user.encrypted_llm_key = None
         db_user.llm_provider = None
 
-    await session.commit()
+    # Clears the per-provider column (+ Firestore mirror when enabled) and commits.
+    await get_keystore().clear(db_user, provider, session)
     invalidate_user_cache(user.firebase_uid)
 
     return await get_llm_keys(request, session)
@@ -260,10 +263,8 @@ async def set_llm_key(
     """Store user's own LLM API key (encrypted)."""
     user = _get_authenticated_user(request)
 
-    if req.provider not in ("anthropic", "openai", "openrouter", "cerebras"):
-        raise HTTPException(
-            400, "Provider must be 'anthropic', 'openai', 'openrouter', or 'cerebras'"
-        )
+    if req.provider not in get_registry().allowed_providers():
+        raise HTTPException(400, f"Unknown provider: {req.provider}")
 
     validation_result = await validate_user_key(req.key, req.provider)
     if not validation_result["valid"]:
