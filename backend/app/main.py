@@ -70,6 +70,9 @@ async def lifespan(app: FastAPI):
             await conn.execute(
                 text("ALTER TABLE users ADD COLUMN IF NOT EXISTS cerebras_api_key VARCHAR")
             )
+            await conn.execute(
+                text("ALTER TABLE users ADD COLUMN IF NOT EXISTS xai_api_key VARCHAR")
+            )
             # Backfill: migrate existing encrypted_llm_key to per-provider columns
             await conn.execute(text("""
                 UPDATE users
