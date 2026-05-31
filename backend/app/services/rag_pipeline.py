@@ -859,6 +859,23 @@ async def _expand_retrieval_if_needed(
     notes.append(f"post-expansion retrieval score={score2}")
     notes.extend(reasons2)
     if not sufficient2:
+        # Deep citation-chasing (Phase 5): if we already have >=1 article, chase its
+        # forward/backward citations for primary evidence BEFORE the broadening floor.
+        # Bounded (depth 5, ~120s, parallel) and flag-gated; safe no-op without seeds.
+        if settings.deep_search_enabled:
+            try:
+                from app.services.deep_search_sources import deepen_fetched_data
+
+                added = await deepen_fetched_data(fetched_data)
+                if added:
+                    notes.append(f"deep citation-chasing added {added} grounded articles")
+                    _sd, sufficient_d, _rd = _retrieval_assessment(fetched_data, query_type)
+                    if sufficient_d:
+                        notes.append("deep citation-chasing sufficient — skipping floor")
+                        return fetched_data, notes
+            except Exception:
+                logger.warning("deep citation-chasing failed", exc_info=True)
+
         # Third-pass+: evidence floor tries progressive broadening (NCBI Bookshelf, MedlinePlus,
         # openFDA, broad PubMed) before giving up. Raises EvidenceFloorError if exhausted,
         # which propagates to process_query() for the structured no_evidence response.

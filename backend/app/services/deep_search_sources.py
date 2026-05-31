@@ -14,13 +14,22 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from app.services.deep_search import ChasedArticle
+from app.services.deep_search import ChasedArticle, deep_search
 
 logger = logging.getLogger(__name__)
 
 ICITE_URL = "https://icite.od.nih.gov/api/pubs"
 NEIGHBOR_CAP = 20  # cap per-branch fanout (depth bound also applies)
+SEED_CAP = 8       # chase from at most N already-found articles
 _REQUEST_TIMEOUT = 8.0
+
+# abstract-list attributes carried by the various FetchResult dataclasses
+_ABSTRACT_ATTRS = (
+    "guideline_abstracts",
+    "systematic_review_abstracts",
+    "clinical_trial_abstracts",
+    "practice_guideline_abstracts",
+)
 
 
 def _pubmed_url(pmid: str) -> str:
@@ -85,3 +94,80 @@ async def icite_fetcher(seed: ChasedArticle) -> list[ChasedArticle]:
         logger.debug("icite_fetcher failed for PMID %s: %s", seed.pmid, exc)
         return []
     return _articles_from_icite_meta(meta)
+
+
+# ── Pipeline integration: deepen thin-but-nonzero evidence ────────────────────
+
+
+def _collect_seed_pmids(fetched_data) -> list[str]:
+    """Pure: gather PMIDs from every abstract list on a FetchedData (dedup, capped)."""
+    if fetched_data is None:
+        return []
+    pmids: list[str] = []
+
+    def _scan(obj) -> None:
+        if obj is None:
+            return
+        for attr in _ABSTRACT_ATTRS:
+            for a in getattr(obj, attr, []) or []:
+                if isinstance(a, dict) and a.get("pmid"):
+                    pmids.append(str(a["pmid"]))
+
+    for obj in (
+        getattr(fetched_data, "drug_data", None),
+        getattr(fetched_data, "disease_data", None),
+        getattr(fetched_data, "condition_data", None),
+        getattr(fetched_data, "procedure_data", None),
+        getattr(fetched_data, "evidence_data", None),
+        getattr(fetched_data, "comparative_evidence", None),
+    ):
+        _scan(obj)
+    for lst in (
+        getattr(fetched_data, "comparative_drug_data", None) or [],
+        getattr(fetched_data, "comorbidity_data", None) or [],
+    ):
+        for obj in lst:
+            _scan(obj)
+
+    return list(dict.fromkeys(pmids))[:SEED_CAP]
+
+
+async def deepen_fetched_data(fetched_data, *, on_progress=None) -> int:
+    """Chase citations from already-found PMIDs and merge URL-bearing results into
+    ``fetched_data.evidence_data``. Returns the number of grounded articles added.
+
+    Safe no-op when there are no PMID seeds (deep-search chases FROM found articles,
+    never fabricates). Defensive against any failure.
+    """
+    seed_pmids = _collect_seed_pmids(fetched_data)
+    if not seed_pmids:
+        return 0
+    seeds = [ChasedArticle(title="", source="seed", pmid=p) for p in seed_pmids]
+    try:
+        res = await deep_search(seeds, icite_fetcher, on_progress=on_progress)
+    except Exception as exc:
+        logger.debug("deepen_fetched_data: deep_search failed: %s", exc)
+        return 0
+
+    abstracts = [
+        {"title": a.title, "pmid": a.pmid, "doi": a.doi, "url": a.url, "source": a.source}
+        for a in res.articles
+        if a.url
+    ]
+    if not abstracts:
+        return 0
+
+    try:
+        ev = getattr(fetched_data, "evidence_data", None)
+        if ev is None:
+            from app.services.data_fetcher import EvidenceFetchResult
+
+            ev = EvidenceFetchResult(fetch_success=True, data_sources=["PubMed (iCite)"])
+            fetched_data.evidence_data = ev
+        ev.guideline_abstracts = (ev.guideline_abstracts or []) + abstracts
+        if "PubMed (iCite)" not in (ev.data_sources or []):
+            ev.data_sources = (ev.data_sources or []) + ["PubMed (iCite)"]
+    except Exception as exc:
+        logger.warning("deepen_fetched_data: merge failed: %s", exc)
+        return 0
+    return len(abstracts)
