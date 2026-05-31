@@ -30,6 +30,7 @@ RUN pip install --no-cache-dir \
     "python-json-logger>=2.0.0" \
     "sentry-sdk[fastapi]>=2.0.0" \
     "pydantic-settings>=2.0.0" \
+    "pyyaml>=5.4" \
     "bcrypt>=4.2.0" \
     "pybreaker>=1.2.0" \
     "python-Levenshtein>=0.26.0" \
@@ -51,6 +52,7 @@ RUN pip install --no-cache-dir \
     "anyio>=4.0.0"
 
 COPY app/ app/
+COPY config/ config/
 COPY alembic.ini .
 COPY migrations/ migrations/
 COPY entrypoint.sh .

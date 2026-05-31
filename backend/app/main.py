@@ -35,6 +35,20 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting Iatronix backend...")
+
+    # Provider registry — fail fast if config/providers.yaml is missing/invalid.
+    from app.services.provider_registry import get_registry, ProviderRegistryError
+    try:
+        _registry = get_registry()
+        logger.info(
+            "Provider registry OK: %d providers, enabled=%s",
+            len(_registry.all_providers()),
+            list(_registry.enabled_providers().keys()),
+        )
+    except ProviderRegistryError:
+        logger.exception("Provider registry failed to load — refusing to start")
+        raise
+
     await init_http_client()
 
     # Schema migrations (additive only — safe to run on existing tables)
