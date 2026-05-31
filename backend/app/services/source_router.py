@@ -11,6 +11,7 @@ import re
 from dataclasses import dataclass
 
 from app.config import settings
+from app.services.provider_registry import get_registry
 
 _COMPARATIVE_SPLIT = re.compile(
     r"\s+(?:vs\.?|versus|compared?\s+to|compared?\s+with|rather\s+than|instead\s+of)\s+",
@@ -134,14 +135,24 @@ def route_query(
         "complex",
     } and bool(entities)
 
-    requested_model = requested_model or settings.model_generate
+    reg = get_registry()
+    provider = user_provider or reg.default_provider
+    # Default to the active provider's own generate-role model (registry-driven).
+    default_generate = reg.default_model_for_role(provider, "generate") or reg.default_model(provider)
+    requested_model = requested_model or default_generate or settings.model_generate
     preferred = requested_model
     fallback = requested_model
 
-    if user_provider == "anthropic" and not model_explicit:
-        # Haiku is the primary model for all query types; Sonnet is the last-resort fallback
-        preferred = settings.model_generate
-        fallback = settings.model_sonnet
+    if not model_explicit:
+        # Primary = provider's generate model; fallback = its heavier model if defined
+        # (e.g. Anthropic Haiku -> Sonnet). Providers without a sonnet_fallback role
+        # keep the requested model as fallback.
+        gen = reg.default_model_for_role(provider, "generate")
+        heavy = reg.default_model_for_role(provider, "sonnet_fallback")
+        if gen:
+            preferred = gen
+        if heavy:
+            fallback = heavy
 
     return RoutingDecision(
         query_type=query_type,
