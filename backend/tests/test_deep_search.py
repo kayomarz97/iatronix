@@ -11,7 +11,15 @@ from app.services.deep_search import (
     ChasedArticle,
     DeepSearchResult,
     deep_search,
+    should_chase,
 )
+
+
+def test_should_chase_predicate():
+    assert should_chase(0, 5, time_up=False, max_depth=5) is True
+    assert should_chase(5, 5, time_up=False, max_depth=5) is False   # depth cap
+    assert should_chase(2, 0, time_up=False, max_depth=5) is False   # empty frontier
+    assert should_chase(2, 5, time_up=True, max_depth=5) is False    # budget exhausted
 
 
 def _seed(name="root"):

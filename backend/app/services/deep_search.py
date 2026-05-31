@@ -48,6 +48,20 @@ class ChaseConfig:
         )
 
 
+def should_chase(depth: int, frontier_count: int, time_up: bool, max_depth: int) -> bool:
+    """Pure termination predicate for the bounded citation cycle.
+
+    Shared by the asyncio engine and the LangGraph sub-graph (citation_graph.py)
+    so both bound depth/budget identically. Continue iff there is still a frontier
+    to chase, we are under the depth cap, and the budget is not exhausted.
+    """
+    if time_up:
+        return False
+    if depth >= max_depth:
+        return False
+    return frontier_count > 0
+
+
 @dataclass
 class ChasedArticle:
     title: str
