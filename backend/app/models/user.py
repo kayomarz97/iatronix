@@ -53,6 +53,7 @@ class User(TimestampMixin, Base):
     anthropic_api_key: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     openrouter_key: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     cerebras_api_key: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    xai_api_key: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
     # Profile (for personalisation and future monetisation analytics)
     username: Mapped[Optional[str]] = mapped_column(
