@@ -1,20 +1,30 @@
 from fastapi import APIRouter
-from app.config import settings
-from app.services.model_registry import lookup
+
+from app.services.provider_registry import get_registry
 
 router = APIRouter(prefix="/config", tags=["config"])
 
 
+def _provider_entry(reg, provider: str) -> dict:
+    dm = reg.default_model(provider)
+    m = reg.model_meta(dm) or {}
+    return {
+        "model_id": dm,
+        "display": m.get("display"),
+        "input": m.get("input"),
+        "output": m.get("output"),
+    }
+
+
 @router.get("/llm")
 async def llm_config():
-    """Return the current default model per provider. Frontend reads this on page load
-    so display name, cost, and provider all stay in sync with backend env vars."""
-    cb = lookup(settings.cerebras_default_model)
-    an = lookup(settings.model_haiku)
+    """Default model per enabled provider (registry-backed).
+
+    Kept for the current frontend; GET /api/v1/providers is the canonical
+    replacement. Both derive from config/providers.yaml — one source of truth.
+    """
+    reg = get_registry()
     return {
-        "default_provider": "cerebras",
-        "providers": {
-            "cerebras":  {"model_id": settings.cerebras_default_model, **cb},
-            "anthropic": {"model_id": settings.model_haiku,            **an},
-        },
+        "default_provider": reg.default_provider,
+        "providers": {p: _provider_entry(reg, p) for p in reg.enabled_providers()},
     }
