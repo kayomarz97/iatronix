@@ -22,9 +22,13 @@ docker compose -f docker-compose.dev.yml exec iatronix-dev-backend alembic upgra
 # Backend liveness
 curl -s http://127.0.0.1:8201/api/v1/health        # {"status":"healthy",...}
 
-# Provider registry is serving the active set (Cerebras + Claude ONLY)
-curl -s http://127.0.0.1:8201/api/v1/providers | jq '.providers | keys'
-#   => ["anthropic","cerebras"]
+# Provider registry endpoint is up and (correctly) auth-gated.
+# /providers needs a Firebase Bearer token — the frontend sends one. An anonymous
+# request MUST return 401; that 401 is success here, NOT a failure.
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8201/api/v1/providers   # => 401
+# Authenticated (real provider list — expect ["anthropic","cerebras"]):
+#   curl -s http://127.0.0.1:8201/api/v1/providers \
+#     -H "Authorization: Bearer <firebase-id-token>" | jq '.providers | keys'
 curl -s http://127.0.0.1:8201/api/v1/config/llm | jq '.default_provider'   # "cerebras"
 
 # Frontend loads + Lessons page renders and is linked from About
