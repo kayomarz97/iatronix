@@ -3329,7 +3329,11 @@ async def process_query(
     # ── Parallel section agents (when enabled) ────────────────────────────────
     # OpenRouter OAuth users (use_chat_service=True) run single-call mode to conserve
     # free-tier daily limits (~20 req/day per model; parallel mode burns 6-8 calls/query).
-    if settings.parallel_sections_enabled and structured_callback is not None and not use_chat_service:
+    # Parallel section pipeline = the grounded path. Run it whenever enabled (not just when a
+    # streaming callback is present) — the callback only drives SSE emission (already guarded),
+    # so non-streaming /query also gets grounded multi-section answers instead of the thinner,
+    # card-prone single-call path.
+    if settings.parallel_sections_enabled and not use_chat_service:
         _llm_t0 = time.perf_counter()
         parallel_parsed = await _run_parallel_pipeline(
             query=rewritten_query,
