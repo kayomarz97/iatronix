@@ -312,6 +312,9 @@ These gates control which pipeline steps are active. Toggle in `.env` without co
 | `ADAPTIVE_SECOND_PASS_ENABLED` | `true` | `true` | Retry with relaxed constraints on sparse output |
 | `MODEL_ROUTING_ENABLED` | `true` | `true` | Auto-select Haiku vs Sonnet based on query type |
 | `PARALLEL_SECTIONS_ENABLED` | `true` | `false` | Phase-1 BLUF + parallel per-section LLM agents; progressive SSE display |
+| `RESUMABLE_STREAM_ENABLED` | `true` | `false` | Durable streaming jobs — query runs detached + persists to a Redis stream; client reconnects after a disconnect (mobile tab switch / screen off) and replays missed events |
+| `MULTI_VARIATION_SEARCH_ENABLED` | `true` | `false` | Fetch using DSPy `search_variants` (phrasing-diverse) to de-bias the evidence base (anti-sycophancy) |
+| `SECTION_REFETCH_ENABLED` | `true` | `false` | Per-section LangGraph re-fetch + re-synthesis for sections still empty after LLM retries |
 | `VECTOR_SEARCH_ENABLED` | `false` | `false` | pgvector similarity search from uploaded PDFs |
 | `SEMANTIC_CACHE_ENABLED` | `false` | `false` | Cache similar (not just identical) queries |
 | `FAIL_CLOSED_EVIDENCE_ONLY` | `true` | `true` | Reject responses without evidence citations |
@@ -676,6 +679,9 @@ pytest backend/tests/test_prompt_injection.py -v
 | Parallel section agents | **Live** (`PARALLEL_SECTIONS_ENABLED=true` on dev) | Phase-1 BLUF + Phase-2 parallel sections; progressive SSE display |
 | Drug interactions in comparative | **Live** | Auto-injected when comparing ≥2 drugs |
 | Progressive SSE streaming | **Live** | `bluf` + `section_complete` events; frontend renders progressively |
+| Resumable streaming (disconnect-proof) | **Live** (`RESUMABLE_STREAM_ENABLED` dev) | Detached producer + Redis-stream event log; client reconnects via `job_id`+`Last-Event-ID`. Fixes mobile tab-switch / screen-off failures. See AGENT_ARCHITECTURE "Resumable Streaming Jobs" |
+| Multi-variation retrieval (anti-sycophancy) | **Live** (`MULTI_VARIATION_SEARCH_ENABLED` dev) | `search_variants` now fetched (was logged-only) in `_expand_retrieval_if_needed` |
+| Per-section LangGraph re-fetch | **Live** (`SECTION_REFETCH_ENABLED` dev) | `run_section_refetch_graph` fills sections still empty after LLM retries; merges into FetchedData so it stays grounded |
 | Vector search (pgvector) | Disabled (`VECTOR_SEARCH_ENABLED=false`) | Infrastructure exists; embeddings stored; needs activation and tuning |
 | Semantic cache | Disabled (`SEMANTIC_CACHE_ENABLED=false`) | Would cache similar (not just identical) queries using cosine similarity |
 | PDF document pipeline | Partial | Upload works, vectors stored, but RAG retrieval not integrated into main query path |

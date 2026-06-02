@@ -133,6 +133,10 @@ export function QueryProvider({ children }: { children: ReactNode }) {
           }
         } else if (event.type === "fetch_articles") {
           setFetchedArticles(event.payload.titles);
+        } else if (event.type === "reconnecting") {
+          // Connection dropped (e.g. mobile tab switch / screen off). The query keeps
+          // running server-side; we're reattaching to it. Surfaced as a loading state.
+          setLoadingStage("reconnecting");
         } else if (event.type === "section_complete") {
           setStreamingSections((prev) => [...prev, event.payload]);
         } else if (event.type === "done") {

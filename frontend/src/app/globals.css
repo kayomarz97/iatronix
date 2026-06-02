@@ -47,6 +47,10 @@
   --accent:         #3b82f6;
   --accent-hover:   #2563eb;
   --accent-glow:    rgba(59, 130, 246, 0.15);
+  --accent-2:       #22d3ee;
+  --accent-gradient: linear-gradient(135deg, #3b82f6 0%, #22d3ee 100%);
+  --bg-gradient:    radial-gradient(1100px 560px at 50% -12%, rgba(59,130,246,0.12), transparent 60%),
+                    radial-gradient(820px 460px at 100% 2%, rgba(34,211,238,0.07), transparent 55%);
   --success:        #10b981;
   --warning:        #f59e0b;
   --danger:         #ef4444;
@@ -54,9 +58,10 @@
   --radius-md:      10px;
   --radius-lg:      16px;
   --radius-xl:      24px;
-  --shadow-sm:      0 1px 3px rgba(0,0,0,0.4);
-  --shadow-md:      0 4px 16px rgba(0,0,0,0.5);
-  --shadow-lg:      0 8px 32px rgba(0,0,0,0.6);
+  --shadow-sm:      0 1px 2px rgba(2,8,23,0.45);
+  --shadow-md:      0 6px 22px rgba(2,8,23,0.55);
+  --shadow-lg:      0 16px 48px rgba(2,8,23,0.62);
+  --ring:           0 0 0 3px var(--accent-glow);
   --transition:     200ms ease-in-out;
   --font-sans:      'DM Sans', system-ui, sans-serif;
   --font-mono:      'DM Mono', ui-monospace, monospace;
@@ -83,6 +88,10 @@
     --accent:         #3b82f6;
     --accent-hover:   #2563eb;
     --accent-glow:    rgba(59, 130, 246, 0.1);
+    --accent-2:       #0891b2;
+    --accent-gradient: linear-gradient(135deg, #2563eb 0%, #0891b2 100%);
+    --bg-gradient:    radial-gradient(1100px 560px at 50% -12%, rgba(37,99,235,0.08), transparent 60%),
+                      radial-gradient(820px 460px at 100% 2%, rgba(8,145,178,0.05), transparent 55%);
     --success:        #059669;
     --warning:        #d97706;
     --danger:         #dc2626;
@@ -126,7 +135,12 @@
   --accent:         #2563eb;
   --accent-hover:   #1d4ed8;
   --accent-glow:    rgba(59, 130, 246, 0.1);
+  --accent-2:       #0891b2;
+  --accent-gradient: linear-gradient(135deg, #2563eb 0%, #0891b2 100%);
+  --bg-gradient:    radial-gradient(1100px 560px at 50% -12%, rgba(37,99,235,0.08), transparent 60%),
+                    radial-gradient(820px 460px at 100% 2%, rgba(8,145,178,0.05), transparent 55%);
   --success:        #059669;
+  --ring:           0 0 0 3px var(--accent-glow);
   --warning:        #d97706;
   --danger:         #dc2626;
   --shadow-sm:      0 1px 3px rgba(0,0,0,0.1);
@@ -161,6 +175,9 @@ html {
 body {
   margin: 0;
   background-color: var(--bg-base);
+  background-image: var(--bg-gradient);
+  background-attachment: fixed;
+  background-repeat: no-repeat;
   color: var(--text-primary);
   font-family: var(--font-sans);
   line-height: 1.6;
@@ -188,9 +205,9 @@ a:hover { color: var(--accent-hover); }
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sm);
-  transition: box-shadow var(--transition), border-color var(--transition);
+  transition: box-shadow var(--transition), border-color var(--transition), transform var(--transition);
 }
-.card:hover { box-shadow: var(--shadow-md); }
+.card:hover { box-shadow: var(--shadow-md); border-color: var(--border-focus); }
 
 /* ── Buttons ────────────────────────────────────────────────────────────── */
 .btn-primary {
@@ -423,4 +440,44 @@ a:hover { color: var(--accent-hover); }
   text-transform: uppercase;
   color: var(--text-muted);
   user-select: none;
+}
+
+/* ── Visual refresh: motion + accents (June 2026) ─────────────────────────── */
+/* Streaming sections reveal: each card fades/slides in as it arrives. */
+@keyframes revealUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.reveal { animation: revealUp 420ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+/* Gradient text for hero / brand accents — inherits the theme accent gradient. */
+.gradient-text {
+  background: var(--accent-gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+
+/* Spinner used by the reconnect indicator. */
+@keyframes spin360 { to { transform: rotate(360deg); } }
+.spin { animation: spin360 0.9s linear infinite; }
+
+/* Reconnecting pill — shown when a dropped stream is being resumed. */
+.reconnect-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--accent);
+  background: var(--accent-glow);
+  border: 1px solid var(--border-focus);
+}
+
+/* Honour reduced-motion preferences (accessibility). */
+@media (prefers-reduced-motion: reduce) {
+  .reveal, .spin, .animate-in, .slide-in, .slide-in-right { animation: none !important; }
 }
