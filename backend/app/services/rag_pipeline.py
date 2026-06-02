@@ -18,6 +18,7 @@ from app.db.session import async_session
 from app.models.query_log import QueryLog
 from app.schemas.query import (
     AdaptiveBLUF,
+    AdaptiveContentItem,
     AdaptiveReference,
     AdaptiveResponse,
     AdaptiveSection,
@@ -1624,6 +1625,44 @@ def _backfill_from_registry(parsed: dict, registry: "ArticleRegistry") -> None:
                 ra.used_inline = True
 
 
+def _safe_adaptive_section(s: object) -> AdaptiveSection:
+    """Build an AdaptiveSection resiliently.
+
+    Model output varies (especially non-Anthropic models): a single malformed
+    content_item must not nuke the whole response into a validation error. Invalid
+    items are dropped, keeping a text-only fallback when the claim text survives, so
+    the answer degrades to 'show what is grounded' instead of erroring out.
+    """
+    if not isinstance(s, dict):
+        return AdaptiveSection(title=str(s), content_items=[])
+    items: list[AdaptiveContentItem] = []
+    for it in s.get("content_items", []) or []:
+        try:
+            items.append(
+                AdaptiveContentItem(**it) if isinstance(it, dict) else AdaptiveContentItem(text=str(it))
+            )
+            continue
+        except Exception:
+            pass
+        # Salvage: keep the claim text (and any source) even if other fields were invalid.
+        txt = it.get("text") if isinstance(it, dict) else None
+        if isinstance(txt, str) and txt.strip():
+            try:
+                items.append(
+                    AdaptiveContentItem(
+                        text=txt,
+                        source=(it.get("source") if isinstance(it, dict) else None),
+                        pmid=(str(it["pmid"]) if isinstance(it, dict) and it.get("pmid") is not None else None),
+                        url=(it.get("url") if isinstance(it, dict) else None),
+                    )
+                )
+            except Exception:
+                pass
+    payload = {k: s.get(k) for k in ("title", "content", "loe", "cor") if k in s}
+    payload.setdefault("title", "Section")
+    return AdaptiveSection(content_items=items, **payload)
+
+
 def _inject_fetched_refs(fetched_data) -> list[dict]:
     """Build reference dicts from ALL fetched article data (no cap).
 
@@ -2529,14 +2568,51 @@ async def _run_parallel_pipeline(
                               user_key=user_llm_key, user_provider=user_llm_provider)
         bluf_raw, bluf_usage = await _call_llm_simple(bluf_llm, provider, bluf_static, bluf_data, bluf_user, bluf_dynamic, model_id=effective_model)
     bluf_parsed = parse_llm_json(bluf_raw) if bluf_raw else None
+    # BLUF reliability: non-Anthropic models (gpt-oss/Cerebras) intermittently return
+    # unparseable/empty JSON for the BLUF call, which previously aborted the ENTIRE answer
+    # (→ card) even though the evidence was solid. Retry a couple of times on the create_llm
+    # path before giving up — a fresh sample almost always parses.
+    _used_create_llm = not (use_chat_service and user_llm_provider == "openrouter")
+    if not bluf_parsed and _used_create_llm:
+        for _battempt in range(2):
+            try:
+                bluf_raw, _bu = await _call_llm_simple(
+                    bluf_llm, provider, bluf_static, bluf_data, bluf_user, bluf_dynamic, model_id=effective_model
+                )
+                bluf_parsed = parse_llm_json(bluf_raw) if bluf_raw else None
+                if bluf_parsed:
+                    bluf_usage = _bu
+                    break
+            except Exception:
+                pass
     if not bluf_parsed:
-        logger.warning("parallel_pipeline: BLUF call failed or unparseable")
+        logger.warning("parallel_pipeline: BLUF call failed or unparseable after retries")
         return None
 
     section_titles: list[str] = bluf_parsed.get("section_titles", [])
     if not section_titles:
-        logger.warning("parallel_pipeline: no section_titles returned")
-        return None
+        # The BLUF model intermittently omits section_titles; without this fallback ZERO
+        # section agents fire → empty answer → card. Use a sensible default set per query
+        # type so sections ALWAYS generate and ground in the fetched evidence (StatPearls etc.).
+        _defaults = {
+            "disease": ["Overview & Aetiology", "Pathophysiology", "Epidemiology",
+                        "Clinical Features", "Diagnosis & Investigations", "Management",
+                        "Complications", "Prognosis"],
+            "drug": ["Overview", "Mechanism of Action", "Indications", "Dosing & Administration",
+                     "Contraindications & Cautions", "Adverse Effects", "Drug Interactions", "Monitoring"],
+            "procedure": ["Overview & Indications", "Technique", "Contraindications",
+                          "Complications", "Post-procedure Care", "Outcomes"],
+            "comparative": ["Summary", "Profile of Each Option", "Head-to-Head Comparison",
+                            "Clinical Evidence", "Guideline Positioning"],
+            "evidence": ["Summary", "Key Evidence", "Clinical Recommendations", "Limitations & Caveats"],
+            "complex": ["Summary", "Key Clinical Considerations", "Management Approach",
+                        "Monitoring & Red Flags"],
+        }
+        section_titles = _defaults.get(query_type, _defaults["complex"])
+        logger.warning(
+            "parallel_pipeline: BLUF returned no section_titles — using %d default titles for type=%s",
+            len(section_titles), query_type,
+        )
 
     if structured_callback:
         try:
@@ -2588,6 +2664,23 @@ async def _run_parallel_pipeline(
         async with _section_sem:
             raw, usage = await _call_llm_simple(sec_llm, provider, sec_static, sec_data, sec_user, sec_dynamic, model_id=effective_model)
         sec = parse_llm_json(raw) if raw else None
+        # Per-section retry: non-Anthropic models intermittently return empty content_items for
+        # a section despite a rich data block. Re-run (fresh sample) up to 2x so every section
+        # reliably fills and grounds — this decorrelates the whole-run empty-output variance.
+        _sretry = 0
+        while _sretry < 2 and (sec is None or not (isinstance(sec, dict) and sec.get("content_items"))):
+            _sretry += 1
+            try:
+                async with _section_sem:
+                    raw, _u = await _call_llm_simple(sec_llm, provider, sec_static, sec_data, sec_user, sec_dynamic, model_id=effective_model)
+                sec2 = parse_llm_json(raw) if raw else None
+                if isinstance(sec2, dict) and sec2.get("content_items"):
+                    sec = sec2
+                    usage = {"input_tokens": usage.get("input_tokens", 0) + _u.get("input_tokens", 0),
+                             "output_tokens": usage.get("output_tokens", 0) + _u.get("output_tokens", 0)}
+                    break
+            except Exception:
+                pass
         # Emit as soon as this section is ready — don't wait for all sections to finish
         if sec is not None and structured_callback:
             section_dict = {
@@ -3561,10 +3654,7 @@ async def process_query(
             else AdaptiveBLUF(headline=str(_bluf_data))
         )
 
-        _sections = [
-            AdaptiveSection(**s) if isinstance(s, dict) else AdaptiveSection(title=str(s), content_items=[])
-            for s in parsed.get("sections", [])
-        ]
+        _sections = [_safe_adaptive_section(s) for s in parsed.get("sections", [])]
 
         _response_focus = (
             parsed.get("response_focus")
@@ -3607,13 +3697,68 @@ async def process_query(
     citation_warnings = validate_citations(validated_dict, query_type, fetched_data, fetched_source_labels)
     validation_warnings.extend(citation_warnings)
 
-    # Remove claims marked with __drop__ flag from strict-mode validation
-    if query_type == "complex" and "sections" in validated_dict:
+    # Remove claims marked with __drop__ flag from strict-mode validation.
+    # Strict mode now covers all medical query types (see citation_validator), so
+    # always strip __drop__ items regardless of type.
+    if "sections" in validated_dict:
         for section in validated_dict["sections"]:
             section["content_items"] = [
                 item for item in section.get("content_items", [])
                 if not item.get("__drop__", False)
             ]
+
+    # ── Grounding gate ──────────────────────────────────────────────────────
+    # Guarantee the rendered answer is evidence-grounded, never training data.
+    # Runs BEFORE the NA-fill below (which would otherwise launder empty sources
+    # into generic labels). Strips ungrounded ("Expert opinion"/sourceless) claims;
+    # if too few grounded claims remain, return the honest no_evidence terminal
+    # instead of showing unverified model knowledge.
+    grounded_n, total_n = 0, 0
+    grounding_floor_triggered = False
+    if settings.grounding_floor_enabled and "sections" in validated_dict:
+        from app.services.grounding_gate import grounding_stats, strip_ungrounded
+
+        _removed = strip_ungrounded(validated_dict)
+        grounded_n, total_n = grounding_stats(validated_dict)
+        logger.info(
+            "grounding_gate: %d/%d claims grounded (%d%%) removed=%d type=%s",
+            grounded_n,
+            total_n,
+            int(100 * grounded_n / total_n) if total_n else 0,
+            _removed,
+            query_type,
+        )
+        if _removed:
+            validation_warnings.append(
+                f"Grounding gate removed {_removed} ungrounded claim(s) not backed by retrieved sources."
+            )
+        if grounded_n < settings.grounding_floor_min_claims:
+            grounding_floor_triggered = True
+            latency_ms = int((time.time() - start_time) * 1000)
+            logger.info(
+                "grounding_gate: only %d grounded claim(s) (type=%s) — returning no_evidence card",
+                grounded_n,
+                query_type,
+            )
+            return QueryResponse(
+                query_type=query_type,
+                model_used=effective_model,
+                response=DegradedResponse(
+                    message=(
+                        "We found some sources but could not ground a complete answer in them. "
+                        "Showing this rather than unverified model knowledge."
+                    ),
+                    suggestion=(
+                        "Try a more specific clinical term (exact drug, disease, procedure, or "
+                        "guideline), or upload a relevant PDF for document-based answers."
+                    ),
+                    error_code="no_evidence",
+                ),
+                disclaimer=DISCLAIMER,
+                latency_ms=latency_ms,
+                validation_warnings=validation_warnings
+                + ["grounding_floor: insufficient grounded evidence — answer withheld"],
+            )
 
     # Safety check
     safety_warnings = check_safety(request.query, validated_dict, query_type)

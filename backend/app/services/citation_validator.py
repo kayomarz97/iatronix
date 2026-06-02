@@ -84,6 +84,9 @@ def validate_citations(response_data: dict, query_type: str, fetched_data=None, 
     """
     warnings = []
     claims = _extract_claims(response_data, query_type)
+    # Strict label-matching stays scoped to complex/procedure. For other medical types
+    # the precise grounding_gate (rag_pipeline) keeps title-sourced claims and strips only
+    # ungrounded ones — extending strict here false-dropped legitimate title-cited claims.
     strict = query_type in ("complex", "procedure")
     fetched_labels_lower = {s.lower() for s in (fetched_source_labels or set())}
 
@@ -107,9 +110,17 @@ def validate_citations(response_data: dict, query_type: str, fetched_data=None, 
             )
             continue
 
-        # Strict-mode check for complex queries: source must match fetched data labels
+        # Strict-mode check (complex/procedure): a claim must either carry a real
+        # identifier (PMID/NCT/DOI/URL) OR name a source matching the fetched data
+        # labels. The identifier guard prevents false-dropping legitimate citations
+        # whose `source` is a journal/title rather than the category name.
         if strict and fetched_labels_lower:
-            if not any(label in (source or "").lower() for label in fetched_labels_lower):
+            _has_identifier = bool(
+                claim.get("pmid") or claim.get("nct_id") or claim.get("doi") or claim.get("url")
+            )
+            if not _has_identifier and not any(
+                label in (source or "").lower() for label in fetched_labels_lower
+            ):
                 warnings.append(
                     f"Strict-mode dropped claim with source '{source}' not in fetched data."
                 )
