@@ -214,7 +214,7 @@ export const LoadingScreen: React.FC<LoadingScreenProps> = ({ currentStep, fetch
           style={{
             width: `${progress}%`,
             transition: "width 600ms ease-in-out",
-            background: "linear-gradient(90deg, #2563eb, #10b981, #60a5fa, #10b981, #2563eb)",
+            background: "linear-gradient(90deg, var(--accent), var(--accent-2), var(--success), var(--accent-2), var(--accent))",
             backgroundSize: "300% 100%",
             animation: "shimmer 2.2s linear infinite",
           }}

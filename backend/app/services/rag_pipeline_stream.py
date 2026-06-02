@@ -1,16 +1,31 @@
 """SSE streaming wrapper around process_query.
 
-Yields server-sent event strings:
-  event: stage\\ndata: {"stage": "classifying"|"fetching"|"generating"}\\n\\n
-  event: token\\ndata: {"text": "..."}\\n\\n
-  event: done\\ndata: {"result": {...QueryResponse...}}\\n\\n
-  event: error\\ndata: {"detail": "..."}\\n\\n
+`iter_query_events()` is the single source of truth for the event sequence a query
+produces. It yields ``(kind, payload)`` tuples:
+
+  ("stage",            {"stage": "classifying"|"fetching"|"generating"})
+  ("token",            {"text": "..."})
+  ("bluf",             {...})
+  ("fetch_articles",   {"titles": [...]})
+  ("section_complete", {...})
+  ("model_info",       {...})
+  ("done",             QueryResponse)          # model, not yet serialized
+  ("error",            {"detail": "...", "error_type": "..."})
+
+Two consumers share it:
+  * ``stream_query`` — legacy connection-coupled path: formats tuples into SSE
+    strings and is cancelled with the request when the client disconnects
+    (unchanged behaviour, used when RESUMABLE_STREAM_ENABLED is false).
+  * ``app.services.stream_jobs`` — durable path: persists every tuple to a Redis
+    stream from a detached background task, so the query survives a client
+    disconnect (mobile tab switch / screen off) and can be resumed on reconnect.
 """
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
+from typing import Any, AsyncIterator
 
 from app.services.rag_pipeline import process_query
 
@@ -19,17 +34,23 @@ logger = logging.getLogger(__name__)
 _SENTINEL = object()
 
 
-async def stream_query(
+async def iter_query_events(
     request,
     redis_client=None,
     user_key_id: str | None = None,
     user=None,
-):
-    """Async generator that runs process_query and yields SSE-formatted strings."""
+) -> AsyncIterator[tuple[str, Any]]:
+    """Run process_query and yield ``(kind, payload)`` events in order.
+
+    Cancellation semantics are owned by the *caller*. When the legacy formatter
+    consumes this and the client disconnects, closing this generator cancels the
+    in-flight pipeline (back-compatible). When the durable job runner consumes it
+    detached from any request, the pipeline runs to completion regardless.
+    """
     queue: asyncio.Queue = asyncio.Queue()
 
     async def token_callback(text: str) -> None:
-        await queue.put(("token", text))
+        await queue.put(("token", {"text": text}))
 
     async def structured_callback(event_type: str, data: object) -> None:
         await queue.put((event_type, data))
@@ -45,56 +66,76 @@ async def stream_query(
                 structured_callback=structured_callback,
             )
             await queue.put(("done", result))
-        except Exception as exc:
-            logger.exception("stream_query error")
+        except Exception as exc:  # noqa: BLE001 — surfaced as an SSE error event
+            logger.exception("iter_query_events pipeline error")
             err_str = str(exc)
-            is_rate_limit = "429" in err_str or "rate_limit" in err_str.lower() or "overloaded" in err_str.lower()
+            is_rate_limit = (
+                "429" in err_str
+                or "rate_limit" in err_str.lower()
+                or "overloaded" in err_str.lower()
+            )
             err_payload = {
-                "detail": "Service temporarily busy. Your partial results are preserved." if is_rate_limit else err_str,
+                "detail": "Service temporarily busy. Your partial results are preserved."
+                if is_rate_limit
+                else err_str,
                 "error_type": "rate_limit" if is_rate_limit else "pipeline_error",
             }
             await queue.put(("error", err_payload))
         finally:
             await queue.put(_SENTINEL)
 
-    yield f"event: stage\ndata: {json.dumps({'stage': 'classifying'})}\n\n"
+    yield ("stage", {"stage": "classifying"})
 
     pipeline_task = asyncio.create_task(run())
 
-    async def _emit_fetching():
+    async def _emit_fetching() -> None:
         await asyncio.sleep(1.2)
-        await queue.put(("stage", "fetching"))
+        await queue.put(("stage", {"stage": "fetching"}))
 
-    asyncio.create_task(_emit_fetching())
+    fetching_task = asyncio.create_task(_emit_fetching())
 
     try:
         while True:
             item = await queue.get()
             if item is _SENTINEL:
                 break
-
             kind, payload = item
-            if kind == "stage":
-                yield f"event: stage\ndata: {json.dumps({'stage': payload})}\n\n"
-            elif kind == "token":
-                yield f"event: token\ndata: {json.dumps({'text': payload})}\n\n"
-            elif kind == "bluf":
-                yield f"event: bluf\ndata: {json.dumps(payload)}\n\n"
-            elif kind == "fetch_articles":
-                yield f"event: fetch_articles\ndata: {json.dumps(payload)}\n\n"
-            elif kind == "section_complete":
-                yield f"event: section_complete\ndata: {json.dumps(payload)}\n\n"
-            elif kind == "model_info":
-                yield f"event: model_info\ndata: {json.dumps(payload)}\n\n"
-            elif kind == "done":
-                yield f"event: done\ndata: {json.dumps({'result': payload.model_dump()})}\n\n"
-                break
-            elif kind == "error":
-                yield f"event: error\ndata: {json.dumps(payload)}\n\n"
+            yield (kind, payload)
+            if kind in ("done", "error"):
                 break
     finally:
+        # Cancelling an already-finished task is a harmless no-op; this only has an
+        # effect when the *consumer* stops early (legacy path: client disconnected).
         pipeline_task.cancel()
+        fetching_task.cancel()
         try:
-            await asyncio.shield(asyncio.gather(pipeline_task, return_exceptions=True))
-        except (asyncio.CancelledError, Exception):
+            await asyncio.gather(pipeline_task, fetching_task, return_exceptions=True)
+        except Exception:  # noqa: BLE001
             pass
+
+
+def format_sse(kind: str, payload: Any) -> str:
+    """Format one ``(kind, payload)`` event as an SSE block (no id line)."""
+    if kind == "done":
+        data = {"result": payload.model_dump()}
+    else:
+        data = payload
+    return f"event: {kind}\ndata: {json.dumps(data)}\n\n"
+
+
+async def stream_query(
+    request,
+    redis_client=None,
+    user_key_id: str | None = None,
+    user=None,
+):
+    """Legacy SSE generator — formats events as strings, coupled to the request.
+
+    Used when RESUMABLE_STREAM_ENABLED is false. Behaviour is identical to the
+    pre-refactor implementation: if the client disconnects, this generator is
+    closed and the underlying pipeline task is cancelled.
+    """
+    async for kind, payload in iter_query_events(
+        request, redis_client=redis_client, user_key_id=user_key_id, user=user
+    ):
+        yield format_sse(kind, payload)

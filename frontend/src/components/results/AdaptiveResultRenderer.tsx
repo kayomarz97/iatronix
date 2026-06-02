@@ -42,9 +42,11 @@ const COR_CLR: Record<string, string> = {
 
 function badgeStyle(color: string) {
   return {
-    backgroundColor: color + "2e",
-    border: `1px solid ${color}59`,
+    backgroundColor: color + "26",
+    border: `1px solid ${color}5c`,
     color,
+    fontWeight: 600,
+    letterSpacing: "0.01em",
   };
 }
 

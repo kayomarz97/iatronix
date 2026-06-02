@@ -124,10 +124,11 @@ export default function HomePage() {
           </svg>
         </div>
         <h1
+          className="gradient-text"
           style={{
             fontSize: "clamp(2rem, 5vw, 3rem)",
             fontWeight: 800,
-            color: "var(--text-primary)",
+            color: "var(--accent)", // solid fallback where background-clip:text is unsupported
             margin: "0 0 0.5rem",
             letterSpacing: "-0.02em",
           }}

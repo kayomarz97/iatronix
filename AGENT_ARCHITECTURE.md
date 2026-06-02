@@ -60,11 +60,12 @@
 | backend/app/services/rag_pipeline.py | Main RAG orchestrator — `process_query()` entry point; parallel + single-call paths |
 | backend/app/services/model_registry.py | **Source of truth for all LLM models** — pricing, display names, provider mapping. Edit here to add/update models. |
 | backend/app/api/v1/config_routes.py | `GET /api/v1/config/llm` — public endpoint serving model config to frontend (no auth required) |
-| backend/app/services/rag_pipeline_stream.py | SSE streaming wrapper — emits stage/token/bluf/section_complete/done/error |
+| backend/app/services/rag_pipeline_stream.py | SSE event source — `iter_query_events()` yields (kind,payload); legacy `stream_query()` formats to SSE. Emits stage/token/bluf/section_complete/done/error |
+| backend/app/services/stream_jobs.py | **Resumable streaming** (`RESUMABLE_STREAM_ENABLED`) — `start_job()` (detached producer → Redis Stream) + `tail_job()` (XREAD resume by `last_event_id`). Survives client disconnect (mobile tab switch / screen off) |
 | backend/app/services/data_fetcher.py | Parallel fetch from 10+ medical APIs; includes `_cascade_pubmed_for_complex()` and `_fetch_comorbidities()` for complex multi-condition queries; new NCBI Books + ClinicalTrials.gov sources |
 | backend/app/services/ranking.py | Evidence quality ranker — multi-factor scoring (study type, relevance, recency, fulltext, citations) with penalties for animal/off-population studies |
 | backend/app/services/prompt_engine.py | All prompt builders: `build_adaptive_messages`, `build_bluf_only_messages`, `build_section_messages`, `build_complex_bluf_messages`, `build_complex_section_messages` (complex multi-condition queries) |
-| backend/app/services/langgraph_search.py | LangGraph parallel search (fetch + vector + semantic_cache) |
+| backend/app/services/langgraph_search.py | LangGraph parallel search (fetch + vector + semantic_cache); also `run_section_refetch_graph()` for per-section re-fetch (`SECTION_REFETCH_ENABLED`) |
 | backend/app/services/dspy_lm.py | DSPy LM factory |
 | backend/app/services/dspy_signatures.py | DSPy signature definitions |
 | backend/app/schemas/query.py | Request/response Pydantic models |
@@ -97,6 +98,9 @@
 - CEREBRAS_API_BASE — Cerebras API base URL (default: https://api.cerebras.ai/v1)
 - Note: `NEXT_PUBLIC_CEREBRAS_MODEL` is removed; model identity is served via `GET /api/v1/config/llm`
 - PARALLEL_SECTIONS_ENABLED — true/false; enables parallel section agent pipeline (default true on dev, false on prod until verified)
+- RESUMABLE_STREAM_ENABLED — true/false; durable resumable streaming jobs (survives mobile tab-switch / screen-off). Dev true / prod false until verified. Also: STREAM_JOB_TTL_SECONDS (900), STREAM_JOB_MAX_RUNTIME_SECONDS (240), STREAM_JOB_IDLE_GRACE_SECONDS (30)
+- MULTI_VARIATION_SEARCH_ENABLED — true/false; fetch using DSPy search_variants (anti-sycophancy). Dev true / prod false. Also: MULTI_VARIATION_MAX_VARIANTS (2)
+- SECTION_REFETCH_ENABLED — true/false; per-section LangGraph re-fetch for still-empty sections. Dev true / prod false. Also: SECTION_REFETCH_TIMEOUT_SECONDS (10)
 
 ## API Route Patterns
 - Frontend Next.js API routes: frontend/src/app/api/**
@@ -137,7 +141,20 @@ OpenFDA, DailyMed, RxNorm, PubMed/NCBI, PMC/StatPearls, NICE, MedlinePlus, Seman
   - **Cache hygiene:** `prompt_version` 3→4 (orphans pre-fix cached answers); only grounded answers are cached.
   - **Reliability:** BLUF section-title fallback (default titles per type) + BLUF retry + per-section retry (re-run empty sections); low `llm_temperature=0.2`; removed 2 dead un-throttled NCBI calls from the disease gather (429 trigger); fetch timeout 31→45s.
   - **⭐ NCBI API key:** set `PUBMED_API_KEY` in env (free from NCBI account) → rate limit 3→10 req/s. The pipeline fires ~15 NCBI calls/query; without a key the limit is the dominant cause of intermittent `no_evidence` cards. Code reads `_ncbi_key_ctx.get(None) or settings.pubmed_api_key` (per-user key path preserved).
-  - **Known residual:** disease answers still card on a minority of runs due to multi-stage pipeline variance (intermittent fetch/BLUF/section emptiness); SAFE (never training data) but not yet 100% filled. Next levers: per-section LangGraph fallback (re-fetch+synthesize a thin section), reconnect `search_variants` multi-variation retrieval (currently computed but only logged, not fetched).
+  - **Known residual:** disease answers still card on a minority of runs due to multi-stage pipeline variance (intermittent fetch/BLUF/section emptiness); SAFE (never training data) but not yet 100% filled. **Both former "next levers" are now implemented (June 2026, flag-gated):** per-section LangGraph re-fetch (`SECTION_REFETCH_ENABLED`) and multi-variation retrieval (`MULTI_VARIATION_SEARCH_ENABLED`) — see "Multi-Variation Retrieval" and "Per-Section LangGraph Re-fetch" below.
+
+### Multi-Variation Retrieval — anti-sycophancy (June 2026, `MULTI_VARIATION_SEARCH_ENABLED`)
+The DSPy analysis already emits `search_variants` (3 phrasings: full rewrite / keyword form / condition-focused form). Previously computed but **only logged** at the response level. Now threaded into `_expand_retrieval_if_needed()` (`rag_pipeline.py`): up to `multi_variation_max_variants` (default 2) phrasing-diverse variants are deduped against the primary follow-up terms and fetched per query type (disease/procedure → extra `fetch_disease_data`/`fetch_procedure_data`; evidence/complex/comparative → extra `fetch_evidence_data`; drug → merged into the drug abstract pools). De-anchors the evidence base from one surface form, complementing the stance neutralizer. Reuses the existing `_merge_abstracts`/`_enrich_*` plumbing; bounded by the second-pass gate + evidence-floor budget; LLM-agnostic. Dev true / prod false.
+
+### Per-Section LangGraph Re-fetch (June 2026, `SECTION_REFETCH_ENABLED`)
+When a parallel-pipeline section is **still empty after the 2× LLM retry** (the data block lacked evidence for that subtopic), `_gen_one_section()` calls `run_section_refetch_graph(section_title, query, query_type)` (`langgraph_search.py` — a thin `StateGraph`, START→`section_fetch`→END, bounded by `section_refetch_timeout_seconds`=10s). It fetches type-appropriate targeted evidence for `"{query} {section_title}"`, merges it into the **shared `FetchedData`** via the existing enrich helpers (so it reaches BOTH the section data block AND the article registry → stays grounded, never training data), then re-synthesizes that one section once. Concurrency-limited by the existing section semaphore; LLM-agnostic. Dev true / prod false.
+
+### Resumable Streaming Jobs (June 2026, `RESUMABLE_STREAM_ENABLED`)
+Fixes "searches fail when I switch tabs / my phone screen turns off." **Root cause:** the legacy SSE generator cancelled the pipeline task in its `finally` on client disconnect (`rag_pipeline_stream.py`) — work was thrown away and nothing persisted to resume. **Fix (decouple compute from the connection):**
+  - `backend/app/services/rag_pipeline_stream.py` — refactored: `iter_query_events()` is the single `(kind,payload)` event source; legacy `stream_query()` is now a thin SSE formatter over it (unchanged behaviour when flag off).
+  - `backend/app/services/stream_jobs.py` (NEW) — `start_job()` launches `iter_query_events` in a **detached** asyncio task (kept in a module set so it survives the request) that XADDs every event to a Redis Stream `job:{id}` (source of truth, `MAXLEN ~10000`, TTL `stream_job_ttl_seconds`=900s, hard runtime cap `stream_job_max_runtime_seconds`=240s). `tail_job()` XREADs from a cursor (the Redis entry id == the SSE `id:`), blocking until the terminal `done`/`error`. Cross-worker safe (any Gunicorn worker can tail the same Redis stream). Worker-death durability upgrade path = external task worker (ARQ/Celery) — not needed for the client-disconnect bug.
+  - `backend/app/api/v1/query.py` — `/query/stream`: fresh POST → `start_job` → emit `event: job {job_id}` → `tail_job`; POST with `job_id` (+`last_event_id`) → resume `tail_job`. A client disconnect cancels only the reader, never the detached producer. Falls back to the legacy path when the flag is off or Redis is unavailable.
+  - Frontend `frontend/src/lib/api.ts` `submitQueryStream` — self-healing generator: captures `job_id`, tracks the `Last-Event-ID`, and on any transport drop OR tab-foreground (Page Visibility API) reconnects with `{job_id,last_event_id}` (capped backoff) until a terminal event. Emits an internal `reconnecting` event → `QueryProvider` shows a "resuming" state. `QueryRequest` gained optional `job_id`/`last_event_id`. Dev true / prod false.
 
 ### Universal Source URL Flow (May 2026)
 - **DrugFetchResult extended:** New field `label_url: Optional[str]` stores human-readable label page URL from fetch (DailyMed or FDA application)
@@ -155,8 +172,10 @@ Union of: AdaptiveResponse | DrugResponse | DiseaseResponse | ComparativeRespons
 All query types produce `AdaptiveResponse` with dynamic `sections[]` — no separate per-type renderers.
 
 ## SSE Streaming Events (rag_pipeline_stream.py)
+Event production lives in `iter_query_events()`; consumed by legacy `stream_query()` (formatter) and by `stream_jobs.py` (Redis-persisted, resumable). In resumable mode every block carries an `id:` line (the Redis stream entry id) used as the reconnect cursor.
 | Event | Payload | When emitted |
 |-------|---------|--------------|
+| `job` | `{job_id}` | Resumable mode only — first event; client stores it to reconnect after a disconnect |
 | `stage` | `{stage: "classifying"\|"fetching"\|"generating"}` | Pipeline checkpoints |
 | `token` | `{text: "..."}` | Single-call path — raw LLM tokens as they stream |
 | `bluf` | `{headline, body, key_points, caveats, section_titles, flowcharts, tables}` | Parallel path — immediately after Phase 1 completes (includes flowcharts/tables so they render with BLUF) |

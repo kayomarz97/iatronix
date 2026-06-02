@@ -60,7 +60,7 @@ from app.services.llm_factory import create_llm, get_provider
 from app.services.provider_registry import get_registry
 from app.services.providers import get_adapter
 from app.services.keystore import get_keystore
-from app.services.langgraph_search import run_search_graph
+from app.services.langgraph_search import run_search_graph, run_section_refetch_graph
 from app.services.article_registry import ArticleRegistry, build_article_registry
 from app.services.evidence_floor import EvidenceFloorError, ensure_evidence, has_minimum_evidence
 from app.services.stance_neutralizer import neutralize_query, StanceResult
@@ -729,6 +729,7 @@ async def _expand_retrieval_if_needed(
     response_focus: str | None,
     rewritten_query: str | None = None,
     answer_entities: list[str] | None = None,
+    search_variants: list[str] | None = None,
 ) -> tuple[FetchedData | None, list[str]]:
     if not settings.adaptive_second_pass_enabled or not fetched_data:
         return fetched_data, []
@@ -746,10 +747,26 @@ async def _expand_retrieval_if_needed(
         if value and value.lower() not in {t.lower() for t in follow_up_terms}:
             follow_up_terms.append(value)
 
+    # Multi-variation (anti-sycophancy) retrieval: the DSPy analysis produced phrasing-diverse
+    # variants (full rewrite / keyword form / condition-focused form) that were previously
+    # computed but only logged. Fetching across phrasings de-anchors the evidence base from one
+    # surface form — complementing the stance neutralizer. Bounded + deduped vs follow_up_terms.
+    variant_terms: list[str] = []
+    if settings.multi_variation_search_enabled and search_variants:
+        _seen = {t.lower() for t in follow_up_terms}
+        for v in search_variants:
+            vv = re.sub(r"\s+", " ", str(v or "")).strip()
+            if vv and vv.lower() not in _seen and vv.lower() not in {t.lower() for t in variant_terms}:
+                variant_terms.append(vv)
+            if len(variant_terms) >= settings.multi_variation_max_variants:
+                break
+        if variant_terms:
+            notes.append(f"multi-variation retrieval: {len(variant_terms)} variant phrasing(s)")
+
     try:
-        if query_type == "disease" and follow_up_terms:
+        if query_type == "disease" and (follow_up_terms or variant_terms):
             extras = await asyncio.gather(
-                *(fetch_disease_data(term) for term in follow_up_terms[:2]),
+                *(fetch_disease_data(term) for term in (follow_up_terms[:2] + variant_terms)),
                 return_exceptions=True,
             )
             for extra in extras:
@@ -757,9 +774,9 @@ async def _expand_retrieval_if_needed(
                     fetched_data.disease_data = _enrich_disease_result(
                         fetched_data.disease_data, extra
                     )
-        elif query_type == "procedure" and follow_up_terms:
+        elif query_type == "procedure" and (follow_up_terms or variant_terms):
             extras = await asyncio.gather(
-                *(fetch_procedure_data(term) for term in follow_up_terms[:2]),
+                *(fetch_procedure_data(term) for term in (follow_up_terms[:2] + variant_terms)),
                 return_exceptions=True,
             )
             for extra in extras:
@@ -776,6 +793,9 @@ async def _expand_retrieval_if_needed(
                 if ae_clean:
                     _ctx = condition_context or _primary_term
                     evidence_tasks.append(fetch_evidence_data(f"{ae_clean} {_ctx}"))
+            # Multi-variation: broaden with phrasing-diverse variants
+            for v in variant_terms:
+                evidence_tasks.append(fetch_evidence_data(v))
             extras = await asyncio.gather(*evidence_tasks, return_exceptions=True)
             for extra in extras:
                 if isinstance(extra, EvidenceFetchResult) and extra.fetch_success:
@@ -783,10 +803,11 @@ async def _expand_retrieval_if_needed(
                         fetched_data.evidence_data, extra
                     )
         elif query_type == "comparative":
-            extras = await asyncio.gather(
-                fetch_evidence_data(query),
-                return_exceptions=True,
-            )
+            comp_tasks = [fetch_evidence_data(query)]
+            # Multi-variation: broaden with phrasing-diverse variants
+            for v in variant_terms:
+                comp_tasks.append(fetch_evidence_data(v))
+            extras = await asyncio.gather(*comp_tasks, return_exceptions=True)
             for extra in extras:
                 if isinstance(extra, EvidenceFetchResult) and extra.fetch_success:
                     fetched_data.comparative_evidence = _enrich_evidence_result(
@@ -794,31 +815,35 @@ async def _expand_retrieval_if_needed(
                     )
         elif query_type == "drug":
             tasks = [fetch_evidence_data(query)]
+            _has_condition = bool(condition_context)
             if condition_context:
                 tasks.append(fetch_disease_data(condition_context))
+            # Multi-variation: extra evidence fetches for phrasing-diverse variants
+            _variant_start = len(tasks)
+            for v in variant_terms:
+                tasks.append(fetch_evidence_data(v))
             extras = await asyncio.gather(*tasks, return_exceptions=True)
-            evidence_extra = extras[0] if extras else None
-            if (
-                fetched_data.drug_data
-                and isinstance(evidence_extra, EvidenceFetchResult)
-                and evidence_extra.fetch_success
-            ):
-                fetched_data.drug_data.guideline_abstracts = _merge_abstracts(
-                    fetched_data.drug_data.guideline_abstracts,
-                    evidence_extra.guideline_abstracts,
-                    max_total_chars=7000,
-                )
-                fetched_data.drug_data.systematic_review_abstracts = _merge_abstracts(
-                    fetched_data.drug_data.systematic_review_abstracts,
-                    evidence_extra.systematic_review_abstracts,
-                    max_total_chars=7000,
-                )
-                fetched_data.drug_data.clinical_trial_abstracts = _merge_abstracts(
-                    fetched_data.drug_data.clinical_trial_abstracts,
-                    evidence_extra.clinical_trial_abstracts,
-                    max_total_chars=7000,
-                )
-            if condition_context and len(extras) > 1:
+            # Merge primary + variant evidence into the drug's abstract pools
+            _evidence_results = [extras[0]] + list(extras[_variant_start:])
+            if fetched_data.drug_data:
+                for _ev in _evidence_results:
+                    if isinstance(_ev, EvidenceFetchResult) and _ev.fetch_success:
+                        fetched_data.drug_data.guideline_abstracts = _merge_abstracts(
+                            fetched_data.drug_data.guideline_abstracts,
+                            _ev.guideline_abstracts,
+                            max_total_chars=7000,
+                        )
+                        fetched_data.drug_data.systematic_review_abstracts = _merge_abstracts(
+                            fetched_data.drug_data.systematic_review_abstracts,
+                            _ev.systematic_review_abstracts,
+                            max_total_chars=7000,
+                        )
+                        fetched_data.drug_data.clinical_trial_abstracts = _merge_abstracts(
+                            fetched_data.drug_data.clinical_trial_abstracts,
+                            _ev.clinical_trial_abstracts,
+                            max_total_chars=7000,
+                        )
+            if _has_condition and len(extras) > 1:
                 condition_extra = extras[1]
                 if isinstance(condition_extra, DiseaseFetchResult) and condition_extra.fetch_success:
                     fetched_data.condition_data = _enrich_disease_result(
@@ -839,6 +864,9 @@ async def _expand_retrieval_if_needed(
             for ent in (entities or [])[:2]:
                 if ent:
                     tasks.append(fetch_disease_data(ent))
+            # Multi-variation: broaden with phrasing-diverse variants
+            for v in variant_terms:
+                tasks.append(fetch_evidence_data(v))
             extras = await asyncio.gather(*tasks, return_exceptions=True)
             for extra in extras:
                 if isinstance(extra, EvidenceFetchResult) and extra.fetch_success:
@@ -2681,6 +2709,81 @@ async def _run_parallel_pipeline(
                     break
             except Exception:
                 pass
+
+        # Per-section LangGraph re-fetch: the section is STILL empty after LLM retries —
+        # usually the main fetch simply lacked evidence for this subtopic. Fetch targeted
+        # evidence for the section topic, merge it into the shared FetchedData (so it reaches
+        # BOTH the data block AND the article registry → the section stays grounded, never
+        # training data), then re-synthesize this one section once.
+        if (
+            settings.section_refetch_enabled
+            and fetched_data is not None
+            and (sec is None or not (isinstance(sec, dict) and sec.get("content_items")))
+        ):
+            try:
+                _rf = await run_section_refetch_graph(
+                    title, query, query_type,
+                    timeout=settings.section_refetch_timeout_seconds,
+                )
+            except Exception:
+                _rf = None
+            _merged = False
+            if _rf:
+                _ev, _dz, _pr = _rf.get("evidence"), _rf.get("disease"), _rf.get("procedure")
+                if isinstance(_ev, EvidenceFetchResult) and _ev.fetch_success:
+                    if query_type == "comparative":
+                        fetched_data.comparative_evidence = _enrich_evidence_result(
+                            fetched_data.comparative_evidence, _ev)
+                        _merged = True
+                    elif query_type == "drug" and fetched_data.drug_data:
+                        fetched_data.drug_data.guideline_abstracts = _merge_abstracts(
+                            fetched_data.drug_data.guideline_abstracts, _ev.guideline_abstracts, max_total_chars=7000)
+                        fetched_data.drug_data.systematic_review_abstracts = _merge_abstracts(
+                            fetched_data.drug_data.systematic_review_abstracts, _ev.systematic_review_abstracts, max_total_chars=7000)
+                        fetched_data.drug_data.clinical_trial_abstracts = _merge_abstracts(
+                            fetched_data.drug_data.clinical_trial_abstracts, _ev.clinical_trial_abstracts, max_total_chars=7000)
+                        _merged = True
+                    else:  # evidence, complex
+                        fetched_data.evidence_data = _enrich_evidence_result(fetched_data.evidence_data, _ev)
+                        _merged = True
+                if isinstance(_dz, DiseaseFetchResult) and _dz.fetch_success:
+                    if query_type == "complex":
+                        fetched_data.condition_data = _enrich_disease_result(fetched_data.condition_data, _dz)
+                    else:  # disease
+                        fetched_data.disease_data = _enrich_disease_result(fetched_data.disease_data, _dz)
+                    _merged = True
+                if isinstance(_pr, ProcedureFetchResult) and _pr.fetch_success:
+                    fetched_data.procedure_data = _enrich_procedure_result(fetched_data.procedure_data, _pr)
+                    _merged = True
+            if _merged:
+                # Rebuild this section's prompt against the enriched data and synthesize once more.
+                if query_type == "complex":
+                    sec_static, sec_dynamic, sec_data, sec_user = build_complex_section_messages(
+                        section_title=title, all_section_titles=section_titles, bluf_text=bluf_text,
+                        query=query, drug=drug, primary_disease=primary_disease,
+                        comorbidity_list=comorbidity_list,
+                        patient_context=getattr(fetched_data, "patient_context", {}) if fetched_data else {},
+                        fetched_data=fetched_data, vector_results=vector_results,
+                    )
+                else:
+                    sec_static, sec_dynamic, sec_data, sec_user = build_section_messages(
+                        section_title=title, all_section_titles=section_titles, bluf_text=bluf_text,
+                        query=query, query_type=query_type, fetched_data=fetched_data,
+                        vector_results=vector_results,
+                    )
+                try:
+                    async with _section_sem:
+                        raw, _u2 = await _call_llm_simple(
+                            sec_llm, provider, sec_static, sec_data, sec_user, sec_dynamic, model_id=effective_model)
+                    _sec3 = parse_llm_json(raw) if raw else None
+                    if isinstance(_sec3, dict) and _sec3.get("content_items"):
+                        sec = _sec3
+                        usage = {"input_tokens": usage.get("input_tokens", 0) + _u2.get("input_tokens", 0),
+                                 "output_tokens": usage.get("output_tokens", 0) + _u2.get("output_tokens", 0)}
+                        logger.info("section_refetch filled previously-empty section %r (type=%s)", title, query_type)
+                except Exception:
+                    pass
+
         # Emit as soon as this section is ready — don't wait for all sections to finish
         if sec is not None and structured_callback:
             section_dict = {
@@ -3138,6 +3241,7 @@ async def process_query(
                 response_focus=(query_analysis or {}).get("response_focus") if query_analysis else None,
                 rewritten_query=rewritten_query,
                 answer_entities=(query_analysis or {}).get("answer_entities") if query_analysis else None,
+                search_variants=_search_variants,
             )
 
             # Rank retrieved articles by evidence quality before LLM synthesis

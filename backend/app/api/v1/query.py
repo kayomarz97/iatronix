@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 
 from fastapi import APIRouter, Request
@@ -9,9 +10,16 @@ from app.schemas.query import QueryRequest, QueryResponse
 from app.services.circuit_breaker import anthropic_breaker, openai_breaker
 from app.services.rag_pipeline import process_query
 from app.services.rag_pipeline_stream import stream_query
+from app.services.stream_jobs import start_job, tail_job
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+_SSE_HEADERS = {
+    "Cache-Control": "no-cache",
+    "X-Accel-Buffering": "no",
+    "Connection": "keep-alive",
+}
 
 
 @router.post("/query/stream")
@@ -27,6 +35,43 @@ async def query_stream_endpoint(request: Request, body: QueryRequest):
     ):
         return JSONResponse(status_code=403, content={"detail": "Insufficient scope for query"})
 
+    # ── Durable, resumable path ──────────────────────────────────────────────
+    # The query runs in a detached background task that persists every event to a
+    # Redis stream, so a client disconnect (mobile tab switch / screen off) never
+    # cancels the computation. Disconnecting only cancels the *reader* (tail_job).
+    # Requires Redis as the event-log source of truth; falls back to legacy otherwise.
+    if settings.resumable_stream_enabled and redis_client is not None:
+        if body.job_id:
+            # Resume an in-flight (or just-finished) job — replay from the client's cursor.
+            async def resume_gen():
+                try:
+                    async for chunk in tail_job(
+                        redis_client, body.job_id, last_id=body.last_event_id or "0"
+                    ):
+                        yield chunk
+                except asyncio.CancelledError:
+                    logger.info("SSE resume tail cancelled — client disconnected (job continues)")
+
+            return StreamingResponse(
+                resume_gen(), media_type="text/event-stream", headers=_SSE_HEADERS
+            )
+
+        # Fresh query — launch the detached producer, hand the client its job_id, then tail.
+        job_id = await start_job(body, redis_client, user_key_id, user)
+
+        async def job_gen():
+            yield f"event: job\ndata: {json.dumps({'job_id': job_id})}\n\n"
+            try:
+                async for chunk in tail_job(redis_client, job_id, last_id="0"):
+                    yield chunk
+            except asyncio.CancelledError:
+                logger.info("SSE tail cancelled — client disconnected (job %s continues)", job_id)
+
+        return StreamingResponse(
+            job_gen(), media_type="text/event-stream", headers=_SSE_HEADERS
+        )
+
+    # ── Legacy connection-coupled path (unchanged behaviour) ─────────────────
     async def event_generator():
         try:
             async for chunk in stream_query(body, redis_client, user_key_id, user=user):
@@ -35,17 +80,12 @@ async def query_stream_endpoint(request: Request, body: QueryRequest):
             logger.info("SSE stream cancelled — client disconnected")
         except Exception:
             logger.exception("SSE stream error")
-            import json
             yield f"event: error\ndata: {json.dumps({'detail': 'Internal server error'})}\n\n"
 
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-            "Connection": "keep-alive",
-        },
+        headers=_SSE_HEADERS,
     )
 
 

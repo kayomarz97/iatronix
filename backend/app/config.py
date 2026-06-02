@@ -172,6 +172,27 @@ class Settings(BaseSettings):
     parallel_bluf_max_tokens: int = 6144  # BLUF+titles+flowcharts+tables phase token budget
     parallel_sections_max_concurrent: int = 3  # max simultaneous LLM calls — keeps token/min under Anthropic limits
 
+    # Resumable streaming jobs — query keeps running server-side even if the client
+    # disconnects (mobile tab switch / screen off); the client reconnects and replays
+    # missed events from the Redis event log (source of truth). When False, the legacy
+    # connection-coupled streaming path is used (fully back-compatible). Dev true / prod false.
+    resumable_stream_enabled: bool = False
+    stream_job_ttl_seconds: int = 900             # how long a finished job's events stay replayable in Redis
+    stream_job_max_runtime_seconds: int = 240     # hard cap so a detached producer can never run forever
+    stream_job_idle_grace_seconds: int = 30       # tailer waits this long for the first event before giving up
+
+    # Multi-variation retrieval (anti-sycophancy) — fetch using the DSPy search_variants
+    # (phrasing-diverse forms) so the evidence base isn't anchored to one surface form.
+    # Bounded, deduped, reuses existing merge/enrich plumbing. Dev true / prod false.
+    multi_variation_search_enabled: bool = False
+    multi_variation_max_variants: int = 2         # extra phrasings fetched per second pass
+
+    # Per-section LangGraph re-fetch — when a section is still empty after LLM retries,
+    # fetch targeted evidence for that section's topic and re-synthesize just that section.
+    # Dev true / prod false.
+    section_refetch_enabled: bool = False
+    section_refetch_timeout_seconds: float = 10.0  # wall-clock cap for the per-section re-fetch graph
+
     # Citation token grounding — [REF_N] tokens for deterministic source attribution
     citation_ref_tokens_enabled: bool = True
 

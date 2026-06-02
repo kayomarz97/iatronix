@@ -102,7 +102,7 @@ export function ResultSection({
   return (
     <section
       id={id}
-      className={`rounded-[24px] border border-border/80 bg-surface/90 p-5 shadow-[0_16px_40px_rgba(2,8,23,0.12)] backdrop-blur-sm ${className}`}
+      className={`reveal rounded-[24px] border border-border/80 bg-surface/90 p-5 shadow-[0_16px_40px_rgba(2,8,23,0.12)] backdrop-blur-sm ${className}`}
     >
       {eyebrow && (
         <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-text-muted">

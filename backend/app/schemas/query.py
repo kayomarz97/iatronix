@@ -258,6 +258,11 @@ class QueryRequest(BaseModel):
     )
     source_mode: Literal["ai", "scraping", "pdfs"] = "ai"
     force_refresh: bool = False  # Force bypass all cache layers
+    # Resumable streaming (RESUMABLE_STREAM_ENABLED): when reconnecting to an in-flight
+    # query after a tab switch / dropped connection, the client re-POSTs with the job_id it
+    # was given and the last stream event id it saw, to replay missed events and continue.
+    job_id: Optional[str] = Field(default=None, max_length=64)
+    last_event_id: Optional[str] = Field(default=None, max_length=64)
 
 
 class ModelCost(BaseModel):

@@ -193,3 +193,108 @@ async def run_search_graph(
         query_type,
     )
     return fd, vr, sem
+
+
+# ── Per-section re-fetch graph (SECTION_REFETCH_ENABLED) ──────────────────────
+# When a section comes back empty after LLM retries — usually because the main
+# fetch lacked evidence for that specific subtopic — this thin LangGraph fetches
+# targeted evidence for the section's topic so the section can be re-synthesized
+# and grounded. Bounded by a wall-clock timeout; LLM-agnostic (no model calls here).
+
+
+class SectionRefetchState(TypedDict):
+    topic: str            # "{query} {section_title}" — the targeted search string
+    section_title: str
+    query_type: str
+    user_email: Optional[str]
+    user_ncbi_key: Optional[str]
+    # Outputs (type-appropriate; merged by the caller via the existing enrich helpers)
+    evidence: Any
+    disease: Any
+    procedure: Any
+
+
+async def _section_fetch_node(state: SectionRefetchState) -> dict:
+    """Fetch evidence appropriate to the query type for one section's topic."""
+    from app.services.data_fetcher import (
+        fetch_disease_data,
+        fetch_evidence_data,
+        fetch_procedure_data,
+    )
+
+    qt = state["query_type"]
+    topic = state["topic"]
+    title = state["section_title"] or topic
+    out: dict = {"evidence": None, "disease": None, "procedure": None}
+    try:
+        if qt == "disease":
+            out["disease"] = await fetch_disease_data(title)
+        elif qt == "complex":
+            ev, dz = await asyncio.gather(
+                fetch_evidence_data(topic),
+                fetch_disease_data(title),
+                return_exceptions=True,
+            )
+            out["evidence"] = ev if not isinstance(ev, Exception) else None
+            out["disease"] = dz if not isinstance(dz, Exception) else None
+        elif qt == "procedure":
+            out["procedure"] = await fetch_procedure_data(title)
+        else:  # drug, evidence, comparative
+            out["evidence"] = await fetch_evidence_data(topic)
+    except Exception as exc:  # noqa: BLE001 — never block section generation
+        logger.warning("section_refetch fetch error for %r: %s", title, exc)
+    return out
+
+
+def _build_section_refetch_graph() -> Any:
+    g = StateGraph(SectionRefetchState)
+    g.add_node("section_fetch", _section_fetch_node)
+    g.add_edge(START, "section_fetch")
+    g.add_edge("section_fetch", END)
+    return g.compile()
+
+
+_section_refetch_graph = _build_section_refetch_graph()
+
+
+async def run_section_refetch_graph(
+    section_title: str,
+    query: str,
+    query_type: str,
+    timeout: float = 10.0,
+    user_email: str | None = None,
+    user_ncbi_key: str | None = None,
+) -> dict:
+    """Fetch targeted evidence for one empty section. Returns {evidence, disease, procedure}.
+
+    Each value is a *FetchResult or None; the caller merges them into the shared
+    FetchedData with the type-appropriate enrich helper so they reach the data
+    block AND the article registry (keeping the answer grounded).
+    """
+    topic = f"{query} {section_title}".strip()
+    initial: SectionRefetchState = {
+        "topic": topic,
+        "section_title": section_title,
+        "query_type": query_type,
+        "user_email": user_email,
+        "user_ncbi_key": user_ncbi_key,
+        "evidence": None,
+        "disease": None,
+        "procedure": None,
+    }
+    try:
+        final = await asyncio.wait_for(
+            _section_refetch_graph.ainvoke(initial), timeout=timeout
+        )
+    except asyncio.TimeoutError:
+        logger.warning("langgraph section_refetch timed out for section=%r", section_title)
+        return {"evidence": None, "disease": None, "procedure": None}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("langgraph section_refetch error for section=%r: %s", section_title, exc)
+        return {"evidence": None, "disease": None, "procedure": None}
+    logger.info("langgraph section_refetch ran for section=%r type=%s", section_title, query_type)
+    return {
+        "evidence": final.get("evidence"),
+        "disease": final.get("disease"),
+        "procedure": final.get("procedure"),
+    }
