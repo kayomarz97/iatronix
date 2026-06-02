@@ -278,6 +278,7 @@ class DiseaseFetchResult:
     medlineplus_summary: Optional[str] = None
     semantic_papers: list = field(default_factory=list)
     ncbi_structured: Optional[str] = None
+    book_monographs: list = field(default_factory=list)  # StatPearls/Bookshelf full chapters: {title,url,text,source,nbk_id}
     fetch_success: bool = False
     data_sources: list = field(default_factory=list)
 
@@ -425,6 +426,23 @@ async def _safe_get_text(
     except Exception:
         logger.debug("API text fetch failed: %s", url, exc_info=True)
     return None
+
+
+async def _ncbi_eutils_get(
+    client: httpx.AsyncClient, url: str, params: dict | None = None
+) -> dict | None:
+    """Throttled eUtils GET (JSON) — shares the NCBI rate-limit semaphore + min-gap used by
+    PubMed calls, so book/StatPearls lookups never trip NCBI's 3 req/s (no key) limit when
+    they run alongside or right after the PubMed gather."""
+    api_key = _ncbi_key_ctx.get(None) or settings.pubmed_api_key
+    sem = _PUBMED_SEM_WITH_KEY if api_key else _PUBMED_SEM_NO_KEY
+    async with sem:
+        await asyncio.sleep(0.15 if api_key else 0.4)
+        data = await _safe_get(client, url, params=params)
+        if data is None:  # transient 429/error — one bounded retry inside the throttle slot
+            await asyncio.sleep(0.5)
+            data = await _safe_get(client, url, params=params)
+        return data
 
 
 # ------------------------------------------------------------------
@@ -1766,6 +1784,129 @@ async def _fetch_ncbi_books(
         return None
 
 
+async def _fetch_book_monographs(
+    client: httpx.AsyncClient, term: str, *, max_chapters: int = 2, char_cap: int = 16000
+) -> list[dict]:
+    """Fetch FULL StatPearls / NCBI Bookshelf chapter text with citable NBK URLs.
+
+    Returns a list of ``{title, url, text, source, nbk_id}`` — the ENTIRE chapter
+    body (not section snippets) so the LLM has complete grounding for broad
+    overview sections (pathophysiology, epidemiology, clinical features, etc.).
+
+    Robust chapter selection (NCBI book search alone mis-ranks): search db=books,
+    collect distinct candidate chapters in relevance order, fetch the top few
+    chapter pages in parallel, and keep the chapters whose <h1> title best
+    token-overlaps the query term. Always returns the best-available real
+    source(s); never raises (silent [] on failure). LLM-agnostic (plain text + URL).
+    """
+    import re as _re
+    from collections import Counter  # noqa: F401  (kept for future relevance tuning)
+
+    _ESEARCH = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
+    _ESUMMARY = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi"
+    _api = {"api_key": settings.pubmed_api_key} if settings.pubmed_api_key else {}
+    _UA = {"User-Agent": "Mozilla/5.0 (compatible; IatronixBot/1.0; +https://med.debkay.com)"}
+    try:
+        # 1. Candidate chapters. PRECISE [title]-field match first — this returns the
+        #    exact disease chapter; body-text search mis-ranks to tangential chapters
+        #    (a chapter that merely shares one word). Then broad fallbacks.
+        ids: list[str] = []
+        _precise = False
+        # StatPearls is OPTIONAL enrichment (abstracts alone ground answers). Fail FAST — a
+        # single throttled attempt per variant, NO retry loop. Retrying here held the shared
+        # NCBI semaphore and starved the main PubMed gather → empty data → cards.
+        for _q in (
+            f"{term}[title] AND statpearls[book]",   # precise: chapter title match
+            f"{term} AND statpearls[book]",          # broad StatPearls
+            term,                                     # broad Bookshelf
+        ):
+            sd = await _ncbi_eutils_get(client, _ESEARCH, params={
+                "db": "books", "term": _q, "retmax": 20, "retmode": "json", **_api})
+            ids = ((sd or {}).get("esearchresult", {}) or {}).get("idlist", []) or []
+            if ids:
+                _precise = _q.startswith(f"{term}[title]")
+                break
+        if not ids:
+            return []
+
+        # 2. esummary -> distinct chapter accessions (NBK...) in relevance order.
+        su = await _ncbi_eutils_get(client, _ESUMMARY, params={
+            "db": "books", "id": ",".join(ids[:20]), "retmode": "json", **_api})
+        summ = (su or {}).get("result", {}) or {}
+        seen_acc: set[str] = set()
+        candidates: list[str] = []
+        for i in ids:
+            res = summ.get(i, {}) or {}
+            acc = res.get("chapteraccessionid") or res.get("bookaccessionid") or res.get("accessionid")
+            if acc and str(acc).startswith("NBK") and acc not in seen_acc:
+                seen_acc.add(acc)
+                candidates.append(acc)
+        if not candidates:
+            return []
+
+        # 3. Fetch top candidate chapter pages in parallel; score H1 title vs term.
+        from lxml import html as _LH
+
+        async def _get_page(acc: str):
+            try:
+                resp = await client.get(f"https://www.ncbi.nlm.nih.gov/books/{acc}/", headers=_UA, timeout=8.0)
+                return acc, (resp.content if resp.status_code == 200 else None)
+            except Exception:
+                return acc, None
+
+        pages = await asyncio.gather(*[_get_page(a) for a in candidates[:4]])
+        term_tokens = set(_re.findall(r"[a-z0-9]+", term.lower()))
+        scored: list[tuple] = []
+        for acc, content in pages:
+            if not content:
+                continue
+            try:
+                doc = _LH.fromstring(content)  # bytes — lxml rejects str with encoding decl
+            except Exception:
+                continue
+            h1 = _re.sub(r"\s+", " ", " ".join(doc.xpath("//h1//text()"))).strip()
+            h1 = _re.sub(r"^\s*Bookshelf\s*", "", h1).strip()
+            title_tokens = set(_re.findall(r"[a-z0-9]+", h1.lower()))
+            score = len(term_tokens & title_tokens)
+            scored.append((score, candidates.index(acc), acc, h1, doc))
+        if not scored:
+            return []
+        # Best title-overlap first; break ties by original relevance rank.
+        scored.sort(key=lambda x: (-x[0], x[1]))
+        # Require a real title match so we never surface a chapter that merely shares
+        # one word. Precise [title] hits are already correct (min 1); the broad
+        # fallback must clear at least half the disease's title tokens.
+        min_overlap = 1 if _precise else max(1, (len(term_tokens) + 1) // 2)
+        scored = [s for s in scored if s[0] >= min_overlap]
+        if not scored:
+            return []
+
+        out: list[dict] = []
+        for score, _rank, acc, h1, doc in scored[:max_chapters]:
+            for bad in doc.xpath(
+                "//script|//style|//nav|//header|//footer|//aside|//form|//button"
+            ):
+                par = bad.getparent()
+                if par is not None:
+                    par.remove(bad)
+            main_el = doc.xpath("//div[@id='maincontent']") or doc.xpath("//main")
+            target = main_el[0] if main_el else doc
+            text = _re.sub(r"\s+", " ", " ".join(target.itertext())).strip()
+            if len(text) < 400:
+                continue
+            out.append({
+                "title": h1 or "StatPearls",
+                "url": f"https://www.ncbi.nlm.nih.gov/books/{acc}/",
+                "text": text[:char_cap],
+                "source": "StatPearls",
+                "nbk_id": acc,
+            })
+        return out
+    except Exception:
+        logger.debug("_fetch_book_monographs failed for %r", term, exc_info=True)
+        return []
+
+
 async def _fetch_clinicaltrials(
     client: httpx.AsyncClient,
     query: str,
@@ -2170,6 +2311,26 @@ async def fetch_drug_data(drug_name: str, *, extra_pubmed_terms: list[str] | Non
     return result
 
 
+def _as_pmid_list(value) -> list[str]:
+    """Coerce a PubMed esearch result into a list of PMID strings.
+
+    Drops any non-string item. Guards the guideline/review id-merge against
+    sources that return dicts (e.g. ClinicalTrials.gov) being swept in by index
+    drift — a dict inside ``set(...)`` raises ``TypeError: unhashable type:
+    'dict'`` and previously crashed the entire disease fetch (silently, via
+    ``fetch_node``), leaving disease answers ungrounded.
+    """
+    if not isinstance(value, list):
+        return []
+    out: list[str] = []
+    for item in value:
+        if isinstance(item, str) and item.strip():
+            out.append(item.strip())
+        elif isinstance(item, int):
+            out.append(str(item))
+    return out
+
+
 async def fetch_disease_data(disease_name: str, *, extra_pubmed_terms: list[str] | None = None, extra_journal_filter: str | None = None) -> DiseaseFetchResult:
     """Fetch disease data from PubMed (guidelines + reviews + classification), NICE,
     MedlinePlus, and Semantic Scholar — all in parallel.
@@ -2203,6 +2364,11 @@ async def fetch_disease_data(disease_name: str, *, extra_pubmed_terms: list[str]
     )
 
     async with _make_client() as client:
+        # StatPearls/Bookshelf full chapter — kicked off CONCURRENTLY so it OVERLAPS the main
+        # gather (no added critical-path latency; a sequential fetch pushed total past the
+        # 31s fetch timeout → empty data → cards). Safe to run concurrently because its eUtils
+        # calls go through _ncbi_eutils_get (shared NCBI rate-limit semaphore → no 429).
+        _book_task = asyncio.ensure_future(_fetch_book_monographs(client, disease_name))
         # Phase 1: ALL esearch calls + non-PubMed sources in parallel
         # NOTE: Limited to 4 esearch calls to avoid NCBI rate limits (3 req/s without key, 10 req/s with)
         tasks: list = [
@@ -2214,8 +2380,12 @@ async def fetch_disease_data(disease_name: str, *, extra_pubmed_terms: list[str]
             _fetch_nice(client, disease_name),
             _fetch_medlineplus(client, disease_name),
             _fetch_semantic_scholar(client, disease_name),
-            _fetch_ncbi_disease_structured(client, disease_name),
-            _fetch_ncbi_books(client, disease_name),
+            # Dead UN-THROTTLED NCBI calls removed — they bypassed the rate semaphore (raw
+            # _safe_get) and triggered 429s, and returned nothing now that _fetch_book_monographs
+            # (throttled) handles StatPearls/Bookshelf. Kept as no-op placeholders to preserve the
+            # positional result[] indices below (results[8]=None, results[9]=None).
+            asyncio.sleep(0, result=None),  # was _fetch_ncbi_disease_structured (db=pmc — never matched)
+            asyncio.sleep(0, result=None),  # was _fetch_ncbi_books (efetch rettype unsupported)
             _fetch_clinicaltrials(client, disease_name),
         ]
 
@@ -2258,16 +2428,23 @@ async def fetch_disease_data(disease_name: str, *, extra_pubmed_terms: list[str]
         ncbi_books = results[9] if len(results) > 9 and isinstance(results[9], str) else None
         ct_studies = results[10] if len(results) > 10 and isinstance(results[10], list) else []
 
-        # Extract expanded PubMed search results from LLM-generated terms
-        extra_guideline_ids = []
-        if len(results) > 9:
-            for _res in results[9:]:
-                if isinstance(_res, list):
-                    extra_guideline_ids.extend(_res[:8])  # take first 8 from each extra search
+        # Extract expanded PubMed search results from LLM-generated terms.
+        # Extra term searches are appended AFTER the 11 fixed sources (indices
+        # 0..10), so they begin at index 11. _as_pmid_list is a second guard: any
+        # source that is not a list of PMID strings (e.g. ClinicalTrials.gov dicts
+        # at results[10]) is filtered out so it can never crash the set() merge.
+        extra_guideline_ids: list[str] = []
+        for _res in results[11:]:
+            extra_guideline_ids.extend(_as_pmid_list(_res)[:8])  # first 8 PMIDs per extra search
 
         # Merge and deduplicate PMIDs (recent guidelines takes priority)
-        unique_guideline_ids = list(set(recent_guideline_ids) | set(guideline_ids) | set(broad_guideline_ids) | set(extra_guideline_ids))
-        all_review_ids = list(set(review_ids) | set(broad_review_ids))
+        unique_guideline_ids = list(
+            set(_as_pmid_list(recent_guideline_ids))
+            | set(_as_pmid_list(guideline_ids))
+            | set(_as_pmid_list(broad_guideline_ids))
+            | set(extra_guideline_ids)
+        )
+        all_review_ids = list(set(_as_pmid_list(review_ids)) | set(_as_pmid_list(broad_review_ids)))
         all_pmids = set(unique_guideline_ids) | set(all_review_ids)
         all_ids = list(all_pmids)
         if all_ids:
@@ -2326,10 +2503,20 @@ async def fetch_disease_data(disease_name: str, *, extra_pubmed_terms: list[str]
             # Add to guideline_abstracts so they're included in evidence scoring
             result.guideline_abstracts = result.guideline_abstracts + ct_studies
 
+        # Await the concurrent StatPearls/Bookshelf fetch (it overlapped the gather above).
+        try:
+            result.book_monographs = await asyncio.wait_for(_book_task, timeout=14.0) or []
+        except Exception:
+            _book_task.cancel()
+            result.book_monographs = []
+        if result.book_monographs and "StatPearls" not in result.data_sources:
+            result.data_sources.append("StatPearls")
+
     result.fetch_success = bool(
         result.guideline_abstracts
         or result.systematic_review_abstracts
         or result.medlineplus_summary
+        or result.book_monographs
     )
 
     # Fallback: if no PubMed results, retry without [pt] filter

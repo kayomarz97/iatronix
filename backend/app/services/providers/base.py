@@ -78,6 +78,7 @@ class ProviderAdapter:
         from app.config import settings  # lazy: keeps routing logic import-light/testable
 
         timeout = settings.llm_timeout_seconds
+        temperature = settings.llm_temperature
         model = self.resolve_model(model_id)
 
         if self.client_kind == "anthropic":
@@ -87,6 +88,7 @@ class ProviderAdapter:
                 model=model,
                 api_key=api_key,
                 max_tokens=max_tokens,
+                temperature=temperature,
                 timeout=timeout,
                 max_retries=2,  # LangChain handles backoff; smooths transient 429/overload
             )
@@ -98,6 +100,7 @@ class ProviderAdapter:
                 model=model,
                 google_api_key=api_key,
                 max_output_tokens=max_tokens,
+                temperature=temperature,
                 timeout=timeout,
             )
 
@@ -108,6 +111,7 @@ class ProviderAdapter:
             model=model,
             api_key=api_key,
             max_tokens=max_tokens,
+            temperature=temperature,
             timeout=timeout,
             max_retries=1,
         )

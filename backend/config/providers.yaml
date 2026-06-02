@@ -17,10 +17,10 @@ default_provider: cerebras
 
 # Deep-grounded citation-chasing bounds (Phase 5). Registry-configurable.
 deep_search:
-  max_depth: 5                  # citation hops per branch
+  max_depth: 3                  # citation hops per branch (tightened from 5 for snappier UX)
   branch_parallelism: 6         # concurrent search branches
-  total_budget_seconds: 120     # hard wall-clock ceiling for the whole deep search
-  per_branch_timeout_seconds: 20
+  total_budget_seconds: 25      # hard wall-clock ceiling (tightened from 120 — only fires when retrieval is thin)
+  per_branch_timeout_seconds: 8
 
 # cache_class semantics (see INTEGRATION_NOTES §C):
 #   inline       -> Anthropic-style cache_control breakpoints on content blocks

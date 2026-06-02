@@ -301,6 +301,7 @@ def build_ref_map(fetched_data: Optional[Any]) -> dict[str, dict]:
         "clinical_trial": 1,
         "ClinicalTrials.gov": 1,
         "NICE": 2,
+        "StatPearls": 2,
         "FDA": 3,
         "DailyMed": 4,
     }
@@ -367,6 +368,26 @@ def build_ref_map(fetched_data: Optional[Any]) -> dict[str, dict]:
                 "nct_id": None,
                 "source": "NICE",
                 "url": rec.get("url"),
+            })
+
+        # Book monographs (StatPearls / NCBI Bookshelf full chapters) — URL-bearing, citable
+        for mono in getattr(obj, "book_monographs", None) or []:
+            if not isinstance(mono, dict):
+                continue
+            title = (mono.get("title") or "").strip()
+            url = mono.get("url")
+            if not title or not url:
+                continue
+            dedup_key = (None, None, title.lower())
+            if dedup_key in seen:
+                continue
+            seen.add(dedup_key)
+            articles.append({
+                "title": title,
+                "pmid": None,
+                "nct_id": None,
+                "source": mono.get("source") or "StatPearls",
+                "url": url,
             })
 
     # Handle drug label URLs
@@ -608,6 +629,37 @@ def _format_nice_recs(recs: list[dict], ref_map: Optional[dict[str, dict]] = Non
     return "\n".join(lines)
 
 
+def _format_monographs(monos: list[dict], ref_map: Optional[dict[str, dict]] = None) -> str:
+    """Format StatPearls / NCBI Bookshelf FULL chapters for the data block.
+
+    Prepends the matching [REF_N] token (matched by URL in ref_map) so the LLM
+    cites the chapter, then includes the ENTIRE chapter text (not a snippet) so
+    broad overview sections (pathophysiology, epidemiology, etc.) can ground in it.
+    """
+    url_to_token: dict[str, str] = {}
+    if ref_map:
+        for token_key, art_meta in ref_map.items():
+            u = art_meta.get("url")
+            if u:
+                url_to_token[u] = token_key
+    blocks: list[str] = []
+    for mono in monos or []:
+        if not isinstance(mono, dict):
+            continue
+        text = (mono.get("text") or "").strip()
+        if not text:
+            continue
+        title = (mono.get("title") or "StatPearls").strip()
+        url = mono.get("url") or ""
+        token = url_to_token.get(url)
+        header = f"[{token}]\n" if token else ""
+        header += f"[SOURCE: {title}]\nSource: {mono.get('source') or 'StatPearls'} (NCBI Bookshelf)"
+        if url:
+            header += f"\nURL: {url}"
+        blocks.append(f"{header}\n{text}")
+    return "\n\n".join(blocks)
+
+
 def _format_vector_context(results: list[SearchResult]) -> str:
     """Format vector search results."""
     if not results:
@@ -728,6 +780,11 @@ def _build_adaptive_data_block(
                 parts.append(f"=== MEDLINEPLUS SUMMARY ===\n{d.medlineplus_summary}")
             if d.nice_recommendations:
                 parts.append("=== NICE RECOMMENDATIONS ===\n" + _format_nice_recs(d.nice_recommendations, ref_map))
+            if getattr(d, "book_monographs", None):
+                parts.append(
+                    "=== TEXTBOOK / OVERVIEW (StatPearls / NCBI Bookshelf — full chapters) ===\n"
+                    + _format_monographs(d.book_monographs, ref_map)
+                )
 
         elif query_type == "comparative" and fetched_data.comparative_drug_data:
             for i, drug in enumerate(fetched_data.comparative_drug_data[:3], 1):
@@ -955,7 +1012,14 @@ def build_section_messages(
     if ref_map:
         valid_tokens = ", ".join(sorted(ref_map.keys()))
         max_n = len(ref_map)
-        valid_tokens_str = f"\nVALID CITATION TOKENS: {valid_tokens}\n(Use [REF_1] through [REF_{max_n}] as [source] fields. NEVER write 'Expert opinion' as a token — reserve that for low-confidence backfill.)"
+        valid_tokens_str = (
+            f"\nVALID CITATION TOKENS: {valid_tokens}\n"
+            f"(Use [REF_1] through [REF_{max_n}] as [source] fields. NEVER write 'Expert opinion' as a token — reserve that for low-confidence backfill.)\n"
+            f"GROUNDING IMPERATIVE: {max_n} relevant source(s) were retrieved for this query. Produce AT LEAST 2 content_items "
+            f"for this section, each citing the most relevant [REF_N] token(s). Choose the closest-matching source rather than "
+            f"returning an empty list — an empty content_items list is acceptable ONLY if NONE of the {max_n} sources relate to "
+            f"this section at all. Prefer grounding a claim in a tangentially-relevant retrieved source over omitting it."
+        )
 
     dynamic_system = (
         f"QUERY TYPE: {query_type}\n"
@@ -1134,7 +1198,14 @@ def build_complex_section_messages(
     if ref_map:
         valid_tokens = ", ".join(sorted(ref_map.keys()))
         max_n = len(ref_map)
-        valid_tokens_str = f"\nVALID CITATION TOKENS: {valid_tokens}\n(Use [REF_1] through [REF_{max_n}] as [source] fields. NEVER write 'Expert opinion' as a token — reserve that for low-confidence backfill.)"
+        valid_tokens_str = (
+            f"\nVALID CITATION TOKENS: {valid_tokens}\n"
+            f"(Use [REF_1] through [REF_{max_n}] as [source] fields. NEVER write 'Expert opinion' as a token — reserve that for low-confidence backfill.)\n"
+            f"GROUNDING IMPERATIVE: {max_n} relevant source(s) were retrieved for this query. Produce AT LEAST 2 content_items "
+            f"for this section, each citing the most relevant [REF_N] token(s). Choose the closest-matching source rather than "
+            f"returning an empty list — an empty content_items list is acceptable ONLY if NONE of the {max_n} sources relate to "
+            f"this section at all. Prefer grounding a claim in a tangentially-relevant retrieved source over omitting it."
+        )
 
     dynamic_system = (
         f"QUERY TYPE: complex\n"

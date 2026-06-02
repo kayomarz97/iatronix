@@ -47,7 +47,7 @@ class Settings(BaseSettings):
 
     # Prompt versioning
     prompt_version: int = (
-        3  # v3: deeper disease prompts, higher token budgets, model respect
+        4  # v4: grounding gate + disease-fetch crash fix — invalidates pre-fix cached answers
     )
 
     # Logging
@@ -75,6 +75,10 @@ class Settings(BaseSettings):
     # LLM
     llm_timeout_seconds: int = 90  # disease format at 6144 tokens needs ~55s on Sonnet
     llm_max_tokens: int = 4096
+    # Low temperature: citation/extraction synthesis must be near-deterministic. The
+    # provider default (~0.7-1.0) caused bimodal disease output (full answer vs empty
+    # sections) on identical prompts. 0.2 stabilises grounding without flattening prose.
+    llm_temperature: float = 0.2
     llm_retry_max_attempts: int = 1
     llm_retry_backoff_seconds: float = 2.0
 
@@ -213,6 +217,14 @@ class Settings(BaseSettings):
     # When True: every answer goes through format mode with ≥1 citable source, or returns no_evidence.
     # Set False only for emergency rollback if broadening loop misbehaves.
     evidence_floor_enabled: bool = True
+
+    # Grounding Gate — guarantees the RENDERED answer is evidence-grounded, not training data.
+    # After post-processing, ungrounded ("Expert opinion"/sourceless) claims are stripped; if too
+    # few grounded claims remain the answer is replaced with the honest no_evidence terminal.
+    # This is the structural backstop for silent upstream fetch failures (data_fetcher fails closed-silent).
+    grounding_floor_enabled: bool = True
+    grounding_floor_min_ratio: float = 0.40   # below this grounded-claim ratio → strip ungrounded
+    grounding_floor_min_claims: int = 2        # fewer than this many grounded claims → honest card
 
     # Cloudflare R2 Storage (for PDF uploads)
     r2_account_id: str = ""

@@ -141,7 +141,7 @@ async def run_search_graph(
     query_type: str,
     routing: Any,
     normalized_model: str,
-    api_fetch_timeout: float = 31.0,
+    api_fetch_timeout: float = 45.0,  # accommodates gather (~20s) + concurrent StatPearls full-chapter fetch
     use_api_fetch: bool = True,
     use_vector: bool = True,
     user_llm_key: str | None = None,
@@ -180,4 +180,16 @@ async def run_search_graph(
     }
 
     final = await _search_graph.ainvoke(initial)
-    return final.get("fetched_data"), final.get("vector_results", []), final.get("sem_result")
+    fd = final.get("fetched_data")
+    vr = final.get("vector_results", []) or []
+    sem = final.get("sem_result")
+    # Observability: one line per query proving the LangGraph search graph executed
+    # its three parallel nodes (grep "langgraph search_graph" to confirm it is live).
+    logger.info(
+        "langgraph search_graph ran [fetch|vector|semantic_cache]: fetch=%s vector_hits=%d semantic_cache=%s type=%s",
+        "ok" if fd is not None else "empty",
+        len(vr),
+        "hit" if sem else "miss",
+        query_type,
+    )
+    return fd, vr, sem
