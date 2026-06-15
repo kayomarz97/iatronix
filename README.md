@@ -2,7 +2,7 @@
 
 Evidence-based medical reference for clinical professionals. Search real-time data from FDA, PubMed, NICE, and your own documents — formatted with AI, graded by evidence.
 
-**Live:** [med.debkay.com](https://med.debkay.com)
+**Live:** [med.kayomarz.com](https://med.kayomarz.com)
 
 ---
 
