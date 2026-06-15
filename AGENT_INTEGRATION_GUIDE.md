@@ -311,13 +311,16 @@ These gates control which pipeline steps are active. Toggle in `.env` without co
 | `DSPY_ENABLED` | `true` | `true` | DSPy adaptive two-pass pipeline |
 | `ADAPTIVE_SECOND_PASS_ENABLED` | `true` | `true` | Retry with relaxed constraints on sparse output |
 | `MODEL_ROUTING_ENABLED` | `true` | `true` | Auto-select Haiku vs Sonnet based on query type |
-| `PARALLEL_SECTIONS_ENABLED` | `true` | `false` | Phase-1 BLUF + parallel per-section LLM agents; progressive SSE display |
-| `RESUMABLE_STREAM_ENABLED` | `true` | `false` | Durable streaming jobs — query runs detached + persists to a Redis stream; client reconnects after a disconnect (mobile tab switch / screen off) and replays missed events |
-| `MULTI_VARIATION_SEARCH_ENABLED` | `true` | `false` | Fetch using DSPy `search_variants` (phrasing-diverse) to de-bias the evidence base (anti-sycophancy) |
-| `SECTION_REFETCH_ENABLED` | `true` | `false` | Per-section LangGraph re-fetch + re-synthesis for sections still empty after LLM retries |
+| `PARALLEL_SECTIONS_ENABLED` | `true` | `true` | Phase-1 BLUF + parallel per-section LLM agents; progressive SSE display |
+| `RESUMABLE_STREAM_ENABLED` | `true` | `true` | Durable streaming jobs — query runs detached + persists to a Redis stream; client reconnects after a disconnect (mobile tab switch / screen off) and replays missed events |
+| `MULTI_VARIATION_SEARCH_ENABLED` | `true` | `true` | Fetch using DSPy `search_variants` (phrasing-diverse) to de-bias the evidence base (anti-sycophancy) |
+| `SECTION_REFETCH_ENABLED` | `true` | `true` | Per-section LangGraph re-fetch + re-synthesis for sections still empty after LLM retries |
+| `DEEP_SEARCH_ENABLED` | `true` | `true` | Bounded citation-chasing (iCite forward/backward) when retrieval is thin |
+| `STANCE_NEUTRALIZER_ENABLED` | `true` | `true` | Rewrite loaded queries to a neutral clinical question for retrieval (anti-sycophancy) |
+| `GROUNDING_FLOOR_ENABLED` | `true` | `true` | Replace ungrounded answers with the honest no-evidence card |
 | `VECTOR_SEARCH_ENABLED` | `false` | `false` | pgvector similarity search from uploaded PDFs |
 | `SEMANTIC_CACHE_ENABLED` | `false` | `false` | Cache similar (not just identical) queries |
-| `FAIL_CLOSED_EVIDENCE_ONLY` | `true` | `true` | Reject responses without evidence citations |
+| `FAIL_CLOSED_EVIDENCE_ONLY` | `false` | `false` | Legacy evidence-citation gate — superseded by `GROUNDING_FLOOR_ENABLED` (both envs set it off) |
 
 ---
 
@@ -655,8 +658,8 @@ When adding a new fetcher, ensure each item has at least one of: `pmid`, `nct_id
    - `_quarantine_sourceless_items()` (v2) uses registry match with Jaccard ≥0.5 to accept refs without identifiers — blocks hallucinations, rescues real articles.
 
 ### Configuration
-- `STANCE_NEUTRALIZER_ENABLED` (default `true` on dev, `false` on prod) — instant kill-switch.
-- `REFERENCE_FILTER_V2_ENABLED` (default `true` on dev, `false` on prod) — independent control of orphan rescue + strict reference filter.
+- `STANCE_NEUTRALIZER_ENABLED` (default `true`; on in dev and prod) — instant kill-switch.
+- `REFERENCE_FILTER_V2_ENABLED` (default `true`; on in dev and prod) — independent control of orphan rescue + strict reference filter.
 
 ### Testing Stance Extraction
 ```bash
@@ -676,12 +679,12 @@ pytest backend/tests/test_prompt_injection.py -v
 
 | Area | Status | Notes |
 |------|--------|-------|
-| Parallel section agents | **Live** (`PARALLEL_SECTIONS_ENABLED=true` on dev) | Phase-1 BLUF + Phase-2 parallel sections; progressive SSE display |
+| Parallel section agents | **Live** (`PARALLEL_SECTIONS_ENABLED=true` on dev + prod) | Phase-1 BLUF + Phase-2 parallel sections; progressive SSE display |
 | Drug interactions in comparative | **Live** | Auto-injected when comparing ≥2 drugs |
 | Progressive SSE streaming | **Live** | `bluf` + `section_complete` events; frontend renders progressively |
-| Resumable streaming (disconnect-proof) | **Live** (`RESUMABLE_STREAM_ENABLED` dev) | Detached producer + Redis-stream event log; client reconnects via `job_id`+`Last-Event-ID`. Fixes mobile tab-switch / screen-off failures. See AGENT_ARCHITECTURE "Resumable Streaming Jobs" |
-| Multi-variation retrieval (anti-sycophancy) | **Live** (`MULTI_VARIATION_SEARCH_ENABLED` dev) | `search_variants` now fetched (was logged-only) in `_expand_retrieval_if_needed` |
-| Per-section LangGraph re-fetch | **Live** (`SECTION_REFETCH_ENABLED` dev) | `run_section_refetch_graph` fills sections still empty after LLM retries; merges into FetchedData so it stays grounded |
+| Resumable streaming (disconnect-proof) | **Live** (`RESUMABLE_STREAM_ENABLED` dev + prod) | Detached producer + Redis-stream event log; client reconnects via `job_id`+`Last-Event-ID`. Fixes mobile tab-switch / screen-off failures. See AGENT_ARCHITECTURE "Resumable Streaming Jobs" |
+| Multi-variation retrieval (anti-sycophancy) | **Live** (`MULTI_VARIATION_SEARCH_ENABLED` dev + prod) | `search_variants` now fetched (was logged-only) in `_expand_retrieval_if_needed` |
+| Per-section LangGraph re-fetch | **Live** (`SECTION_REFETCH_ENABLED` dev + prod) | `run_section_refetch_graph` fills sections still empty after LLM retries; merges into FetchedData so it stays grounded |
 | Vector search (pgvector) | Disabled (`VECTOR_SEARCH_ENABLED=false`) | Infrastructure exists; embeddings stored; needs activation and tuning |
 | Semantic cache | Disabled (`SEMANTIC_CACHE_ENABLED=false`) | Would cache similar (not just identical) queries using cosine similarity |
 | PDF document pipeline | Partial | Upload works, vectors stored, but RAG retrieval not integrated into main query path |
