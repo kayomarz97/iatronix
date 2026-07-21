@@ -317,6 +317,7 @@ These gates control which pipeline steps are active. Toggle in `.env` without co
 | `SECTION_REFETCH_ENABLED` | `true` | `true` | Per-section LangGraph re-fetch + re-synthesis for sections still empty after LLM retries |
 | `DEEP_SEARCH_ENABLED` | `true` | `true` | Bounded citation-chasing (iCite forward/backward) when retrieval is thin |
 | `ADAPTIVE_CROSS_STRATEGY_FALLBACK_ENABLED` | `true` | `false` | Confidence-gated cross-strategy fallback: when a typed fetch returns fewer than `CROSS_STRATEGY_MIN_UNIQUE_HITS` (default 3) DISTINCT articles, fire ONE complementary strategy (a bounded slice of "fetch-all"). Leaves well-served queries untouched. See `test/results/FINDINGS.md` + `test/results/DEV_VS_MAIN_FINDINGS.md` |
+| `NON_MEDICAL_GUARD_ENABLED` | `true` | `false` | Non-medical / out-of-scope fast-guard: when the analyzer extracts zero medical terms and the query falls to the default `complex` sink, return an honest "clinical reference assistant" reply (`out_of_scope`) with no fetch/LLM, instead of searching + free-answering. Conservative (`_is_non_medical`) to avoid rejecting real clinical questions |
 | `STANCE_NEUTRALIZER_ENABLED` | `true` | `true` | Rewrite loaded queries to a neutral clinical question for retrieval (anti-sycophancy) |
 | `GROUNDING_FLOOR_ENABLED` | `true` | `true` | Replace ungrounded answers with the honest no-evidence card |
 | `VECTOR_SEARCH_ENABLED` | `false` | `false` | pgvector similarity search from uploaded PDFs |

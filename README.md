@@ -74,6 +74,8 @@ Query
   │
   ├─ 3. Classification → drug / disease / comparative / procedure / evidence / complex
   │     User hint > DSPy analysis > LLM classifier > safe "complex" fallback
+  │     Non-medical guard [NON_MEDICAL_GUARD_ENABLED]: if no medical term is found at all,
+  │     politely decline instead of searching — no fetch, no generation
   │
   ├─ 4. Cache lookup
   │     Redis exact-match (24h) on the normalized query  → instant return on hit
@@ -89,8 +91,10 @@ Query
   │     Penalties for animal-only / off-population studies
   │     Highest-evidence articles survive the abstract budget
   │
-  ├─ 7. Evidence floor + deep search
-  │     has_minimum_evidence()? If not, up to 5 progressive broadening strategies run
+  ├─ 7. Confidence gate: enough distinct evidence?  [ADAPTIVE_CROSS_STRATEGY_FALLBACK_ENABLED]
+  │     Same-strategy second pass + phrasing variants; if still under 3 distinct articles,
+  │     borrow ONE complementary strategy (procedure→evidence, disease→evidence, …)
+  │     Then evidence floor: has_minimum_evidence()? If not, up to 5 progressive broadenings run
   │     Still thin? Deep citation-chasing [DEEP_SEARCH_ENABLED] follows iCite references
   │     All strategies exhausted → honest "no evidence" card (no generation)
   │
@@ -270,6 +274,8 @@ Behavior is toggled in `.env` without code changes. The main ones:
 | `GROUNDING_FLOOR_ENABLED` | Replace ungrounded answers with the honest "no evidence" card |
 | `MODEL_ROUTING_ENABLED` | Auto-select model tier by query type |
 | `SEMANTIC_CACHE_ENABLED` | Reuse results for near-duplicate (not just identical) queries |
+| `ADAPTIVE_CROSS_STRATEGY_FALLBACK_ENABLED` | When a search returns too few distinct articles, borrow one complementary retrieval strategy — a bounded, gated slice of "search everything" that leaves well-served queries untouched |
+| `NON_MEDICAL_GUARD_ENABLED` | Politely decline clearly non-clinical questions (an honest "clinical reference assistant" reply) instead of searching the literature and answering anyway |
 
 ---
 

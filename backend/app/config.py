@@ -194,6 +194,11 @@ class Settings(BaseSettings):
     adaptive_cross_strategy_fallback_enabled: bool = False
     cross_strategy_min_unique_hits: int = 3       # fire fallback when unique articles < this (5 diluted precision — see test/results/DEV_VS_MAIN_FINDINGS.md)
 
+    # Non-medical / out-of-scope fast-guard — when the analyzer extracts ZERO medical terms and the
+    # query fell to the default 'complex' sink, short-circuit with an honest "clinical assistant" scope
+    # reply instead of burning fetches + free-answering. Conservative (see _is_non_medical). Default OFF.
+    non_medical_guard_enabled: bool = False
+
     # Per-section LangGraph re-fetch — when a section is still empty after LLM retries,
     # fetch targeted evidence for that section's topic and re-synthesize just that section.
     # Dev true / prod false.

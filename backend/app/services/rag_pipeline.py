@@ -2294,6 +2294,27 @@ def _sanitize_entities(entities: list[str] | None) -> list[str]:
     return cleaned[:4]
 
 
+def _is_non_medical(
+    query_type: str,
+    user_forced_type: str | None,
+    entities: list[str] | None,
+    condition_context: str | None,
+    answer_entities: list[str] | None,
+) -> bool:
+    """Conservative out-of-scope check for the non-medical fast-guard.
+
+    Returns True ONLY when the analyzer extracted NO medical terms at all AND the query fell to the
+    default 'complex' sink AND the caller did not force a type. Deliberately strict: a real clinical
+    question almost always yields at least one entity / condition / answer entity, so an empty
+    extraction is a strong (low-false-positive) signal that the query is not clinical.
+    """
+    if user_forced_type:
+        return False
+    if query_type != "complex":
+        return False
+    return not (entities or []) and not (condition_context or "").strip() and not (answer_entities or [])
+
+
 async def _analyze_query_with_dspy(
     query: str,
     *,
@@ -3200,6 +3221,38 @@ async def process_query(
             query_type, request.query[:60],
         )
         query_type = "complex"
+
+    # Non-medical / out-of-scope fast-guard (conservative, flag-gated). If the analyzer extracted
+    # ZERO medical terms and the query fell to the default 'complex' sink, it is almost certainly not
+    # clinical — short-circuit with an honest scope reply instead of burning fetches + free-answering.
+    if settings.non_medical_guard_enabled and _is_non_medical(
+        query_type,
+        request.query_type,
+        analysis_entities,
+        condition_context,
+        (query_analysis or {}).get("answer_entities") if query_analysis else None,
+    ):
+        latency_ms = int((time.time() - start_time) * 1000)
+        logger.info("process_query: non-medical guard triggered for query=%r", request.query[:80])
+        return QueryResponse(
+            query_type=query_type,
+            model_used=normalized_request_model,
+            response=DegradedResponse(
+                message=(
+                    "I'm a clinical reference assistant — I answer medical questions about drugs, "
+                    "diseases, symptoms, procedures, and clinical evidence. This doesn't look like a "
+                    "clinical question, so I didn't search the medical literature for it."
+                ),
+                suggestion=(
+                    "Rephrase with a specific drug, disease, symptom, or procedure — for example "
+                    "\"first-line treatment for CKD with type 2 diabetes\"."
+                ),
+                error_code="out_of_scope",
+            ),
+            disclaimer=DISCLAIMER,
+            latency_ms=latency_ms,
+            validation_warnings=["non_medical_guard: no medical entities extracted"],
+        )
 
     # Track query frequency for self-improvement (fire-and-forget)
     if redis_client:
