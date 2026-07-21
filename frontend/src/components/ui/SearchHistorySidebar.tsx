@@ -5,7 +5,7 @@ import { Clock, ChevronRight, Trash2, X } from "lucide-react";
 import { useSearchHistory, type HistoryItem } from "@/hooks/useSearchHistory";
 
 const TYPE_COLORS: Record<string, string> = {
-  drug:        "#3b82f6",
+  drug:        "#10b981",
   disease:     "#8b5cf6",
   comparative: "#f59e0b",
   general:     "#10b981",

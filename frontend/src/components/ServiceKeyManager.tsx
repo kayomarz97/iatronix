@@ -138,7 +138,7 @@ export const ServiceKeyManager: React.FC<ServiceKeyManagerProps> = ({
                     onClick={() => handleSave(svc.name)}
                     disabled={!inputs[svc.name]?.trim() || saving === svc.name}
                     style={{
-                      background: "#3b82f6",
+                      background: "var(--accent)",
                       border: "none",
                       borderRadius: 6,
                       padding: "0.4rem 0.8rem",

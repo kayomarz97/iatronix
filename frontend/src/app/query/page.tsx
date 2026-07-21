@@ -72,7 +72,7 @@ function SidebarNav({ data }: { data: AdaptiveResponse }) {
       {flowcharts.map((fc, i) => (
         <button key={`fc-${i}`} onClick={() => scrollTo(`fc-${i}`)}
           className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-left hover:bg-[var(--bg-elevated)] transition-colors group">
-          <span className="w-1.5 h-1.5 rounded-sm shrink-0" style={{ background: "#818CF8" }} />
+          <span className="w-1.5 h-1.5 rounded-sm shrink-0" style={{ background: "var(--accent)" }} />
           <span className="text-[0.78rem] text-[var(--text-secondary)] group-hover:text-[var(--text-primary)] leading-snug line-clamp-2">
             {fc.title || "Pathway"}
           </span>
@@ -81,7 +81,7 @@ function SidebarNav({ data }: { data: AdaptiveResponse }) {
       {tables.map((tbl, i) => (
         <button key={`tbl-${i}`} onClick={() => scrollTo(`tbl-${i}`)}
           className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-left hover:bg-[var(--bg-elevated)] transition-colors group">
-          <span className="w-1.5 h-1.5 rounded-sm shrink-0" style={{ background: "#22D3EE" }} />
+          <span className="w-1.5 h-1.5 rounded-sm shrink-0" style={{ background: "var(--accent-2)" }} />
           <span className="text-[0.78rem] text-[var(--text-secondary)] group-hover:text-[var(--text-primary)] leading-snug line-clamp-2">
             {tbl.title || "Table"}
           </span>

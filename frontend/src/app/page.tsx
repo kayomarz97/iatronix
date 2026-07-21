@@ -118,9 +118,9 @@ export default function HomePage() {
           }}
         >
           <svg width="28" height="28" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
-            <path d="M 150 160 L 70 256 L 150 352" stroke="#818CF8" fill="none" strokeWidth="40" strokeLinecap="round" strokeLinejoin="round" />
-            <path d="M 362 160 L 442 256 L 362 352" stroke="#818CF8" fill="none" strokeWidth="40" strokeLinecap="round" strokeLinejoin="round" />
-            <path d="M 70 256 L 180 256 L 215 140 L 275 380 L 310 256 L 442 256" stroke="#22D3EE" fill="none" strokeWidth="40" strokeLinecap="round" strokeLinejoin="round" />
+            <path d="M 150 160 L 70 256 L 150 352" stroke="var(--accent)" fill="none" strokeWidth="40" strokeLinecap="round" strokeLinejoin="round" />
+            <path d="M 362 160 L 442 256 L 362 352" stroke="var(--accent)" fill="none" strokeWidth="40" strokeLinecap="round" strokeLinejoin="round" />
+            <path d="M 70 256 L 180 256 L 215 140 L 275 380 L 310 256 L 442 256" stroke="var(--accent)" fill="none" strokeWidth="40" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         </div>
         <h1

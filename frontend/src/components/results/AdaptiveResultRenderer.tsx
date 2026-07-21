@@ -126,7 +126,7 @@ const mdComponents: React.ComponentProps<typeof ReactMarkdown>["components"] = {
     <code className="bg-black/10 dark:bg-white/10 rounded px-1 text-xs font-mono">{children}</code>
   ),
   a: ({ href, children }) => (
-    <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">{children}</a>
+    <a href={href} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">{children}</a>
   ),
   table: ({ children }) => <table className="w-full text-xs border-collapse my-2">{children}</table>,
   th: ({ children }) => <th className="border border-border px-2 py-1 font-semibold text-left">{children}</th>,
@@ -152,7 +152,7 @@ function ClaimRow({ item, fetchSources }: { item: AdaptiveContentItem; fetchSour
       {displaySource ? (
         sourceHref ? (
           <a href={sourceHref} target="_blank" rel="noopener noreferrer"
-             className="text-[10px] text-blue-400 hover:underline max-w-[120px] text-right leading-tight">
+             className="text-[10px] text-primary hover:underline max-w-[120px] text-right leading-tight">
             {displaySource}
           </a>
         ) : (
@@ -161,7 +161,7 @@ function ClaimRow({ item, fetchSources }: { item: AdaptiveContentItem; fetchSour
           </span>
         )
       ) : (
-        <span className="text-[10px] text-amber-600 max-w-[120px] text-right leading-tight italic" title="Not backed by a fetched article — based on training knowledge">
+        <span className="text-[10px] text-warning max-w-[120px] text-right leading-tight italic" title="Not backed by a fetched article — based on training knowledge">
           Unverified
         </span>
       )}
@@ -222,13 +222,33 @@ function EvidenceQualityBar({ sections }: { sections: AdaptiveSection[] }) {
   );
 }
 
+// ── Section semantic colour (A×B hybrid) ────────────────────────────────────
+// Maps a section title → { colour token, category tag } by keyword. Unknown titles
+// fall back to neutral (returns null → ResultSection renders its default style).
+function sectionMeta(title: string): { color: string; tag: string } | null {
+  const t = (title || "").toLowerCase();
+  const m = (color: string, tag: string) => ({ color: `var(${color})`, tag });
+  if (/contraindicat/.test(t)) return m("--sec-contra", "Do not use");
+  if (/interaction/.test(t)) return m("--sec-inter", "Watch with");
+  if (/(side.?effect|adverse|toxicit|warning|complication|precaution|risk)/.test(t)) return m("--sec-adv", "Caution");
+  if (/(dosing|dosage|administ|regimen)/.test(t)) return m("--sec-dose", "How to give");
+  if (/(mechanism|pharmacodynam|pharmacolog)/.test(t)) return m("--sec-mech", "Pharmacology");
+  if (/(pharmacokinet|special.?population)/.test(t)) return m("--sec-slate", "Detail");
+  if (/monitor/.test(t)) return m("--sec-monitor", "Follow-up");
+  if (/(technique|procedure|step|surgical|approach)/.test(t)) return m("--sec-proc", "Technique");
+  if (/(symptom|presentation|diagnos|sign|staging|pathophys|feature)/.test(t)) return m("--sec-dx", "Recognise");
+  if (/(indication|efficacy|benefit|overview|management|treatment|first.?line|therapy)/.test(t)) return m("--sec-ind", "Use it for");
+  return null;
+}
+
 // ── Section card ─────────────────────────────────────────────────────────────
 function SectionCard({ section, index, fetchSources }: { section: AdaptiveSection; index: number; fetchSources?: string[] }) {
   const hasItems =
     Array.isArray(section.content_items) && section.content_items.length > 0;
+  const meta = sectionMeta(section.title);
 
   return (
-    <ResultSection title={section.title} id={`sec-${index}`} className="mb-4">
+    <ResultSection title={section.title} id={`sec-${index}`} className="mb-4" accent={meta?.color} tag={meta?.tag}>
       <div className="mb-4 flex items-center justify-between gap-2 border-b border-border/70 pb-3">
         <EvidenceBadge loe={section.loe ?? undefined} cor={section.cor ?? undefined} />
       </div>
@@ -271,7 +291,7 @@ function ReferenceRow({ ref: r, index }: { ref: AdaptiveReference; index: number
             href={r.url}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-blue-600 dark:text-blue-400 hover:underline"
+            className="text-primary dark:text-primary hover:underline"
           >
             {label}
           </a>
@@ -280,7 +300,7 @@ function ReferenceRow({ ref: r, index }: { ref: AdaptiveReference; index: number
             href={fallbackUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-blue-600 dark:text-blue-400 hover:underline"
+            className="text-primary dark:text-primary hover:underline"
           >
             {label}
           </a>

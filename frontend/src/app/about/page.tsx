@@ -57,6 +57,18 @@ const LESSONS = [
     title: "Not every question is a clinical question",
     desc: "Early on the pipeline would dutifully search PubMed for anything typed into it, including questions with no drug, disease, symptom, or procedure in them. That wastes retrieval and invites confidently-worded answers to questions the literature can't speak to. A scope guard now runs first: if no medical entities are extracted, the app declines honestly and never searches — a plain 'this isn't a clinical question' is safer and more useful than a padded non-answer.",
   },
+  {
+    title: "A feature can be live and still do nothing",
+    desc: "We shipped a new retrieval fallback meant to rescue thin result sets — code merged, unit tests green, feature 'live'. It also did nothing. It sat behind an early return with such a low trigger bar that the escalation path it guarded almost never ran on the queries it was built for. The helper worked perfectly in isolation; the feature never fired in practice. The lesson: test that a feature actually triggers on its target case, not just that its internals return the right value when you call them directly.",
+  },
+  {
+    title: "One run can lie; three runs tell the truth",
+    desc: "Live PubMed does not return identical results run to run — ranking and availability shift with load. A single before/after comparison once showed a dramatic 'rescue': the new path looked like it doubled the evidence found. Re-running it, the effect was network noise, not the change. Taking the median of three runs collapsed the improvement to roughly nothing. The lesson: any metric measured against a noisy external system has to be sampled more than once before a delta is trustworthy.",
+  },
+  {
+    title: "The right amount of evidence is a dial, not a maximum",
+    desc: "It is tempting to treat retrieval as 'more is better' and keep widening the net. We raised a relevance threshold to pull in more articles and answer quality got worse, not better — the extra results were mostly off-topic and dragged the model toward hedging and false consensus. A tighter setting produced cleaner, more decisive answers. The lesson: retrieval breadth is a precision/recall trade-off to tune for the task, not a number to maximise.",
+  },
 ];
 
 const API_SOURCES = [

@@ -95,7 +95,7 @@ function ArticleTicker({ articles }: { articles: FetchedArticle[] }) {
       <div className="flex items-center gap-2 mb-2">
         <span
           className="inline-block w-1.5 h-1.5 rounded-full"
-          style={{ background: "#3b82f6", animation: "pulse 1s ease-in-out infinite" }}
+          style={{ background: "var(--accent)", animation: "pulse 1s ease-in-out infinite" }}
         />
         <span className="text-[10px] uppercase tracking-widest font-semibold" style={{ color: "var(--text-muted)" }}>
           {totalSeen >= articles.length && articles.length > 0
@@ -150,7 +150,7 @@ function FetchingDetail({ articles }: { articles: FetchedArticle[] }) {
           className="flex items-center gap-2 text-[11px]"
           style={{ animation: "fadeSlideIn 0.3s ease-out both" }}
         >
-          <span style={{ color: "#10b981", fontWeight: 700 }}>✓</span>
+          <span style={{ color: "var(--success)", fontWeight: 700 }}>✓</span>
           <span style={{ color: "var(--text-secondary)" }}>{name}</span>
         </div>
       ))}
@@ -158,13 +158,13 @@ function FetchingDetail({ articles }: { articles: FetchedArticle[] }) {
       {/* Next source pulsing — or cross-ref loop once all done */}
       {!allDone && (
         <div className="flex items-center gap-2 text-[11px]">
-          <span style={{ display: "inline-block", width: 7, height: 7, borderRadius: "50%", background: "#3b82f6", animation: "pulse 1s ease-in-out infinite" }} />
+          <span style={{ display: "inline-block", width: 7, height: 7, borderRadius: "50%", background: "var(--accent)", animation: "pulse 1s ease-in-out infinite" }} />
           <span style={{ color: "var(--text-muted)" }}>{REAL_SOURCES[visibleCount]}…</span>
         </div>
       )}
       {allDone && (
         <div className="flex items-center gap-2 text-[11px] mt-1">
-          <span style={{ display: "inline-block", width: 7, height: 7, borderRadius: "50%", background: "#f59e0b", animation: "pulse 1.4s ease-in-out infinite" }} />
+          <span style={{ display: "inline-block", width: 7, height: 7, borderRadius: "50%", background: "var(--warning)", animation: "pulse 1.4s ease-in-out infinite" }} />
           <span style={{ color: "var(--text-muted)" }}>Cross-referencing results…</span>
         </div>
       )}
@@ -173,7 +173,7 @@ function FetchingDetail({ articles }: { articles: FetchedArticle[] }) {
 
       {articles.length > 0 && (
         <div className="flex items-center gap-2 text-[11px] mt-2">
-          <span style={{ display: "inline-block", width: 7, height: 7, borderRadius: "50%", background: "#6366f1", animation: "pulse 1.6s ease-in-out infinite" }} />
+          <span style={{ display: "inline-block", width: 7, height: 7, borderRadius: "50%", background: "var(--accent)", animation: "pulse 1.6s ease-in-out infinite" }} />
           <span style={{ color: "var(--text-muted)" }}>Scanning cited references…</span>
         </div>
       )}
@@ -203,7 +203,7 @@ export const LoadingScreen: React.FC<LoadingScreenProps> = ({ currentStep, fetch
         }
         @keyframes rowGlow {
           0%, 100% { box-shadow: none; }
-          50%       { box-shadow: inset 3px 0 0 #3b82f6, 0 0 8px rgba(59,130,246,0.15); }
+          50%       { box-shadow: inset 3px 0 0 var(--accent), 0 0 8px var(--accent-glow); }
         }
       `}</style>
 
@@ -241,21 +241,21 @@ export const LoadingScreen: React.FC<LoadingScreenProps> = ({ currentStep, fetch
                   className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 text-[11px] font-bold"
                   style={
                     status === "done"
-                      ? { background: "#10b981", color: "#fff" }
+                      ? { background: "var(--success)", color: "#fff" }
                       : status === "active"
-                      ? { border: "2px solid #3b82f6", color: "#3b82f6" }
-                      : { border: "2px solid #475569", color: "#475569" }
+                      ? { border: "2px solid var(--accent)", color: "var(--accent)" }
+                      : { border: "2px solid var(--text-muted)", color: "var(--text-muted)" }
                   }
                 >
                   {status === "done" ? "✓" : status === "active" ? (
-                    <span style={{ display: "inline-block", width: 6, height: 6, borderRadius: "50%", background: "#3b82f6", animation: "pulse 1.2s ease-in-out infinite" }} />
+                    <span style={{ display: "inline-block", width: 6, height: 6, borderRadius: "50%", background: "var(--accent)", animation: "pulse 1.2s ease-in-out infinite" }} />
                   ) : i + 1}
                 </div>
                 <div className="flex-1 min-w-0">
                   <span
                     className="text-sm"
                     style={{
-                      color: status === "done" ? "#10b981" : status === "active" ? "var(--text-primary)" : "var(--text-muted)",
+                      color: status === "done" ? "var(--success)" : status === "active" ? "var(--text-primary)" : "var(--text-muted)",
                       fontWeight: status === "active" ? 600 : 400,
                     }}
                   >

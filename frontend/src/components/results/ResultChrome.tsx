@@ -92,24 +92,43 @@ export function ResultSection({
   children,
   className = "",
   id,
+  accent,
+  tag,
 }: {
   title: string;
   eyebrow?: string;
   children: ReactNode;
   className?: string;
   id?: string;
+  accent?: string; // semantic section colour (A×B hybrid) — CSS colour/token string
+  tag?: string;    // colour-tinted category label shown above the heading
 }) {
   return (
     <section
       id={id}
-      className={`reveal rounded-[24px] border border-border/80 bg-surface/90 p-5 shadow-[0_16px_40px_rgba(2,8,23,0.12)] backdrop-blur-sm ${className}`}
+      className={`reveal rounded-[20px] border border-border/80 bg-surface/90 p-5 shadow-[0_16px_40px_rgba(2,8,23,0.12)] backdrop-blur-sm ${className}`}
+      style={accent ? { borderLeft: `3px solid ${accent}` } : undefined}
     >
-      {eyebrow && (
+      {accent && tag ? (
+        <span
+          className="inline-flex items-center gap-1 font-mono text-[10px] font-bold uppercase tracking-[0.10em] px-2 py-[3px] rounded-[5px]"
+          style={{
+            color: accent,
+            background: `color-mix(in srgb, ${accent} 14%, transparent)`,
+            border: `1px solid color-mix(in srgb, ${accent} 32%, transparent)`,
+          }}
+        >
+          {tag}
+        </span>
+      ) : eyebrow ? (
         <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-text-muted">
           {eyebrow}
         </p>
-      )}
-      <h3 className="mt-1 text-lg font-semibold tracking-tight text-text">
+      ) : null}
+      <h3
+        className="mt-1.5 text-lg font-semibold tracking-tight text-text"
+        style={accent ? { color: accent } : undefined}
+      >
         {title}
       </h3>
       <div className="mt-4">{children}</div>
@@ -147,7 +166,7 @@ export function ResultChipRow({
 
   const toneClass =
     tone === "accent"
-      ? "border-sky-500/20 bg-sky-500/10 text-sky-200"
+      ? "border-primary/20 bg-primary/10 text-primary"
       : "border-border/70 bg-background/70 text-text-secondary";
 
   return (

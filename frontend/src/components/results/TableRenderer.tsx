@@ -8,18 +8,18 @@ interface TableRendererProps {
 }
 
 const LOE_CLR: Record<string, string> = {
-  I: "#10b981",
-  II: "#3b82f6",
-  III: "#64748b",
+  I: "var(--success)",
+  II: "var(--warning)",
+  III: "var(--text-muted)",
 };
 
 const COR_CLR: Record<string, string> = {
-  I: "#10b981",
-  IIa: "#06b6d4",
-  IIb: "#f59e0b",
-  III: "#ef4444",
-  "III-no-benefit": "#f97316",
-  "III-harm": "#ef4444",
+  I: "var(--success)",
+  IIa: "var(--accent)",
+  IIb: "var(--warning)",
+  III: "var(--danger)",
+  "III-no-benefit": "var(--warning)",
+  "III-harm": "var(--danger)",
 };
 
 function CellBadge({ value, color }: { value: string; color: string }) {
@@ -27,8 +27,8 @@ function CellBadge({ value, color }: { value: string; color: string }) {
     <span
       className="font-mono text-[10px] px-[5px] py-[1px] rounded-[4px] whitespace-nowrap"
       style={{
-        backgroundColor: color + "2e",
-        border: `1px solid ${color}59`,
+        backgroundColor: `color-mix(in srgb, ${color} 18%, transparent)`,
+        border: `1px solid color-mix(in srgb, ${color} 36%, transparent)`,
         color,
       }}
     >
@@ -42,11 +42,11 @@ function renderCell(value: string, headerLower: string, colIdx: number) {
     return <span className="font-semibold text-[var(--text-primary)]">{value}</span>;
   }
   if (headerLower.includes("loe") && value) {
-    const color = LOE_CLR[value] ?? "#64748b";
+    const color = LOE_CLR[value] ?? "var(--text-muted)";
     return <CellBadge value={`LoE ${value}`} color={color} />;
   }
   if (headerLower.includes("cor") && value) {
-    const color = COR_CLR[value] ?? "#64748b";
+    const color = COR_CLR[value] ?? "var(--text-muted)";
     return <CellBadge value={`Class ${value}`} color={color} />;
   }
   return <span className="text-[var(--text-primary)]">{value}</span>;
@@ -63,7 +63,7 @@ export function TableRenderer({ tables }: TableRendererProps) {
             {table.title && (
               <div className="flex items-center gap-2 px-4 py-2.5 border-b border-[var(--border)]"
                    style={{ background: "var(--bg-elevated)" }}>
-                <div className="w-2 h-2 rounded-sm flex-shrink-0" style={{ background: "#22D3EE" }} />
+                <div className="w-2 h-2 rounded-sm flex-shrink-0" style={{ background: "var(--accent)" }} />
                 <span className="text-sm font-semibold text-[var(--text-primary)]">{table.title}</span>
               </div>
             )}
