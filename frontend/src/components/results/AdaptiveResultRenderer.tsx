@@ -514,8 +514,8 @@ export function AdaptiveResultRenderer({ data, fetchSources, hideEvidenceBar, is
         title={data.bluf.headline}
         subtitle={data.response_focus}
         stats={[
-          { label: "sections", value: data.sections.length },
-          { label: "references", value: data.references.length },
+          { label: "sections", value: data.sections?.length ?? 0 },
+          { label: "references", value: data.references?.length ?? 0 },
           { label: "depth", value: data.depth },
         ]}
         directAnswer={
@@ -525,9 +525,9 @@ export function AdaptiveResultRenderer({ data, fetchSources, hideEvidenceBar, is
         }
         context={
           <>
-            {data.bluf.key_points.length > 0 && (
+            {(data.bluf.key_points?.length ?? 0) > 0 && (
               <ul className="list-disc space-y-1 pl-5">
-                {data.bluf.key_points.map((point, i) => (
+                {(data.bluf.key_points ?? []).map((point, i) => (
                   <li key={i}>{point}</li>
                 ))}
               </ul>

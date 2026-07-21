@@ -7,6 +7,7 @@ import { LoadingScreen } from "@/components/LoadingScreen";
 import { SearchHistorySidebar } from "@/components/ui/SearchHistorySidebar";
 import { DisclaimerBanner } from "@/components/results/DisclaimerBanner";
 import { AdaptiveResultRenderer } from "@/components/results/AdaptiveResultRenderer";
+import { IncompleteAnswerCard } from "@/components/results/IncompleteAnswerCard";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { useQueryContext } from "@/components/providers/QueryProvider";
@@ -14,6 +15,16 @@ import { useAuth } from "@/components/providers/AuthProvider";
 import { formatLatency } from "@/lib/formatters";
 import type { DegradedResponse, AdaptiveResponse, AdaptiveBLUF, AdaptiveSection, TokenUsage } from "@/lib/types";
 import { getLLMConfig, displayFor, type LLMConfig } from "@/lib/modelRegistry";
+
+// A response is safe to render in the adaptive view only if it actually carries a
+// BLUF with a headline. Guarding on "sections" alone let bluf-less/degraded responses
+// through, which crashed the renderer (`data.bluf.headline` on undefined).
+function isCompleteAdaptive(resp: unknown): resp is AdaptiveResponse {
+  return (
+    !!resp && typeof resp === "object" && "sections" in resp &&
+    !!(resp as AdaptiveResponse).bluf?.headline
+  );
+}
 
 function StreamingProgress({ streamingText, loadingStage }: { streamingText: string; loadingStage: string }) {
   const sectionTitles = React.useMemo(() => {
@@ -360,7 +371,7 @@ function QueryContent() {
                 </span>
               )}
             </div>
-            {"sections" in result.response && (
+            {isCompleteAdaptive(result.response) && (
               <CopyShareBar
                 text={buildAnswerText(searchParams.get("q") || result.rewritten_query || "", result.response as AdaptiveResponse)}
                 shareUrl={typeof window !== "undefined" ? window.location.href : ""}
@@ -399,8 +410,14 @@ function QueryContent() {
             </Card>
           )}
 
+          {/* Incomplete / no-API-key answer — graceful card instead of a white-screen crash */}
+          {!("message" in result.response && "suggestion" in result.response) &&
+           !isCompleteAdaptive(result.response) && (
+            <IncompleteAnswerCard />
+          )}
+
           {/* Adaptive result — two-column layout with sticky sidebar on desktop */}
-          {"sections" in result.response && (
+          {isCompleteAdaptive(result.response) && (
             <div className="flex gap-5 items-start">
               <SidebarNav data={result.response as AdaptiveResponse} />
               <div className="flex-1 min-w-0">
