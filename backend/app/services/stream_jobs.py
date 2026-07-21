@@ -141,12 +141,21 @@ async def tail_job(redis, job_id: str, last_id: str = "0") -> AsyncIterator[str]
     skey = _skey(job_id)
     cursor = last_id or "0"
 
-    # Unknown/expired job on a fresh attach → tell the client to search again.
-    if cursor == "0" and not await redis.exists(skey):
-        yield _sse("0", "error",
-                   {"detail": "This search session expired. Please search again.",
-                    "error_type": "expired"})
-        return
+    # Fresh attach: a just-created job's DETACHED producer may not have written its
+    # first entry yet — especially with a networked Redis (Upstash), where every write
+    # is a round-trip. Racing that write and declaring the job "expired" instantly
+    # breaks EVERY query the moment Redis isn't co-located. Wait briefly for the
+    # stream to appear before deciding the job is genuinely unknown/expired.
+    if cursor == "0":
+        for _ in range(50):  # up to ~5s for the producer's first XADD to land
+            if await redis.exists(skey):
+                break
+            await asyncio.sleep(0.1)
+        else:
+            yield _sse("0", "error",
+                       {"detail": "This search session expired. Please search again.",
+                        "error_type": "expired"})
+            return
 
     block_ms = 1000
     idle_ms = 0
