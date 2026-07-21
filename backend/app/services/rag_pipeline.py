@@ -86,6 +86,7 @@ from app.services.safety_checker import check_safety
 from app.services.url_builder import enrich_references, sanitize_response_pmids, is_safe_url
 from app.services.source_router import route_query
 from app.services.ranking import rank_article_list
+from app.services.query_sense import sense_terms
 
 # PMID/DOI hyperlinking patterns
 
@@ -785,18 +786,41 @@ def _rank_fetched_abstracts(
     fetched_data: "FetchedData",
     entities: list[str],
     query_text: str,
+    query_type: str = "",
 ) -> None:
     """Re-order all abstract lists in FetchedData by evidence quality score.
 
     Mutates fetched_data in-place. Called after fetch, before LLM synthesis.
     Ranking happens before _cap_abstracts budget limits, so best articles survive.
-    Silent on any failure — pipeline continues with original ordering.
+    When RELEVANCE_FLOOR_ENABLED, drops entity-absent articles (anchored on the subject/drug,
+    not the symptom). Silent on any failure — pipeline continues with original ordering.
     """
+    _syn = settings.relevance_synonyms_enabled
+    _floor = settings.relevance_floor_enabled
+    _min_keep = settings.relevance_floor_min_keep
+
+    # Floor anchor = the SUBJECT (drug/condition), never the symptom/effect. Prefer the resolved
+    # drug name; else the first entity; comparative anchors on all compared entities.
+    _anchor: list[str] = []
+    if _floor:
+        d = getattr(fetched_data, "drug_data", None)
+        drug_names = [n for n in (getattr(d, "generic_name", None), getattr(d, "brand_name", None)) if n] if d else []
+        if query_type == "comparative":
+            _anchor = list(entities or [])
+        elif drug_names:
+            _anchor = drug_names + (entities[:1] if entities else [])
+        else:
+            _anchor = (entities[:1] if entities else [])
+
     def _rerank(lst: list | None) -> list:
         if not lst:
             return lst or []
         try:
-            return rank_article_list(lst, entities, query_text)
+            return rank_article_list(
+                lst, entities, query_text,
+                use_synonyms=_syn, apply_floor=_floor, min_keep=_min_keep,
+                floor_entities=_anchor or None,
+            )
         except Exception:
             return lst
 
@@ -3235,6 +3259,13 @@ async def process_query(
         rewritten_query = combined.get("rewritten_query") or request.query
         query_analysis = combined  # contains entities, condition_context, query_type etc.
         pubmed_expansion_terms = combined.get("pubmed_terms")
+        # Query-sense framing: for causation queries ("does X cause Y"), add adverse-sense PubMed
+        # terms so retrieval targets the CAUSE sense (drug-induced), not the indication sense.
+        if settings.query_sense_framing_enabled:
+            _sense = sense_terms(request.query)
+            if _sense:
+                pubmed_expansion_terms = dict(pubmed_expansion_terms or {})
+                pubmed_expansion_terms["review"] = (pubmed_expansion_terms.get("review") or []) + _sense
         _query_intent = combined.get("intent") or "general"
         _search_variants = combined.get("search_variants") or []
         # Store patient_context extracted from query (for complex queries)
@@ -3529,6 +3560,7 @@ async def process_query(
                     fetched_data,
                     entities=routing.entities if routing else (analysis_entities or []),
                     query_text=rewritten_query,
+                    query_type=query_type,
                 )
                 # Update evidence confidence after ranking
                 _evidence_confidence = compute_evidence_confidence(fetched_data, query_type)

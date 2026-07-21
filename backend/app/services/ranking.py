@@ -209,6 +209,7 @@ def rank_article_list(
     use_synonyms: bool = False,
     apply_floor: bool = False,
     min_keep: int = 3,
+    floor_entities: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Score and sort articles descending by evidence quality and relevance.
 
@@ -236,9 +237,14 @@ def rank_article_list(
         enriched["_rank_breakdown"] = sa.breakdown
         result.append(enriched)
 
-    if apply_floor and entities:
-        relevant = [a for a in result if (a["_rank_breakdown"].get("relevance") or 0) > 0]
-        irrelevant = [a for a in result if (a["_rank_breakdown"].get("relevance") or 0) == 0]
+    fe = floor_entities if floor_entities is not None else entities
+    if apply_floor and fe:
+        # Floor decision anchors on `floor_entities` (the subject/drug), NOT the scoring entities —
+        # so an article matching only the symptom ("fever") is still dropped when the drug is absent.
+        for a in result:
+            a["_floor_rel"] = _score_relevance(a, fe, use_synonyms=use_synonyms)
+        relevant = [a for a in result if a["_floor_rel"] > 0]
+        irrelevant = [a for a in result if a["_floor_rel"] == 0]
         if len(relevant) >= min_keep:
             result = relevant                      # enough on-topic → drop all entity-absent articles
         else:
