@@ -85,8 +85,9 @@ from app.services.query_classifier import (
 from app.services.safety_checker import check_safety
 from app.services.url_builder import enrich_references, sanitize_response_pmids, is_safe_url
 from app.services.source_router import route_query
-from app.services.ranking import rank_article_list
+from app.services.ranking import rank_article_list, apply_topicality_gate
 from app.services.query_sense import sense_terms
+from app.services.differential_dx import differential_terms, is_differential_query
 
 # PMID/DOI hyperlinking patterns
 
@@ -787,26 +788,31 @@ def _rank_fetched_abstracts(
     entities: list[str],
     query_text: str,
     query_type: str = "",
+    original_query: str = "",
 ) -> None:
     """Re-order all abstract lists in FetchedData by evidence quality score.
 
     Mutates fetched_data in-place. Called after fetch, before LLM synthesis.
     Ranking happens before _cap_abstracts budget limits, so best articles survive.
     When RELEVANCE_FLOOR_ENABLED, drops entity-absent articles (anchored on the subject/drug,
-    not the symptom). Silent on any failure — pipeline continues with original ordering.
+    not the symptom). When TOPICALITY_GATE_ENABLED (F2), additionally keeps ONLY subject-mentioning
+    articles with no recall re-admit. Silent on any failure — pipeline continues with original order.
     """
     _syn = settings.relevance_synonyms_enabled
     _floor = settings.relevance_floor_enabled
     _min_keep = settings.relevance_floor_min_keep
+    _gate = settings.topicality_gate_enabled
 
-    # Floor anchor = the SUBJECT (drug/condition), never the symptom/effect. Prefer the resolved
-    # drug name; else the first entity; comparative anchors on all compared entities.
+    # SUBJECT anchor = the thing the answer is about, never the symptom/effect. Prefer the resolved
+    # drug name; comparative & differential-diagnosis queries anchor on ALL entities (the finding);
+    # else the first entity. Shared by the floor (F1) and the topicality gate (F2).
+    _is_ddx = is_differential_query(original_query or query_text)
     _anchor: list[str] = []
-    if _floor:
+    if _floor or _gate:
         d = getattr(fetched_data, "drug_data", None)
         drug_names = [n for n in (getattr(d, "generic_name", None), getattr(d, "brand_name", None)) if n] if d else []
-        if query_type == "comparative":
-            _anchor = list(entities or [])
+        if query_type == "comparative" or _is_ddx:
+            _anchor = list(entities or [])              # finding / both compared agents: keep all
         elif drug_names:
             _anchor = drug_names + (entities[:1] if entities else [])
         else:
@@ -816,13 +822,20 @@ def _rank_fetched_abstracts(
         if not lst:
             return lst or []
         try:
-            return rank_article_list(
+            ranked = rank_article_list(
                 lst, entities, query_text,
                 use_synonyms=_syn, apply_floor=_floor, min_keep=_min_keep,
                 floor_entities=_anchor or None,
             )
         except Exception:
             return lst
+        # F2: topicality gate — keep ONLY subject-mentioning articles, never re-admit off-topic.
+        if _gate and _anchor:
+            try:
+                ranked = apply_topicality_gate(ranked, _anchor, use_synonyms=_syn)
+            except Exception:
+                pass
+        return ranked
 
     try:
         if fetched_data.drug_data:
@@ -2401,6 +2414,67 @@ async def _analyze_query_with_dspy(
         return None
 
 
+def _recover_truncated_json(text: str) -> str | None:
+    """Best-effort repair of a JSON OBJECT that was cut off mid-output (e.g. the analysis call hit
+    max_tokens). Keeps every COMPLETE top-level key/value pair and closes the object, so the head
+    fields (which the analyzer emits first: rewritten_query, query_type, entities …) survive even
+    when a trailing nested value (pubmed_terms) is truncated. Returns a parseable string or None.
+
+    Cuts at the last comma seen at top-level depth (depth 1, i.e. directly inside the root object),
+    which is by construction outside any string, then appends the single closing brace. Anything
+    inside strings or nested brackets is ignored for the cut so we never split a value.
+    """
+    start = text.find("{")
+    if start == -1:
+        return None
+    s = text[start:]
+    depth = 0
+    in_str = False
+    esc = False
+    last_top_comma = None
+    for i, ch in enumerate(s):
+        if esc:
+            esc = False
+            continue
+        if ch == "\\":
+            esc = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if ch in "{[":
+            depth += 1
+        elif ch in "}]":
+            depth -= 1
+        elif ch == "," and depth == 1:
+            last_top_comma = i
+    if last_top_comma is None:
+        return None  # not even one complete top-level pair → let the caller fall back
+    return s[:last_top_comma] + "}"
+
+
+def _parse_analysis_json(clean: str) -> dict | None:
+    """Strict json.loads, then (when the F1 fix is on) a truncation-salvage retry. Returns the
+    parsed object or None. Kept separate so the whole downstream validation path is shared between
+    the strict and salvaged results — a recovered object is validated exactly like a clean one."""
+    try:
+        return json.loads(clean)
+    except json.JSONDecodeError:
+        if not settings.analysis_truncation_fix_enabled:
+            return None
+        repaired = _recover_truncated_json(clean)
+        if not repaired:
+            return None
+        try:
+            recovered = json.loads(repaired)
+            logger.info("_analyze_and_expand_query: salvaged truncated analysis JSON (kept head fields)")
+            return recovered
+        except json.JSONDecodeError:
+            return None
+
+
 async def _analyze_and_expand_query(
     query: str,
     *,
@@ -2551,9 +2625,13 @@ async def _analyze_and_expand_query(
         f"Query: {query}"
     )
     # NOTE: _call_llm splits on "\nQuery: " — static instruction above gets cached, query does not.
+    # F1: the old hardcoded 512 truncated the rich JSON for complex/differential queries (verified
+    # deterministic on "abdominal mass with mets to spleen differential diagnosis"). Raise the budget
+    # when the fix is on; a truncated tail is additionally salvaged in _parse_analysis_json below.
+    _analysis_budget = settings.analysis_max_tokens if settings.analysis_truncation_fix_enabled else 512
     try:
         raw = await _call_llm(
-            model_id, _prompt, max_tokens=512,
+            model_id, _prompt, max_tokens=_analysis_budget,
             user_key=user_key, user_provider=user_provider,
         )
         if not raw:
@@ -2567,7 +2645,10 @@ async def _analyze_and_expand_query(
             inner = parts[1] if len(parts) >= 2 else clean
             clean = inner.lstrip("json").lstrip("JSON").strip()
 
-        data = _json.loads(clean)
+        data = _parse_analysis_json(clean)
+        if not isinstance(data, dict):
+            logger.warning("_analyze_and_expand_query: JSON parse failed (unrecoverable) — falling back")
+            return None
 
         # Validate required keys exist before trusting the response
         # pubmed_terms excluded — it's search enrichment, not classification
@@ -3266,6 +3347,15 @@ async def process_query(
             if _sense:
                 pubmed_expansion_terms = dict(pubmed_expansion_terms or {})
                 pubmed_expansion_terms["review"] = (pubmed_expansion_terms.get("review") or []) + _sense
+        # Differential-diagnosis reframing (F3): for "what could this finding be?" queries, add
+        # etiology/differential-sense terms anchored on the FINDING so retrieval targets candidate
+        # diagnoses rather than single-disease treatment literature.
+        if settings.differential_dx_enabled:
+            _ddx = differential_terms(request.query)
+            if _ddx:
+                pubmed_expansion_terms = dict(pubmed_expansion_terms or {})
+                pubmed_expansion_terms["review"] = (pubmed_expansion_terms.get("review") or []) + _ddx
+                logger.info("differential_dx: reframed retrieval toward etiology/differential sense")
         _query_intent = combined.get("intent") or "general"
         _search_variants = combined.get("search_variants") or []
         # Store patient_context extracted from query (for complex queries)
@@ -3561,6 +3651,7 @@ async def process_query(
                     entities=routing.entities if routing else (analysis_entities or []),
                     query_text=rewritten_query,
                     query_type=query_type,
+                    original_query=request.query,
                 )
                 # Update evidence confidence after ranking
                 _evidence_confidence = compute_evidence_confidence(fetched_data, query_type)

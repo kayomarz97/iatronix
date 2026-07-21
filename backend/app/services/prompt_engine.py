@@ -18,11 +18,37 @@ from langchain_core.output_parsers import JsonOutputParser
 from pydantic import BaseModel, ValidationError
 
 from app.config import settings
+from app.services.differential_dx import is_differential_query
 
 if TYPE_CHECKING:
     from app.schemas.internal import FetchedData, SearchResult
 
 logger = logging.getLogger(__name__)
+
+# F3 prompt-shape (DIFFERENTIAL_DX_ENABLED): when the query asks "what could this finding be?",
+# steer the answer into a RANKED DIFFERENTIAL instead of the treatment of one assumed diagnosis
+# (or the drug-centric complex framing). Appended to the BLUF dynamic_system for ddx queries only.
+_DIFFERENTIAL_DX_GUIDANCE = (
+    "\n\nDIFFERENTIAL-DIAGNOSIS MODE — this query hands over a clinical FINDING and asks what it could be:\n"
+    "- Structure the answer as a RANKED differential diagnosis (most to least likely), grounded in the retrieved evidence.\n"
+    "- Use sections such as \"Most Likely Diagnoses\", \"Key Differentials to Consider\", \"Discriminating Features\", "
+    "\"Red-Flag / Can't-Miss Diagnoses\", \"Recommended Diagnostic Workup\" ONLY where the retrieved evidence supports "
+    "them — OMIT any section you cannot ground rather than padding it.\n"
+    "- For each candidate, state the features that support or argue against it and the test that confirms or excludes it.\n"
+    "- Do NOT collapse to the management of a single assumed diagnosis — the user wants the diagnostic differential, "
+    "not a treatment plan for one guessed disease.\n"
+    "- EVIDENCE SUFFICIENCY: if the retrieved sources are few or narrow (they may cover only one entity), say so "
+    "explicitly and list ONLY the candidates the evidence supports. NEVER invent a diagnosis to fill a section — "
+    "especially not in \"Red-Flag / Can't-Miss\", where a fabricated candidate is most dangerous. An honest "
+    "\"the retrieved evidence is insufficient for a full differential\" is REQUIRED over a padded skeleton.\n"
+)
+
+
+def _maybe_differential_guidance(query: str, raw_query: str | None = None) -> str:
+    """Return the differential-mode guidance when F3 is on AND the query is a differential one, else ''."""
+    if not settings.differential_dx_enabled:
+        return ""
+    return _DIFFERENTIAL_DX_GUIDANCE if is_differential_query(raw_query or query or "") else ""
 
 # ====================================================================
 # Constants
@@ -958,6 +984,7 @@ def build_bluf_only_messages(
         f"QUERY TYPE: {query_type}\n"
         f"REQUIRED SECTION AREAS: {section_guidance}\n"
         f"{condition_block}"
+        f"{_maybe_differential_guidance(query, raw_query)}"
     )
 
     data_block = _build_adaptive_data_block(query_type, fetched_data, vector_results)
@@ -1117,6 +1144,7 @@ def build_complex_bluf_messages(
         f"     - Weight-Based Dosing — if dosing is weight-dependent (e.g., mg/kg, obesity adjustments)\n"
         f"     - Drug-Drug Interactions — list major interactions clinically relevant to {primary_disease} context\n"
         f"     Determine relevance from your pharmacology knowledge. Do NOT add these sections if they are not clinically meaningful for {drug}.\n"
+        f"{_maybe_differential_guidance(query)}"
     )
     data_block = _build_adaptive_data_block("complex", fetched_data, vector_results)
     user_text = f"Query: {query}\nPrimary drug/intervention: {drug}\nPrimary disease: {primary_disease}\nComorbidities: {co_capped}"

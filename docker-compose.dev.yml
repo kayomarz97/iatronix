@@ -31,6 +31,9 @@ services:
       RELEVANCE_FLOOR_ENABLED: "true"
       RELEVANCE_SYNONYMS_ENABLED: "true"
       QUERY_SENSE_FRAMING_ENABLED: "true"
+      ANALYSIS_TRUNCATION_FIX_ENABLED: "true"
+      DIFFERENTIAL_DX_ENABLED: "true"
+      TOPICALITY_GATE_ENABLED: "true"
       GUNICORN_WORKERS: "2"
     volumes:
       - ./backend/firebase-adminsdk.json:/app/firebase-adminsdk.json:ro

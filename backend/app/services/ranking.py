@@ -251,3 +251,61 @@ def rank_article_list(
             result = relevant + irrelevant[:max(0, min_keep - len(relevant))]  # keep some for recall
 
     return result + non_dicts
+
+
+# --- F2: topicality (aboutness) gate ----------------------------------------------------------
+# The relevance FLOOR (above) keeps ≥ min_keep articles even when that means re-admitting
+# entity-absent ones — a deliberate recall safeguard that, on a thin/mis-anchored fetch, lets
+# OFF-topic articles (e.g. a pancreatic-cancer drug trial for an "abdominal mass with splenic mets"
+# query) reach synthesis. The topicality gate is the opposite trade: it keeps ONLY articles that
+# mention a SUBJECT token and NEVER re-admits off-topic ones to hit a count. An empty result is a
+# valid, honest signal — downstream returns the no_evidence card rather than a confidently-wrong
+# answer. Uses prefix-stem matching so "splenic metastasis" also matches "metastases"/"metastatic".
+
+_TOPICALITY_STOP: frozenset[str] = frozenset({
+    "with", "from", "that", "this", "which", "mets", "differential", "diagnosis",
+    "disease", "syndrome", "patient", "patients", "study", "cases", "report",
+})
+
+
+def _subject_tokens(entities: list[str], use_synonyms: bool = False) -> set[str]:
+    """Confident 5+-char content tokens from the subject entities, reduced to a 6-char prefix stem
+    (so metastasis/metastases/metastatic all collapse to 'metast'). Short/ambiguous tokens
+    (mass, mets, ckd) are dropped — when nothing confident survives the gate becomes a no-op."""
+    toks: set[str] = set()
+    for e in _expand_entities(entities, use_synonyms):
+        for w in re.split(r"[^a-z]+", e):
+            if len(w) >= 5 and w not in _TOPICALITY_STOP:
+                toks.add(w[:6])
+    return toks
+
+
+def _article_on_subject(article: dict[str, Any], subject_tokens: set[str]) -> bool:
+    text = ((article.get("title") or "") + " " + (article.get("abstract") or "")[:500]).lower()
+    words = set(re.split(r"[^a-z]+", text))
+    return any(w.startswith(st) for st in subject_tokens for w in words)
+
+
+def apply_topicality_gate(
+    articles: list[dict[str, Any]],
+    subject_entities: list[str] | None,
+    use_synonyms: bool = False,
+) -> list[dict[str, Any]]:
+    """Keep only articles mentioning a SUBJECT token; never re-admit off-topic for a count.
+    No-op (returns input unchanged) when there are no confident subject tokens, so it can only
+    remove clearly off-subject noise, never blank out a query it can't reason about."""
+    if not articles or not subject_entities:
+        return articles or []
+    toks = _subject_tokens(subject_entities, use_synonyms)
+    if not toks:
+        return articles
+    dicts = [a for a in articles if isinstance(a, dict)]
+    non_dicts = [a for a in articles if not isinstance(a, dict)]
+    kept = [a for a in dicts if _article_on_subject(a, toks)]
+    # Step-aside safety: only DROP the off-subject remainder when at least one article IS on-subject.
+    # A total blank means the anchor matched nothing — a thin-retrieval problem, not an off-topic one —
+    # so return the set untouched and let the evidence-floor / grounding-gate decide, rather than
+    # manufacturing a spurious no_evidence card (observed on "empagliflozin mechanism of action").
+    if not kept:
+        return articles
+    return kept + non_dicts

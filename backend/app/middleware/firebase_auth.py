@@ -33,6 +33,12 @@ EXEMPT_PATHS = {
     "/api/v1/auth/openrouter/callback",
     # Public model config — frontend reads on page load before auth
     "/api/v1/config/llm",
+    # Public, secret-free provider/model catalog — the frontend model picker reads this on page
+    # load (unauthenticated, like /config/llm). When it was auth-walled it 401'd, the picker never
+    # populated, an explicit engine choice (e.g. Haiku) was never sent as model_explicit, and
+    # generation silently defaulted to Cerebras. Registry public_view() carries NO secrets.
+    "/api/v1/providers",
+    "/api/v1/providers/",
 }
 
 _USER_CACHE_TTL = 300  # seconds

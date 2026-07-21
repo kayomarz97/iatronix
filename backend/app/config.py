@@ -218,6 +218,30 @@ class Settings(BaseSettings):
     relevance_floor_min_keep: int = 3            # recall safeguard — never drop below this many
     query_sense_framing_enabled: bool = False    # reframe "does X cause Y" toward the adverse/cause sense
 
+    # Analyzer truncation fix (F1) — the rich analysis JSON (entities + pubmed_terms buckets +
+    # search_variants + related_topics + patient_context) overran the old hardcoded 512-token cap for
+    # complex/differential queries → truncated mid-JSON → json.loads failed → SILENT fallback to the
+    # crude classifier (losing entities & pubmed_terms → weak/mis-anchored retrieval). This raises the
+    # analysis budget AND salvages a truncated object so the HEAD fields (query_type/entities/rewrite,
+    # emitted first) survive even when the pubmed_terms tail is cut. Flag-gated for clean A/B. Default OFF.
+    analysis_truncation_fix_enabled: bool = False
+    analysis_max_tokens: int = 1280              # analysis-call budget when the fix is on (was hardcoded 512)
+
+    # Differential-diagnosis reframing (F3) — "what could this finding be?" is a diagnostic-reasoning
+    # query; a naive entity search drifts to single-disease TREATMENT literature (the pancreatic-cancer
+    # drug trial that mentions "abdominal mass"). differential_dx.differential_terms() adds etiology/
+    # differential-sense PubMed terms anchored on the FINDING, mirroring query_sense for causation.
+    # Retrieval-level lever (measurable in the free deterministic A/B). Flag-gated. Default OFF.
+    differential_dx_enabled: bool = False
+
+    # Topicality / aboutness gate (F2) — the missing safety net. Grounding/evidence/scope nets check
+    # provenance, sufficiency and medical-ness but NOT whether the evidence is about the QUESTION, so a
+    # real, well-cited but off-topic article (pancreatic-cancer drug trial for a splenic-mets query)
+    # passes them all. ranking.apply_topicality_gate() keeps only subject-mentioning articles and, unlike
+    # the relevance floor, NEVER re-admits off-topic ones to hit a count — an empty result defers to the
+    # honest no_evidence card. Deterministic, offline-testable, flag-gated. Default OFF.
+    topicality_gate_enabled: bool = False
+
     # Per-section LangGraph re-fetch — when a section is still empty after LLM retries,
     # fetch targeted evidence for that section's topic and re-synthesize just that section.
     # Dev true / prod false.
