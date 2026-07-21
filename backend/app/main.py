@@ -150,27 +150,39 @@ async def lifespan(app: FastAPI):
 
     asyncio.create_task(_cleanup_expired_documents())
 
-    async def _purge_old_audit_logs():
-        """Background task: delete query_audit rows older than 30 days."""
+    async def _archive_and_purge_old_rows():
+        """Background task (daily): archive old query_audit + query_cache rows to
+        GCS, THEN delete them. A row is never deleted unless its archive succeeded
+        (see app/services/retention.py)."""
         from datetime import datetime, timezone, timedelta
-        from sqlalchemy import delete as sa_delete
         from app.db.session import async_session as session_factory
         from app.models.query_audit import QueryAudit
+        from app.models.query_cache import QueryCache
+        from app.services import retention
 
         while True:
             await asyncio.sleep(86400)  # run once per day
+            now = datetime.now(timezone.utc)
             try:
-                cutoff = datetime.now(timezone.utc) - timedelta(days=30)
-                async with session_factory() as session:
-                    await session.execute(
-                        sa_delete(QueryAudit).where(QueryAudit.timestamp < cutoff)
-                    )
-                    await session.commit()
-                    logger.info("Audit purge: removed rows older than 30 days")
+                n = await retention.archive_and_purge(
+                    session_factory, QueryAudit, QueryAudit.timestamp,
+                    now - timedelta(days=settings.audit_retention_days), "query_audit",
+                )
+                logger.info("Audit retention: archived+purged %d rows", n)
             except Exception as exc:
-                logger.error(f"Audit purge error: {exc}")
+                logger.error(f"Audit retention error: {exc}")
+            try:
+                # query_embedding is a large, regenerable vector — exclude from the archive.
+                n = await retention.archive_and_purge(
+                    session_factory, QueryCache, QueryCache.created_at,
+                    now - timedelta(days=settings.query_cache_retention_days), "query_cache",
+                    exclude=("query_embedding",),
+                )
+                logger.info("Cache retention: archived+purged %d rows", n)
+            except Exception as exc:
+                logger.error(f"Cache retention error: {exc}")
 
-    asyncio.create_task(_purge_old_audit_logs())
+    asyncio.create_task(_archive_and_purge_old_rows())
 
     yield
 

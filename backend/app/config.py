@@ -337,6 +337,12 @@ class Settings(BaseSettings):
     pdf_non_approved_ttl_hours: int = 48
     pdf_cleanup_interval_minutes: int = 60
 
+    # --- GCS archive (retention: archive-then-purge; see services/retention.py) ---
+    gcs_archive_enabled: bool = True
+    gcs_archive_bucket: str = ""  # e.g. iatronix-med-search-v1-archive (set in prod .env)
+    audit_retention_days: int = 30
+    query_cache_retention_days: int = 60
+
     # LLM cost estimates shown to users (USD per million tokens, Anthropic pricing)
     cost_haiku_input_per_m: float = 0.25
     cost_haiku_output_per_m: float = 1.25

@@ -1,0 +1,14 @@
+# Keep secrets and local cruft OUT of the Cloud Build source upload.
+# NOTE: when this file exists, gcloud ignores .gitignore, so list everything here.
+firebase-adminsdk.json
+*firebase*.json
+.env
+.env.*
+!.env.example
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.log
