@@ -13,6 +13,45 @@ from typing import Any
 
 _CURRENT_YEAR: int = datetime.now().year
 
+# Drug/term synonym groups for relevance matching (INN ⇄ US names, common variants).
+# Used only when relevance_synonyms is on, so the floor doesn't drop a legit article that
+# uses the other name (e.g. "acetaminophen" for a "paracetamol" query).
+_SYNONYM_GROUPS: list[set[str]] = [
+    {"paracetamol", "acetaminophen"},
+    {"adrenaline", "epinephrine"},
+    {"noradrenaline", "norepinephrine"},
+    {"salbutamol", "albuterol"},
+    {"frusemide", "furosemide"},
+    {"lignocaine", "lidocaine"},
+    {"rifampicin", "rifampin"},
+    {"ciclosporin", "cyclosporine", "cyclosporin"},
+    {"pethidine", "meperidine"},
+    {"amoxicillin", "amoxycillin"},
+    {"glyceryl trinitrate", "nitroglycerin", "gtn"},
+    {"metamizole", "dipyrone"},
+]
+
+
+def _expand_entities(entities: list[str] | None, use_synonyms: bool) -> list[str]:
+    """Lowercase entities, optionally adding synonym-group members. Deduped."""
+    out: list[str] = []
+    for e in entities or []:
+        el = (e or "").strip().lower()
+        if not el:
+            continue
+        out.append(el)
+        if use_synonyms:
+            for grp in _SYNONYM_GROUPS:
+                if any(m in el or el in m for m in grp):
+                    out.extend(grp)
+    seen: set[str] = set()
+    res: list[str] = []
+    for x in out:
+        if x not in seen:
+            seen.add(x)
+            res.append(x)
+    return res
+
 _STUDY_TYPE_SCORES: dict[str, float] = {
     "guideline": 10.0,
     "practice guideline": 9.0,
@@ -65,15 +104,16 @@ def _score_study_type(article: dict[str, Any]) -> float:
     return best
 
 
-def _score_relevance(article: dict[str, Any], entities: list[str]) -> float:
-    """Score entity presence in title (+3) and abstract head (+2), capped at 6."""
-    if not entities:
+def _score_relevance(article: dict[str, Any], entities: list[str], use_synonyms: bool = False) -> float:
+    """Score entity presence in title (+3) and abstract head (+2), capped at 6.
+    With use_synonyms, the entity's synonym-group members also count (paracetamol⇄acetaminophen)."""
+    ents = _expand_entities(entities, use_synonyms)
+    if not ents:
         return 0.0
     title = (article.get("title") or "").lower()
     abstract = (article.get("abstract") or "")[:500].lower()
     score = 0.0
-    for entity in entities:
-        el = entity.lower()
+    for el in ents:
         if el in title:
             score += 3.0
         elif el in abstract:
@@ -137,10 +177,11 @@ def score_article(
     article: dict[str, Any],
     entities: list[str],
     query_text: str,
+    use_synonyms: bool = False,
 ) -> ScoredArticle:
     """Compute multi-factor evidence score for one article dict."""
     study = _score_study_type(article)
-    relevance = _score_relevance(article, entities)
+    relevance = _score_relevance(article, entities, use_synonyms=use_synonyms)
     recency = _score_recency(article)
     fulltext = _score_fulltext(article)
     citations = _score_citations(article)
@@ -164,12 +205,20 @@ def rank_article_list(
     articles: list[dict[str, Any]],
     entities: list[str],
     query_text: str = "",
+    *,
+    use_synonyms: bool = False,
+    apply_floor: bool = False,
+    min_keep: int = 3,
 ) -> list[dict[str, Any]]:
     """Score and sort articles descending by evidence quality and relevance.
 
-    Attaches `_rank_score` and `_rank_breakdown` to each article dict for
-    observability. Articles with score 0 are kept at the bottom, never removed.
-    Input must be list[dict] — non-dict entries are passed through unchanged.
+    Attaches `_rank_score` and `_rank_breakdown` to each article dict for observability.
+    Default behaviour keeps every article (score-0 at the bottom).
+
+    Relevance floor (apply_floor): DROP articles whose entity-relevance is 0 (the entity, and its
+    synonyms when use_synonyms, appear nowhere) — so an off-topic article can't ride in on study-type
+    or recency alone. Recall safeguard: always keep at least `min_keep` highest-scored articles, so a
+    niche query with few on-topic hits isn't emptied. Input must be list[dict]; non-dicts pass through.
     """
     if not articles:
         return []
@@ -177,7 +226,7 @@ def rank_article_list(
     dicts = [a for a in articles if isinstance(a, dict)]
     non_dicts = [a for a in articles if not isinstance(a, dict)]
 
-    scored = [score_article(a, entities, query_text) for a in dicts]
+    scored = [score_article(a, entities, query_text, use_synonyms=use_synonyms) for a in dicts]
     scored.sort(key=lambda x: x.score, reverse=True)
 
     result: list[dict[str, Any]] = []
@@ -186,5 +235,13 @@ def rank_article_list(
         enriched["_rank_score"] = sa.score
         enriched["_rank_breakdown"] = sa.breakdown
         result.append(enriched)
+
+    if apply_floor and entities:
+        relevant = [a for a in result if (a["_rank_breakdown"].get("relevance") or 0) > 0]
+        irrelevant = [a for a in result if (a["_rank_breakdown"].get("relevance") or 0) == 0]
+        if len(relevant) >= min_keep:
+            result = relevant                      # enough on-topic → drop all entity-absent articles
+        else:
+            result = relevant + irrelevant[:max(0, min_keep - len(relevant))]  # keep some for recall
 
     return result + non_dicts

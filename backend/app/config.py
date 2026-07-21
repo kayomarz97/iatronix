@@ -199,6 +199,12 @@ class Settings(BaseSettings):
     # reply instead of burning fetches + free-answering. Conservative (see _is_non_medical). Default OFF.
     non_medical_guard_enabled: bool = False
 
+    # Relevance precision (stop off-topic keyword-matched articles reaching the answer). All default OFF.
+    relevance_floor_enabled: bool = False        # drop articles where the entity is absent (relevance 0)
+    relevance_synonyms_enabled: bool = False     # match entity synonyms (paracetamol⇄acetaminophen …)
+    relevance_floor_min_keep: int = 3            # recall safeguard — never drop below this many
+    query_sense_framing_enabled: bool = False    # reframe "does X cause Y" toward the adverse/cause sense
+
     # Per-section LangGraph re-fetch — when a section is still empty after LLM retries,
     # fetch targeted evidence for that section's topic and re-synthesize just that section.
     # Dev true / prod false.
