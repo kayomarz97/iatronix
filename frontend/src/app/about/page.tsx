@@ -1,44 +1,7 @@
 "use client";
 
 import { ExternalLink } from "lucide-react";
-
-const PIPELINE_STEPS = [
-  {
-    step: "1",
-    title: "Query rewriting",
-    desc: "Before any search begins, the query is cleaned: typos fixed, abbreviations expanded, terminology standardized (e.g. HTN → hypertension, MI → myocardial infarction). This maximizes match quality against PubMed MeSH terms and FDA drug labels.",
-  },
-  {
-    step: "2",
-    title: "Classification",
-    desc: "Regex pattern scoring instantly classifies the query into one of five types: drug, disease, procedure, evidence (study), or comparative (drug vs. drug). For ambiguous phrasing, a lightweight LLM call (GPT-OSS 120B via Cerebras by default) resolves the type. The query type determines which APIs to call and which response schema to fill.",
-  },
-  {
-    step: "3",
-    title: "Semantic cache lookup",
-    desc: "Before any API call, the query is embedded into a vector and compared against all previously answered queries using cosine similarity (threshold: 0.92). If a semantically identical past answer exists and is less than 7 days old, it is returned immediately. If the hit is older than 7 days, stale cache is skipped and a fresh pipeline run is executed to avoid serving outdated clinical content.",
-  },
-  {
-    step: "4",
-    title: "Parallel data fetch",
-    desc: "Relevant data is pulled in parallel from up to 10 sources with no LLM involvement at this stage. Drug queries: OpenFDA labels, interactions, adverse events, DailyMed, RxNorm. Disease queries: PubMed guidelines, recent RCTs (date-sorted), PMC full-text, StatPearls monographs, Unpaywall free PDFs, MedlinePlus summaries, NICE clinical guidelines. Evidence queries: PubMed search ranked by publication date. Each source has a 20-second timeout; failures are logged and skipped without blocking the response.",
-  },
-  {
-    step: "5",
-    title: "Evidence quality assessment",
-    desc: "Before any LLM call, the fetched data is scored for quality. If the total evidence falls below a minimum threshold, the pipeline returns a DegradedResponse (a clear message explaining what was found) instead of generating potentially unsupported claims. This fail-closed behavior is intentional: a transparent 'insufficient data' message is always safer than a confident hallucination.",
-  },
-  {
-    step: "6",
-    title: "Adaptive LLM formatting",
-    desc: "The LLM is prompted to prioritize fetched evidence and fill specific schema fields (BLUF headline, summary, sections, citations) without inventing data. Each claim must cite its source by index. If retrieval times out, a guarded fallback response may be generated with explicit validation warnings. The default model is GPT-OSS 120B via Cerebras (or Claude if an Anthropic key is configured in Settings).",
-  },
-  {
-    step: "7",
-    title: "Evidence grading & validation",
-    desc: "After generation, each section is assigned a Level of Evidence (LOE I–III) and Class of Recommendation (COR I–IIb) based on its source type. RCT-backed guidelines earn LOE I; expert consensus earns LOE III. Citations are verified against the fetched sources. If the response is too sparse, a second-pass LLM call is triggered with a wider evidence budget. Results passing validation are stored in the semantic cache.",
-  },
-];
+import { QueryFlowDiagram } from "@/components/about/QueryFlowDiagram";
 
 const HALLUCINATION_PREVENTION = [
   {
@@ -88,8 +51,8 @@ const LESSONS = [
     desc: "The pipeline treats the LLM purely as a formatter. Give it structured evidence and a schema to fill, and it produces clean, graded, citable output. Ask it to 'find information about X' without grounded sources and it will confabulate confidently. The fail-closed evidence gate exists because we learned early that the model will fill gaps with plausible-sounding but unsourced content if you let it.",
   },
   {
-    title: "Cache design has a correctness problem, not just a performance one",
-    desc: "Semantic caching at 0.92 cosine similarity means 'scabies management' and 'scabies treatment guidelines' can map to the same cached response. That is usually correct — but old cache can miss guideline updates. The current policy is safety-first: stale semantic hits are skipped and the full pipeline reruns. The harder unsolved problem is detecting meaningful guideline deltas automatically.",
+    title: "Not every question is a clinical question",
+    desc: "Early on the pipeline would dutifully search PubMed for anything typed into it, including questions with no drug, disease, symptom, or procedure in them. That wastes retrieval and invites confidently-worded answers to questions the literature can't speak to. A scope guard now runs first: if no medical entities are extracted, the app declines honestly and never searches — a plain 'this isn't a clinical question' is safer and more useful than a padded non-answer.",
   },
 ];
 
@@ -138,25 +101,16 @@ export default function AboutPage() {
         </p>
       </div>
 
-      {/* Search Pipeline */}
+      {/* Search Pipeline — visual flow */}
       <section>
-        <h2 style={sectionHeading}>How a search works — step by step</h2>
-        <p style={{ margin: "0 0 1rem", fontSize: "0.875rem", color: "var(--text-secondary)" }}>
-          Every query goes through a 7-stage pipeline. No AI token is spent until real data has been retrieved and quality-checked.
+        <h2 style={sectionHeading}>How a search works</h2>
+        <p style={{ margin: "0 0 1.5rem", fontSize: "0.875rem", color: "var(--text-secondary)" }}>
+          Every question follows the same path: it is understood, branched to the right strategy,
+          searched across trusted sources in parallel, merged into one evidence set, grounded to real
+          citations, then written and delivered. No AI token is spent until real evidence has been
+          retrieved and quality-checked.
         </p>
-        <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
-          {PIPELINE_STEPS.map((item) => (
-            <div key={item.step} style={{ display: "flex", gap: "1rem", padding: "0.875rem 1rem", background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)" }}>
-              <div style={{ width: 28, height: 28, borderRadius: "50%", background: "var(--accent-glow)", border: "1px solid rgba(59,130,246,0.3)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontWeight: 700, fontSize: "0.8rem", color: "var(--accent)" }}>
-                {item.step}
-              </div>
-              <div>
-                <p style={{ margin: "0 0 0.2rem", fontWeight: 600, fontSize: "0.9rem", color: "var(--text-primary)" }}>{item.title}</p>
-                <p style={{ margin: 0, fontSize: "0.825rem", color: "var(--text-secondary)", lineHeight: 1.6 }}>{item.desc}</p>
-              </div>
-            </div>
-          ))}
-        </div>
+        <QueryFlowDiagram />
       </section>
 
       {/* Hallucination prevention */}
