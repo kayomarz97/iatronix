@@ -836,8 +836,16 @@ async def _expand_retrieval_if_needed(
         return fetched_data, []
 
     score, sufficient, reasons = _retrieval_assessment(fetched_data, query_type)
+    # A thin fetch can clear the low sufficiency bar (score >= 1) while holding too few DISTINCT
+    # articles (e.g. a procedure lookup that returned 1-2 articles). When the cross-strategy
+    # fallback is enabled, such fetches must NOT early-exit — otherwise the gate below is never
+    # reached for procedure/disease/drug/comparative and the fallback silently no-ops.
+    _thin_for_cross = (
+        settings.adaptive_cross_strategy_fallback_enabled
+        and _unique_evidence_hits(fetched_data, query_type) < settings.cross_strategy_min_unique_hits
+    )
     # complex and evidence always benefit from a second pass — bypass early exit
-    if sufficient and query_type not in ("complex", "evidence"):
+    if sufficient and query_type not in ("complex", "evidence") and not _thin_for_cross:
         return fetched_data, []
 
     notes = [f"initial retrieval score={score}", *reasons]
