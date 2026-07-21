@@ -673,8 +673,14 @@ def _format_monographs(monos: list[dict], ref_map: Optional[dict[str, dict]] = N
     """Format StatPearls / NCBI Bookshelf FULL chapters for the data block.
 
     Prepends the matching [REF_N] token (matched by URL in ref_map) so the LLM
-    cites the chapter, then includes the ENTIRE chapter text (not a snippet) so
-    broad overview sections (pathophysiology, epidemiology, etc.) can ground in it.
+    cites the chapter, then includes the chapter text (broad overview sections —
+    pathophysiology, epidemiology, etc. — so the answer can ground in it).
+
+    The candidate-chapter lever can attach up to 3 full chapters (~140k chars) to one
+    query, so total chapter text is capped at `settings.book_monograph_char_budget`.
+    `monos` arrives already ranked best-first (see data_fetcher._rank_book_monographs),
+    so chapters are filled in relevance order and only the LAST, least-relevant chapter
+    that overflows is head-truncated — the top chapter is always whole.
     """
     url_to_token: dict[str, str] = {}
     if ref_map:
@@ -682,13 +688,20 @@ def _format_monographs(monos: list[dict], ref_map: Optional[dict[str, dict]] = N
             u = art_meta.get("url")
             if u:
                 url_to_token[u] = token_key
+    budget = getattr(settings, "book_monograph_char_budget", 90000)
     blocks: list[str] = []
+    used = 0
     for mono in monos or []:
         if not isinstance(mono, dict):
             continue
         text = (mono.get("text") or "").strip()
         if not text:
             continue
+        if used >= budget:
+            break
+        remaining = budget - used
+        if len(text) > remaining:
+            text = text[:remaining].rstrip() + "\n[…chapter truncated to fit grounding budget…]"
         title = (mono.get("title") or "StatPearls").strip()
         url = mono.get("url") or ""
         token = url_to_token.get(url)
@@ -697,6 +710,7 @@ def _format_monographs(monos: list[dict], ref_map: Optional[dict[str, dict]] = N
         if url:
             header += f"\nURL: {url}"
         blocks.append(f"{header}\n{text}")
+        used += len(text)
     return "\n\n".join(blocks)
 
 

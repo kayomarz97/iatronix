@@ -47,7 +47,7 @@ class Settings(BaseSettings):
 
     # Prompt versioning
     prompt_version: int = (
-        4  # v4: grounding gate + disease-fetch crash fix — invalidates pre-fix cached answers
+        5  # v5: analyzer emits candidate_diagnoses (coverage lever) — busts stale analyses lacking it
     )
 
     # Logging
@@ -253,6 +253,18 @@ class Settings(BaseSettings):
     # Contradiction surfacing: when retrieved sources disagree, the answer states the disagreement and
     # cites both sides rather than silently picking one.
     contradiction_surfacing_enabled: bool = False
+    # Candidate-diagnosis chapter retrieval (COVERAGE lever): the RAGnosis re-judge showed correctness
+    # is ~60% when a StatPearls chapter is retrieved vs ~9% when not, and the misses are diagnostic
+    # vignettes whose entity is a SYMPTOM cluster (no chapter is titled after the symptoms). When on,
+    # the analyzer's `candidate_diagnoses` (named conditions the vignette suggests) each get their own
+    # chapter fetched, so symptom queries ground on the candidate-disease chapters. Additive + safe:
+    # a wrong candidate's chapter simply won't contain the fact → the pipeline abstains (never invents).
+    candidate_chapters_enabled: bool = False
+    # Total character budget for StatPearls/Bookshelf chapter text injected into ONE answer prompt.
+    # With the candidate-chapter lever a query can carry up to 3 full chapters (~140k chars ≈ 35k tokens);
+    # this bounds token cost and needle-in-haystack dilution. Chapters are ranked best-first (title match
+    # to the query + candidates) then filled to this budget, so the most relevant chapter is always whole.
+    book_monograph_char_budget: int = 90000
 
     # Per-section LangGraph re-fetch — when a section is still empty after LLM retries,
     # fetch targeted evidence for that section's topic and re-synthesize just that section.

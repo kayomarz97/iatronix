@@ -37,6 +37,7 @@ services:
       INTENT_FRAMING_ENABLED: "true"
       REFERENCE_FIRST_ENABLED: "true"
       CONTRADICTION_SURFACING_ENABLED: "true"
+      CANDIDATE_CHAPTERS_ENABLED: "true"
       GUNICORN_WORKERS: "2"
     volumes:
       - ./backend/firebase-adminsdk.json:/app/firebase-adminsdk.json:ro

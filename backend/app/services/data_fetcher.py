@@ -1822,6 +1822,33 @@ _GENERIC_TITLE_TOKENS: frozenset[str] = frozenset({
 })
 
 
+def _rank_book_monographs(monos: list[dict], signal_terms: list[str]) -> list[dict]:
+    """Order chapters best-first by how well their title matches the query signal (disease name +
+    candidate diagnoses). A chapter titled after a query concept leads, so it survives the downstream
+    char budget; the primary chapter keeps its lead on ties (Python sort is stable). Pure, no network.
+    """
+    if len(monos) <= 1:
+        return monos
+    import re as _re
+
+    def _toks(s: str) -> set[str]:
+        return {t for t in _re.findall(r"[a-z]+", (s or "").lower()) if len(t) > 2} - _GENERIC_TITLE_TOKENS
+
+    signal = set()
+    for s in signal_terms or []:
+        signal |= _toks(s)
+
+    def _score(mono: dict) -> float:
+        if not isinstance(mono, dict):
+            return 0.0
+        title_tokens = _toks(mono.get("title", ""))
+        if not title_tokens or not signal:
+            return 0.0
+        return len(title_tokens & signal) / len(title_tokens)  # fraction of the title that is on-signal
+
+    return sorted(monos, key=_score, reverse=True)  # stable: equal scores keep insertion order
+
+
 async def _fetch_book_monographs(
     client: httpx.AsyncClient, term: str, *, max_chapters: int = 2, char_cap: int = 16000
 ) -> list[dict]:
@@ -2411,7 +2438,7 @@ def _as_pmid_list(value) -> list[str]:
     return out
 
 
-async def fetch_disease_data(disease_name: str, *, extra_pubmed_terms: list[str] | None = None, extra_journal_filter: str | None = None) -> DiseaseFetchResult:
+async def fetch_disease_data(disease_name: str, *, extra_pubmed_terms: list[str] | None = None, extra_journal_filter: str | None = None, candidate_diagnoses: list[str] | None = None) -> DiseaseFetchResult:
     """Fetch disease data from PubMed (guidelines + reviews + classification), NICE,
     MedlinePlus, and Semantic Scholar — all in parallel.
 
@@ -2457,6 +2484,23 @@ async def fetch_disease_data(disease_name: str, *, extra_pubmed_terms: list[str]
                 _fetch_book_monographs(client, disease_name, max_chapters=1, char_cap=60000))
         else:
             _book_task = asyncio.ensure_future(_fetch_book_monographs(client, disease_name))
+        # COVERAGE lever (candidate_chapters): for symptom-vignette queries the raw entity is not a
+        # chapter title, so also fetch a chapter for each candidate diagnosis the analyzer proposed.
+        # Runs CONCURRENTLY with the primary book task (overlaps the main gather → no added critical
+        # path). The concept-level title gate inside _fetch_book_monographs validates each chapter
+        # against ITS candidate name, so only genuinely on-concept candidate chapters survive.
+        _candidate_book_tasks: list = []
+        if settings.reference_first_enabled and settings.candidate_chapters_enabled and candidate_diagnoses:
+            _seen_cand = {(disease_name or "").strip().lower()}
+            for _cand in candidate_diagnoses:
+                _c = (_cand or "").strip()
+                if len(_c) < 3 or _c.lower() in _seen_cand:
+                    continue
+                _seen_cand.add(_c.lower())
+                _candidate_book_tasks.append(
+                    asyncio.ensure_future(_fetch_book_monographs(client, _c, max_chapters=1, char_cap=40000)))
+                if len(_candidate_book_tasks) >= 2:  # cap: primary + 2 candidates = 3 chapters max
+                    break
         # Phase 1: ALL esearch calls + non-PubMed sources in parallel
         # NOTE: Limited to 4 esearch calls to avoid NCBI rate limits (3 req/s without key, 10 req/s with)
         tasks: list = [
@@ -2597,6 +2641,33 @@ async def fetch_disease_data(disease_name: str, *, extra_pubmed_terms: list[str]
         except Exception:
             _book_task.cancel()
             result.book_monographs = []
+        # Merge candidate-diagnosis chapters (COVERAGE lever), dedup by nbk_id/title, cap total at 3.
+        if _candidate_book_tasks:
+            try:
+                _cand_results = await asyncio.wait_for(
+                    asyncio.gather(*_candidate_book_tasks, return_exceptions=True), timeout=14.0)
+            except Exception:
+                _cand_results = []
+            _seen_keys = {
+                (m.get("nbk_id") or m.get("title", "")).strip().lower()
+                for m in result.book_monographs if isinstance(m, dict)
+            }
+            for _cr in _cand_results:
+                if isinstance(_cr, Exception) or not _cr:
+                    continue
+                for _m in _cr:
+                    if len(result.book_monographs) >= 3:
+                        break
+                    if not isinstance(_m, dict):
+                        continue
+                    _k = (_m.get("nbk_id") or _m.get("title", "")).strip().lower()
+                    if _k and _k not in _seen_keys:
+                        _seen_keys.add(_k)
+                        result.book_monographs.append(_m)
+            # Rank the merged chapters best-first so the most on-topic chapter leads (and survives the
+            # downstream char budget). Signal = the query's disease name + the candidate diagnoses.
+            result.book_monographs = _rank_book_monographs(
+                result.book_monographs, [disease_name] + (candidate_diagnoses or []))
         if result.book_monographs and "StatPearls" not in result.data_sources:
             result.data_sources.append("StatPearls")
 
@@ -3022,12 +3093,17 @@ async def fetch_data_for_query(
     _trial_terms: list[str] | None = None
     _all_terms: list[str] | None = None
     _llm_journal_filter: str | None = None
+    _candidate_dx: list[str] | None = None
     if pubmed_expansion_terms:
         _guideline_terms = pubmed_expansion_terms.get("guideline") or []
         _review_terms = pubmed_expansion_terms.get("review") or []
         _trial_terms = pubmed_expansion_terms.get("trial") or []
         _all_terms = _guideline_terms + _review_terms + _trial_terms
         _llm_journal_filter = pubmed_expansion_terms.get("journal_filter") or None
+        # candidate_diagnoses propagated through the expansion dict (same pattern as comorbidity_list)
+        _cd = pubmed_expansion_terms.get("candidate_diagnoses")
+        if isinstance(_cd, list):
+            _candidate_dx = [c for c in _cd if isinstance(c, str) and c.strip()] or None
 
     start = time.time()
     fetched = FetchedData(query_type=query_type)
@@ -3082,7 +3158,7 @@ async def fetch_data_for_query(
                 _fire_and_forget_index(fetched.drug_data.clinical_trial_abstracts)
 
         elif query_type == "disease" and entities:
-            fetched.disease_data = await fetch_disease_data(entities[0], extra_pubmed_terms=(_guideline_terms + _review_terms) if pubmed_expansion_terms else None, extra_journal_filter=_llm_journal_filter)
+            fetched.disease_data = await fetch_disease_data(entities[0], extra_pubmed_terms=(_guideline_terms + _review_terms) if pubmed_expansion_terms else None, extra_journal_filter=_llm_journal_filter, candidate_diagnoses=_candidate_dx)
             fetched.fallback_to_llm = not fetched.disease_data.fetch_success
             _fire_and_forget_index(fetched.disease_data.guideline_abstracts)
             _fire_and_forget_index(fetched.disease_data.systematic_review_abstracts)
@@ -3147,6 +3223,7 @@ async def fetch_data_for_query(
                     primary_disease,
                     extra_pubmed_terms=(_guideline_terms + _review_terms) if pubmed_expansion_terms else None,
                     extra_journal_filter=_llm_journal_filter,
+                    candidate_diagnoses=_candidate_dx,
                 )
                 if primary_disease
                 else asyncio.sleep(0, result=None)

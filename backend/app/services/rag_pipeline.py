@@ -2625,8 +2625,19 @@ async def _analyze_and_expand_query(
         "    - other_factors: any other population modifiers (transplant, immunocompromised, ICU)\n"
         "    Leave null/empty-list if not mentioned. For non-complex queries, output {}.\n"
         "12. Output ONLY JSON — no markdown, no backticks, no explanation.\n"
-        "\n"
-        f"Query: {query}"
+        + (
+            "13. candidate_diagnoses: ONLY for diagnostic queries where the input is a SYMPTOM / "
+            "FINDING vignette rather than a named disease (intent='diagnosis', or 'what could this be', "
+            "or a cluster of symptoms/signs/labs). List the 2-3 most likely NAMED conditions the "
+            "presentation suggests (e.g. daytime sleepiness + snoring + crowded oropharynx → "
+            "[\"obstructive sleep apnea\"]; hypokalaemia + hypertension + adrenal hypertrophy → "
+            "[\"primary aldosteronism\", \"Conn syndrome\"]). Use full condition names a textbook chapter "
+            "would be titled with. Output [] for drug/treatment/comparison queries or when the disease is "
+            "already named in the query.\n"
+            if settings.candidate_chapters_enabled else ""
+        )
+        + "\n"
+        + f"Query: {query}"
     )
     # NOTE: _call_llm splits on "\nQuery: " — static instruction above gets cached, query does not.
     # F1: the old hardcoded 512 truncated the rich JSON for complex/differential queries (verified
@@ -3369,6 +3380,19 @@ async def process_query(
                 pubmed_expansion_terms = dict(pubmed_expansion_terms or {})
                 pubmed_expansion_terms["review"] = (pubmed_expansion_terms.get("review") or []) + _it
                 logger.info("intent_framing: added %d intent-scoped terms (intent=%s)", len(_it), _query_intent)
+        # Candidate-diagnosis chapter retrieval (COVERAGE lever): for symptom-vignette / diagnostic
+        # queries, thread the analyzer's candidate_diagnoses into the fetch so each candidate disease
+        # gets its own StatPearls chapter — the raw symptom entity has no chapter of its own. Gated on
+        # a diagnostic query so we never expand treatment/drug questions.
+        if settings.candidate_chapters_enabled:
+            _cand_dx = combined.get("candidate_diagnoses")
+            _is_dx = is_differential_query(request.query) or (combined.get("intent") == "diagnosis")
+            if _is_dx and isinstance(_cand_dx, list) and _cand_dx:
+                _cand_dx = [c for c in _cand_dx if isinstance(c, str) and c.strip()][:3]
+                if _cand_dx:
+                    pubmed_expansion_terms = dict(pubmed_expansion_terms or {})
+                    pubmed_expansion_terms["candidate_diagnoses"] = _cand_dx
+                    logger.info("candidate_chapters: threading %d candidate diagnoses into chapter fetch", len(_cand_dx))
         _search_variants = combined.get("search_variants") or []
         # Store patient_context extracted from query (for complex queries)
         _patient_context = combined.get("patient_context", {}) or {}
