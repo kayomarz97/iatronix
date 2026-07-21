@@ -207,9 +207,13 @@ class ArticleRegistry:
     def mark_used(self, article: RegistryArticle) -> None:
         article.used_inline = True
 
-    def to_reference_list(self) -> list[dict]:
-        """Return all registry entries as plain dicts.
-        Cited entries first (used_inline=True), then retrieved-but-unused."""
+    def to_reference_list(self, max_uncited: int = 40) -> list[dict]:
+        """Return registry entries as plain dicts.
+
+        Cited entries (used_inline=True) are ALWAYS kept. Retrieved-but-unused entries are
+        capped at `max_uncited` (highest source-priority first) — without this cap a query that
+        fetches thousands of articles (Semantic Scholar / books / broadened searches) would emit
+        thousands of citations and bloat the response past JSON limits."""
         SOURCE_TYPE_PRIORITY = {
             "guideline": 0, "nice": 1, "fda_label": 2, "dailymed": 3,
             "clinical_trial": 4, "pubmed": 5, "ncbi_books": 6,
@@ -222,7 +226,12 @@ class ArticleRegistry:
                 r.ref_token,
             )
         out: list[dict] = []
+        uncited = 0
         for r in sorted(self.items, key=k):
+            if not r.used_inline:
+                if uncited >= max_uncited:
+                    continue  # cap retrieved-but-unused references
+                uncited += 1
             out.append({
                 "title": r.title,
                 "source": r.source,
