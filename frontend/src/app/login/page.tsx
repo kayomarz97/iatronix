@@ -7,6 +7,7 @@ import { PasswordInput } from "@/components/ui/PasswordInput";
 import { API_KEY_STORAGE_KEY } from "@/lib/constants";
 import { signInWithEmailAndPassword, setPersistence, browserLocalPersistence, browserSessionPersistence } from "firebase/auth";
 import { auth } from "@/lib/firebase";
+import { GoogleSignIn } from "@/components/GoogleSignIn";
 import posthog from "posthog-js";
 
 export default function LoginPage() {
@@ -267,6 +268,11 @@ export default function LoginPage() {
           <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
           <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>or</span>
           <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
+        </div>
+
+        {/* Google sign-in (with safe merge into an existing password account) */}
+        <div style={{ marginBottom: "1.5rem" }}>
+          <GoogleSignIn rememberMe={rememberMe} />
         </div>
 
         {/* Create account */}

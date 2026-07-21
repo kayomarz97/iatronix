@@ -6,6 +6,7 @@ import { Activity, Mail, ChevronRight, ExternalLink, Check } from "lucide-react"
 import { PasswordInput } from "@/components/ui/PasswordInput";
 import { createUserWithEmailAndPassword } from "firebase/auth";
 import { auth } from "@/lib/firebase";
+import { GoogleSignIn } from "@/components/GoogleSignIn";
 
 type Step = 1 | 2 | 3;
 
@@ -291,6 +292,14 @@ export default function RegisterPage() {
               Continue
               <ChevronRight size={16} />
             </button>
+
+            {/* or continue with Google (one-click; safe-merges if the email already exists) */}
+            <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", margin: "0.25rem 0" }}>
+              <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
+              <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>or</span>
+              <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
+            </div>
+            <GoogleSignIn />
 
             <p style={{ textAlign: "center", fontSize: "0.875rem", color: "var(--text-secondary)", margin: "0.25rem 0 0" }}>
               Already have an account?{" "}
