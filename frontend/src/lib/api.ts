@@ -55,11 +55,15 @@ export async function* submitQueryStream(
   query: string,
   modelId: string,
   apiKey: string,
+  modelExplicit = false,
 ): AsyncGenerator<StreamEvent> {
   let jobId: string | null = null;
   let lastEventId = "";
   let attempt = 0;
-  const baseBody = { query, model_id: modelId, model_explicit: false };
+  // model_explicit=true tells the backend the user deliberately picked this model's provider,
+  // so it must route to THAT provider's key (and fail honestly if absent) rather than falling
+  // back to whatever key exists. See rag_pipeline provider-selection block.
+  const baseBody = { query, model_id: modelId, model_explicit: modelExplicit };
 
   // When the tab returns to the foreground after being hidden, abort the (likely dead)
   // in-flight read so we reconnect immediately instead of blocking on a stale socket.

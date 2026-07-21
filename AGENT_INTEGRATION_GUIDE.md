@@ -101,12 +101,23 @@ Next.js Proxy  →  FastAPI Backend (port 8000)
 - `evidence` — drug-in-condition (drug + disease context), timing/management decisions, postoperative protocols, safety/efficacy of intervention
 - `complex` — everything else (multiple entities, comorbidities, vague queries, broad clinical questions, general medical questions); fetch all sources; catch-all default
 
-**"general" type removed** — all queries now route to one of the 6 valid types. The LLM classifier is instructed never to return "general"; any value from cache or malformed output is normalized to "complex" by the safety net (line 2150–2157).
+**"general" type removed** — all queries now route to one of the 6 valid types. The LLM classifier is instructed never to return "general"; any value from cache or malformed output is normalized to "complex" by the safety net.
+
+**Classifier robustness (2026-07-21).** Four layers make classification resilient — see AGENT_ARCHITECTURE "Query classifier robustness":
+- **Robust parse** (`query_classifier._parse_classification`): fenced JSON → first balanced `{...}` → bare `type:` regex, so malformed model output no longer collapses to `complex`.
+- **Structured validation, LLM-agnostic** (`ClassificationResult` Pydantic + `normalize_query_type()`): coerces `query_type` to the valid set and clamps `confidence`, applied on BOTH the primary `_analyze_and_expand_query` path and the fallback classifier. This is code-side validation of prompt-based JSON (NOT provider-specific tool-use) so it works identically for Cerebras/OpenAI/Anthropic.
+- **Comorbidity backstop** (`apply_classifier_backstop`, `CLASSIFY_HEURISTIC_BACKSTOP_ENABLED`): when ≥ `CLASSIFY_BACKSTOP_MIN_CONDITIONS` (2) distinct conditions are present, a `drug`/`evidence`/`disease` label is nudged to `complex` (fixes "CKD hypertension which drugs to use"). Never touches `comparative` or a user-forced type.
+- **Prompt tightening:** analyzer rule 8 states ≥2 named conditions ⇒ `complex` even when a drug is requested.
+- **Crash fix:** the `complex` generation branch read `drug_data.drug_name` — a field that does not exist on `DrugFetchResult` (only `generic_name`/`brand_name`) — raising `AttributeError` on any complex query that populated `drug_data`. Now uses the safe `getattr` accessor.
+
+**Explicit model steers the provider (2026-07-21).** When `request.model_explicit` is true, `process_query()` derives the provider from `get_provider(model_id)` and uses THAT provider's BYOK key first; if the key is missing it returns `DegradedResponse(error_code="provider_key_missing")` instead of silently running another engine. Frontend picker (`settings/page.tsx` "AI Engine") renders only providers with a saved key and sends `model_explicit=true`. Fixes "picked Haiku, ran Cerebras".
 
 ### 4.2 Cache Check
 Redis key format: `v{prompt_version}:{model_id}:{query_type}:{md5(normalized_query)}`
 - Hit → return immediately, skip all downstream work
 - Miss → continue
+
+**Query-analysis cache (R6, `CLASSIFICATION_CACHE_ENABLED`).** Separate from the response cache above: `cache.analysis_cache_get/set` cache the full `_analyze_and_expand_query` result (query_type + entities + rewritten_query + pubmed_terms) keyed by `analysis:v{prompt_version}:{sha256(normalized_query)}` (TTL `CLASSIFICATION_CACHE_TTL_SECONDS`, 24h). `_analyze_and_expand_query_cached()` wraps the analyzer in the `process_query` gather, so identical queries skip the Haiku analysis call. Busted by `prompt_version`.
 
 ### 4.3 Query Analysis & Patient Context Extraction
 `_analyze_and_expand_query()` (via DSPy) performs multi-step analysis:

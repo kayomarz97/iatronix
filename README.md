@@ -74,6 +74,8 @@ Query
   │
   ├─ 3. Classification → drug / disease / comparative / procedure / evidence / complex
   │     User hint > DSPy analysis > LLM classifier > safe "complex" fallback
+  │     Robust: malformed output is recovered (not silently dropped), type/confidence are
+  │     validated, and ≥2 named conditions force the multi-condition path [CLASSIFY_HEURISTIC_BACKSTOP_ENABLED]
   │     Non-medical guard [NON_MEDICAL_GUARD_ENABLED]: if no medical term is found at all,
   │     politely decline instead of searching — no fetch, no generation
   │
@@ -174,7 +176,7 @@ Cerebras model is a one-line change to `CEREBRAS_DEFAULT_MODEL` in `.env`.
 **What BYOK means for you:**
 - No LLM cost is passed through at the platform level — you pay your provider directly.
 - No prompt or response data is sent to an Iatronix-owned model.
-- You can switch providers anytime from Settings.
+- You can switch providers anytime from Settings — the engine picker shows **only** providers you have a saved key for, and the model you pick is the model that runs (no silent fallback to a different engine).
 
 ---
 
@@ -277,6 +279,8 @@ Behavior is toggled in `.env` without code changes. The main ones:
 | `ADAPTIVE_CROSS_STRATEGY_FALLBACK_ENABLED` | When a search returns too few distinct articles, borrow one complementary retrieval strategy — a bounded, gated slice of "search everything" that leaves well-served queries untouched |
 | `NON_MEDICAL_GUARD_ENABLED` | Politely decline clearly non-clinical questions (an honest "clinical reference assistant" reply) instead of searching the literature and answering anyway |
 | `RELEVANCE_FLOOR_ENABLED` / `RELEVANCE_SYNONYMS_ENABLED` / `QUERY_SENSE_FRAMING_ENABLED` | Relevance precision: drop off-topic keyword-matched articles (e.g. a fever guideline that doesn't mention the drug), match drug synonyms, and reframe "does X cause Y" toward the adverse sense. Chosen by factorial test — see `test/results/RELEVANCE_FINDINGS.md` |
+| `CLASSIFY_HEURISTIC_BACKSTOP_ENABLED` | Deterministic comorbidity tie-breaker — when ≥2 distinct conditions are named, route to the multi-condition (`complex`) path even if a drug is requested (e.g. "CKD hypertension which drugs to use"). Also: `CLASSIFY_BACKSTOP_MIN_CONDITIONS` (default 2) |
+| `CLASSIFICATION_CACHE_ENABLED` | Cache the query-analysis result (type + entities + search terms) per normalized query, so identical questions skip the analysis LLM call. Also: `CLASSIFICATION_CACHE_TTL_SECONDS` (24h) |
 
 ---
 

@@ -34,7 +34,13 @@ from app.schemas.query import (
     QueryResponse,
     TokenUsage,
 )
-from app.services.cache import cache_get, cache_get_any_version, cache_set
+from app.services.cache import (
+    analysis_cache_get,
+    analysis_cache_set,
+    cache_get,
+    cache_get_any_version,
+    cache_set,
+)
 from app.services.circuit_breaker import get_breaker, is_provider_available
 from app.services.citation_validator import validate_citations
 from app.services.data_fetcher import (
@@ -69,7 +75,13 @@ from app.services.prompt_engine import (
     build_bluf_only_messages,
     build_section_messages,
 )
-from app.services.query_classifier import classify_query_llm, detect_intent
+from app.services.query_classifier import (
+    apply_classifier_backstop,
+    classify_query_llm,
+    count_named_conditions,
+    detect_intent,
+    normalize_query_type,
+)
 from app.services.safety_checker import check_safety
 from app.services.url_builder import enrich_references, sanitize_response_pmids, is_safe_url
 from app.services.source_router import route_query
@@ -2489,8 +2501,10 @@ async def _analyze_and_expand_query(
         "   - 'procedure': ONLY for pure step-by-step technique queries with no other clinical context.\n"
         "   - 'drug': ONLY for a single pharmaceutical agent with no disease/condition context.\n"
         "   - 'disease': ONLY for a single disease/condition with no drug or treatment named.\n"
-        "   - 'evidence': drug-in-condition queries, timing/management decisions, postoperative care, safety/efficacy questions.\n"
-        "   - 'complex': everything else — multiple entities, comorbidities, broad questions, unclear queries.\n"
+        "   - 'evidence': a SINGLE-condition drug/intervention query — drug-in-one-condition, timing/management decisions, postoperative care, safety/efficacy, or 'drug of choice for <one condition>'.\n"
+        "   - 'complex': everything else — multiple entities, comorbidities, broad questions, unclear queries. "
+        "CRITICAL: when TWO OR MORE distinct conditions are named (e.g. 'CKD and hypertension', 'diabetic with heart failure'), "
+        "use 'complex' EVEN IF the user asks 'which drug' or names a drug class — comorbidity drug-selection is never 'evidence' or 'drug'.\n"
         "   NEVER output 'general'. Default to 'complex' when uncertain.\n"
         "9. response_focus: Write a direct clinical answer to the user's question in 1-2 sentences. "
         "This is used as the BLUF (Bottom Line Up Front). Start with the answer (e.g., 'Metformin should be "
@@ -2558,6 +2572,9 @@ async def _analyze_and_expand_query(
                 "journal_filter": "",
             }
 
+        # Validate query_type on the PRIMARY path (R2) — coerce any stray/legacy value to a
+        # valid type here instead of relying only on the downstream safety net.
+        data["query_type"] = normalize_query_type(data.get("query_type"))
         # Sanitize entities using existing helper
         data["entities"] = _sanitize_entities(data.get("entities") or [])
         # Normalize condition_context: empty string → None
@@ -2586,6 +2603,32 @@ async def _analyze_and_expand_query(
     except Exception as e:
         logger.warning("_analyze_and_expand_query: unexpected error (%s) — falling back", e)
         return None
+
+
+async def _analyze_and_expand_query_cached(
+    redis_client,
+    query: str,
+    *,
+    model_id: str,
+    user_key: str | None,
+    user_provider: str | None,
+) -> dict | None:
+    """Cache wrapper (R6) over `_analyze_and_expand_query`.
+
+    On a hit, returns the stored analysis dict and skips the Haiku call entirely. On a miss,
+    runs the analyzer and stores a successful result. Cache is a no-op unless
+    ``classification_cache_enabled``; any Redis failure degrades to a direct call.
+    """
+    cached = await analysis_cache_get(redis_client, query)
+    if cached is not None:
+        logger.info("analysis cache hit for query: %r", query[:60])
+        return cached
+    result = await _analyze_and_expand_query(
+        query, model_id=model_id, user_key=user_key, user_provider=user_provider
+    )
+    if result is not None:
+        await analysis_cache_set(redis_client, query, result)
+    return result
 
 
 def _dedup_references(refs: list) -> list:
@@ -2692,9 +2735,18 @@ async def _run_parallel_pipeline(
             build_complex_section_messages,
         )
         # Resolve drug + primary disease from fetched_data (set by source_router).
-        drug = (fetched_data.drug_data.drug_name if fetched_data and fetched_data.drug_data else "")
+        # DrugFetchResult exposes generic_name/brand_name (there is NO `drug_name` field) —
+        # use the same safe accessor pattern as prompt_engine/article_registry to avoid
+        # AttributeError on complex queries that populate drug_data.
+        drug = ""
+        if fetched_data and fetched_data.drug_data:
+            drug = (
+                getattr(fetched_data.drug_data, "generic_name", None)
+                or getattr(fetched_data.drug_data, "brand_name", None)
+                or ""
+            )
         primary_disease = (
-            fetched_data.condition_data.disease_name
+            getattr(fetched_data.condition_data, "disease_name", None) or (condition_context or "")
             if fetched_data and fetched_data.condition_data
             else (condition_context or "")
         )
@@ -3025,20 +3077,50 @@ async def process_query(
     if user_llm_key is None and user:
         from app.services.byok import decrypt_key  # for the legacy encrypted_llm_key fallback below
         keystore = get_keystore()
-        # Honor engine_pref first, then a fixed priority order.
-        _pref_provider = (getattr(user, "preferences", {}) or {}).get("engine_pref") or user.llm_provider
-        _provider_priority = [_pref_provider] if _pref_provider else []
-        for _p in ("cerebras", "anthropic", "openai"):
-            if _p not in _provider_priority:
-                _provider_priority.append(_p)
-        for _try_provider in _provider_priority:
-            if not _try_provider:
-                continue
-            _decrypted = keystore.get(user, _try_provider)
-            if _decrypted:
-                user_llm_key = _decrypted
-                user_llm_provider = _try_provider
-                break
+        # The model the user EXPLICITLY selected must steer the provider — otherwise a
+        # Haiku pick would grab whatever key happens to exist (e.g. Cerebras) and the
+        # adapter would silently swap the model to that provider's default. See
+        # AGENT_ARCHITECTURE "Provider-Agnostic Architecture".
+        _intended_provider = (
+            get_provider(request.model_id)
+            if getattr(request, "model_explicit", False) and request.model_id
+            else None
+        )
+        if _intended_provider:
+            # Honor the explicitly selected model's provider FIRST. If its key is missing,
+            # fail honestly below rather than silently running a different engine.
+            _explicit_key = keystore.get(user, _intended_provider)
+            if _explicit_key:
+                user_llm_key = _explicit_key
+                user_llm_provider = _intended_provider
+            else:
+                latency_ms = int((time.time() - start_time) * 1000)
+                return QueryResponse(
+                    query_type="general",
+                    model_used=request.model_id,
+                    response=DegradedResponse(
+                        message=f"You selected a {_intended_provider.title()} model, but no {_intended_provider.title()} API key is saved.",
+                        suggestion=f"Go to Settings → add your {_intended_provider.title()} API key, or switch the engine to a provider you have a key for.",
+                        error_code="provider_key_missing",
+                    ),
+                    disclaimer=DISCLAIMER,
+                    latency_ms=latency_ms,
+                )
+        # No explicit model (or model not resolvable to a provider): honor engine_pref, then priority.
+        if user_llm_key is None:
+            _pref_provider = (getattr(user, "preferences", {}) or {}).get("engine_pref") or user.llm_provider
+            _provider_priority = [_pref_provider] if _pref_provider else []
+            for _p in ("cerebras", "anthropic", "openai"):
+                if _p not in _provider_priority:
+                    _provider_priority.append(_p)
+            for _try_provider in _provider_priority:
+                if not _try_provider:
+                    continue
+                _decrypted = keystore.get(user, _try_provider)
+                if _decrypted:
+                    user_llm_key = _decrypted
+                    user_llm_provider = _try_provider
+                    break
 
         # Final fallback: legacy encrypted_llm_key (backward compat for users not yet migrated)
         if user_llm_key is None and user.encrypted_llm_key:
@@ -3123,7 +3205,8 @@ async def process_query(
 
     # Run merged analysis+expansion, Redis cache check, and stance neutralization in parallel
     _combined, _cache_prefetch, _stance_result = await asyncio.gather(
-        _analyze_and_expand_query(
+        _analyze_and_expand_query_cached(
+            redis_client,
             request.query,
             model_id=_dspy_classify_model,
             user_key=user_llm_key,
@@ -3221,6 +3304,18 @@ async def process_query(
             query_type, request.query[:60],
         )
         query_type = "complex"
+
+    # Deterministic comorbidity backstop (flag-gated): a multi-condition question mislabelled as a
+    # single-focus type ('drug'/'evidence'/'disease') is nudged to 'complex' so the multi-condition
+    # path runs. Fixes cases like "CKD hypertension which drugs to use". No-op unless enabled.
+    query_type, _backstop_hit = apply_classifier_backstop(
+        query_type, condition_context, bool(request.query_type)
+    )
+    if _backstop_hit:
+        logger.info(
+            "classifier backstop: %d conditions in %r → forced 'complex' (query: %r)",
+            count_named_conditions(condition_context), condition_context, request.query[:60],
+        )
 
     # Non-medical / out-of-scope fast-guard (conservative, flag-gated). If the analyzer extracted
     # ZERO medical terms and the query fell to the default 'complex' sink, it is almost certainly not

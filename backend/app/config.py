@@ -199,6 +199,19 @@ class Settings(BaseSettings):
     # reply instead of burning fetches + free-answering. Conservative (see _is_non_medical). Default OFF.
     non_medical_guard_enabled: bool = False
 
+    # Classifier heuristic backstop — deterministic tie-breaker for the ambiguous evidence/complex
+    # boundary. When the analyzer reports ≥ this many DISTINCT named conditions (comorbidity scenario),
+    # a 'drug'/'evidence'/'disease' classification is nudged to 'complex' so the multi-condition
+    # fetch+prompt path runs. Purely additive, deterministic, LLM-agnostic. Default OFF (dev-first).
+    classify_heuristic_backstop_enabled: bool = False
+    classify_backstop_min_conditions: int = 2
+
+    # Query-analysis cache (R6) — cache the full `_analyze_and_expand_query` result (query_type +
+    # entities + rewritten_query + pubmed_terms) keyed by normalized query, so exact repeats skip
+    # the Haiku analysis call. Deterministic input → safe to reuse; busted by prompt_version. Default OFF.
+    classification_cache_enabled: bool = False
+    classification_cache_ttl_seconds: int = 86400  # 24h
+
     # Relevance precision (stop off-topic keyword-matched articles reaching the answer). All default OFF.
     relevance_floor_enabled: bool = False        # drop articles where the entity is absent (relevance 0)
     relevance_synonyms_enabled: bool = False     # match entity synonyms (paracetamol⇄acetaminophen …)

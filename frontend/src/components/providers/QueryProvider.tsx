@@ -84,7 +84,12 @@ export function QueryProvider({ children }: { children: ReactNode }) {
     // Refresh LLM config at submit time to get canonical provider from backend
     const cfg = await getLLMConfig();
     setLlmConfig(cfg);
-    const provider = localStorage.getItem(LLM_PROVIDER_STORAGE_KEY) || cfg?.default_provider || "cerebras";
+    // A provider stored in localStorage means the user deliberately picked an engine in
+    // Settings — that choice is authoritative (model_explicit=true) so the backend routes to
+    // that provider's key. Without a stored choice we fall back to the server default (implicit).
+    const storedProvider = localStorage.getItem(LLM_PROVIDER_STORAGE_KEY);
+    const modelExplicit = !!storedProvider;
+    const provider = storedProvider || cfg?.default_provider || "cerebras";
     const providerInfo = cfg.providers[provider];
     const modelId = providerInfo?.model_id ?? PROVIDER_DEFAULT_MODELS[provider] ?? "gpt-oss-120b";
     const modelName = providerInfo?.display ?? modelId;
@@ -113,7 +118,7 @@ export function QueryProvider({ children }: { children: ReactNode }) {
     });
 
     const runStream = async (key: string) => {
-      for await (const event of submitQueryStream(query, modelId, key)) {
+      for await (const event of submitQueryStream(query, modelId, key, modelExplicit)) {
         if (event.type === "stage") {
           setLoadingStage(event.payload.stage);
         } else if (event.type === "token") {

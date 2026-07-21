@@ -350,6 +350,11 @@ export default function SettingsPage() {
   };
 
   const handleNewEnginePref = async (pref: string) => {
+    // Persist the choice locally FIRST so query submission uses it immediately — the model
+    // picker only offers providers that already have a saved key, so `pref` is always runnable.
+    setActiveProvider(pref);
+    localStorage.setItem("iatronix_engine_pref", pref);
+    localStorage.setItem(LLM_PROVIDER_STORAGE_KEY, pref);
     try {
       const res = await fetch("/api/v1/auth/settings", {
         method: "POST",
@@ -585,45 +590,55 @@ export default function SettingsPage() {
         </div>
       </section>
 
-      {/* ── AI Engine Toggle ── */}
-      {llmConfig && (
-        <section className="space-y-3">
-          <h2 className="text-lg font-semibold">AI Engine</h2>
-          <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
-            Choose which provider to use for queries. Add the corresponding key below first.
-          </p>
-          <div className="flex gap-2">
-            {Object.entries(llmConfig.providers).map(([prov, info]) => {
-              const keyStatus = byokKeys.find((k) => k.provider === prov);
-              const isActive = activeProvider === prov;
-              const hasKey = keyStatus?.is_set;
-              return (
-                <button
-                  key={prov}
-                  disabled={!hasKey}
-                  onClick={() => handleNewEnginePref(prov)}
-                  title={!hasKey ? `Add the ${info.display} key below first` : undefined}
-                  style={{
-                    flex: 1, padding: "12px 8px", display: "flex", flexDirection: "column",
-                    alignItems: "center", gap: "0.3rem",
-                    background: isActive ? "var(--accent-glow)" : "var(--bg-elevated)",
-                    border: `1px solid ${isActive ? "var(--accent)" : "var(--border)"}`,
-                    borderRadius: "var(--radius-md)", cursor: hasKey ? "pointer" : "not-allowed",
-                    fontSize: "0.85rem", fontWeight: isActive ? 600 : 400,
-                    color: isActive ? "var(--accent)" : "var(--text-secondary)",
-                    opacity: hasKey ? 1 : 0.5,
-                    transition: "all var(--transition)",
-                  }}
-                >
-                  {isActive && <span style={{ fontSize: 8, color: "var(--success)" }}>●</span>}
-                  <div className="font-medium">{info.display}</div>
-                  <div className="text-xs opacity-70">{prov}</div>
-                </button>
-              );
-            })}
-          </div>
-        </section>
-      )}
+      {/* ── AI Engine Toggle ── only providers with a SAVED key appear here ── */}
+      {llmConfig && (() => {
+        // Only offer engines the user can actually run: enabled provider ∧ saved key.
+        const runnable = Object.entries(llmConfig.providers).filter(
+          ([prov]) => byokKeys.find((k) => k.provider === prov)?.is_set
+        );
+        return (
+          <section className="space-y-3">
+            <h2 className="text-lg font-semibold">AI Engine</h2>
+            {runnable.length === 0 ? (
+              <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
+                Add an API key below to choose an AI engine. Only providers you have a key for
+                will appear here.
+              </p>
+            ) : (
+              <>
+                <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
+                  Choose which provider runs your queries. Only engines you have a key for are shown.
+                </p>
+                <div className="flex gap-2">
+                  {runnable.map(([prov, info]) => {
+                    const isActive = activeProvider === prov;
+                    return (
+                      <button
+                        key={prov}
+                        onClick={() => handleNewEnginePref(prov)}
+                        style={{
+                          flex: 1, padding: "12px 8px", display: "flex", flexDirection: "column",
+                          alignItems: "center", gap: "0.3rem",
+                          background: isActive ? "var(--accent-glow)" : "var(--bg-elevated)",
+                          border: `1px solid ${isActive ? "var(--accent)" : "var(--border)"}`,
+                          borderRadius: "var(--radius-md)", cursor: "pointer",
+                          fontSize: "0.85rem", fontWeight: isActive ? 600 : 400,
+                          color: isActive ? "var(--accent)" : "var(--text-secondary)",
+                          transition: "all var(--transition)",
+                        }}
+                      >
+                        {isActive && <span style={{ fontSize: 8, color: "var(--success)" }}>●</span>}
+                        <div className="font-medium">{info.display}</div>
+                        <div className="text-xs opacity-70">{prov}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+          </section>
+        );
+      })()}
 
       {/* ── BYOK Keys (independent per-provider) ── */}
       {(Object.keys(providersInfo).length ? Object.keys(providersInfo) : ["cerebras", "anthropic"]).map((prov) => {
@@ -704,7 +719,8 @@ export default function SettingsPage() {
         );
       })}
 
-      {/* ── OpenRouter OAuth ── */}
+      {/* ── OpenRouter OAuth ── hidden entirely unless enabled by deployment flag ── */}
+      {openRouterOAuthEnabled && (
       <section className="space-y-3">
         <h2 className="text-lg font-semibold">OpenRouter (Gemma 4)</h2>
         <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
@@ -760,26 +776,22 @@ export default function SettingsPage() {
             </button>
           )}
         </div>
-        {!openRouterOAuthEnabled && (
-          <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-            Set `NEXT_PUBLIC_ENABLE_OPENROUTER_OAUTH=true` to enable this section.
-          </p>
-        )}
         {openrouterMessage && (
           <p className="text-sm" style={{ color: openrouterMessage?.includes("disconnected") ? "var(--success)" : "var(--danger)" }}>
             {openrouterMessage}
           </p>
         )}
       </section>
+      )}
 
-      {/* ── Engine Toggle (Legacy) ── */}
+      {/* ── Engine Toggle (Legacy) ── hidden entirely unless enabled by deployment flag ── */}
+      {legacyEngineToggleEnabled && (
       <section className="space-y-3">
         <h2 className="text-lg font-semibold">Search Engine (Legacy)</h2>
         <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
           Legacy engine switch for Anthropic vs OpenRouter credentials.
         </p>
-        {legacyEngineToggleEnabled ? (
-          <>
+        <>
             <div className="flex gap-2">
               <button
                 onClick={() => handleEngineToggle("anthropic")}
@@ -811,13 +823,9 @@ export default function SettingsPage() {
                 Connect OpenRouter above to enable Gemma 4.
               </p>
             )}
-          </>
-        ) : (
-          <div className="p-3 rounded-md text-sm" style={{ background: "var(--bg-elevated)", border: "1px solid var(--border)", color: "var(--text-muted)" }}>
-            Disabled by deployment feature flag. Use the “AI Engine” section above.
-          </div>
-        )}
+        </>
       </section>
+      )}
 
       {/* ── NCBI API Key ── */}
       <section className="space-y-3">

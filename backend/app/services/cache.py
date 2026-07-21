@@ -73,6 +73,45 @@ async def cache_set(
         logger.warning("Redis cache set failed", exc_info=True)
 
 
+def _analysis_cache_key(query: str) -> str:
+    """Key for the cached query-analysis dict — query-only (analysis is provider-agnostic)."""
+    normalized = normalize_query(query)
+    query_hash = hashlib.sha256(normalized.encode()).hexdigest()
+    return f"analysis:v{settings.prompt_version}:{query_hash}"
+
+
+async def analysis_cache_get(redis_client, query: str) -> dict | None:
+    """Return a cached `_analyze_and_expand_query` result for this exact query, or None.
+
+    The analysis (query_type + entities + rewritten_query + pubmed_terms) is a deterministic
+    function of the query text, so identical queries can reuse it and skip the Haiku call.
+    Guarded by ``classification_cache_enabled``; any Redis issue degrades to a miss.
+    """
+    if not redis_client or not settings.classification_cache_enabled:
+        return None
+    try:
+        data = await redis_client.get(_analysis_cache_key(query))
+        if data:
+            return orjson.loads(data)
+    except Exception:
+        logger.warning("Redis analysis cache get failed", exc_info=True)
+    return None
+
+
+async def analysis_cache_set(redis_client, query: str, analysis: dict) -> None:
+    """Cache a `_analyze_and_expand_query` result. Silently skips on Redis failure / when disabled."""
+    if not redis_client or not settings.classification_cache_enabled or not analysis:
+        return
+    try:
+        await redis_client.setex(
+            _analysis_cache_key(query),
+            settings.classification_cache_ttl_seconds,
+            orjson.dumps(analysis),
+        )
+    except Exception:
+        logger.warning("Redis analysis cache set failed", exc_info=True)
+
+
 async def cache_get_any_version(
     redis_client, query: str, query_type: str, model_id: str
 ) -> dict | None:

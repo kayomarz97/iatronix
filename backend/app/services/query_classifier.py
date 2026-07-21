@@ -2,11 +2,45 @@ import json
 import logging
 import re
 
+from pydantic import BaseModel, field_validator
+
 from app.config import settings
 
 logger = logging.getLogger(__name__)
 
 _VALID_TYPES = {"drug", "disease", "comparative", "procedure", "evidence", "complex"}
+
+
+def normalize_query_type(raw: object) -> str:
+    """Coerce any model-emitted value to a valid query_type, defaulting to 'complex'.
+
+    Provider-neutral: works identically for Anthropic/Cerebras/OpenAI output. Legacy 'general'
+    and anything unrecognized collapse to 'complex' (the safe catch-all).
+    """
+    qt = str(raw or "").strip().lower()
+    return qt if qt in _VALID_TYPES else "complex"
+
+
+class ClassificationResult(BaseModel):
+    """Validated classifier output (R2). Structured-output guarantee WITHOUT provider-specific
+    tool-use — the model still returns JSON, but every field is coerced/clamped here so a stray
+    type or an out-of-range confidence can never propagate downstream."""
+
+    query_type: str = "complex"
+    confidence: float = 0.6
+
+    @field_validator("query_type", mode="before")
+    @classmethod
+    def _valid_type(cls, v: object) -> str:
+        return normalize_query_type(v)
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def _clamp_conf(cls, v: object) -> float:
+        try:
+            return min(max(float(v), 0.0), 1.0)
+        except (TypeError, ValueError):
+            return 0.6
 
 _HIGHLIGHTS_RE = re.compile(
     r"\b(?:surviving|approach to|initial management of|quick|highlights?|"
@@ -74,6 +108,43 @@ def detect_intent(query: str) -> str:
     return "full"
 
 
+def count_named_conditions(condition_context: str | None) -> int:
+    """Count DISTINCT clinical conditions recorded in ``condition_context``.
+
+    ``condition_context`` is a comma / 'and' / 'with' / '+' / ';' / '/' joined string (e.g.
+    "chronic kidney disease, hypertension"). Deterministic and LLM-agnostic — a conservative
+    comorbidity signal for the classifier backstop only, never used for retrieval.
+    """
+    if not condition_context:
+        return 0
+    parts = re.split(r",|\band\b|\bwith\b|\+|;|/", condition_context, flags=re.IGNORECASE)
+    seen = {p.strip().lower() for p in parts if p and p.strip()}
+    return len(seen)
+
+
+def apply_classifier_backstop(
+    query_type: str,
+    condition_context: str | None,
+    user_forced_type: bool,
+) -> tuple[str, bool]:
+    """Deterministic tie-breaker for the ambiguous evidence/complex boundary.
+
+    A multi-condition (comorbidity) question such as "CKD and hypertension — which drugs?"
+    routinely gets mislabelled 'evidence' or 'drug' by the LLM, which then runs the single-focus
+    fetch/prompt path and under-serves the answer. When the analyzer recorded
+    ≥ ``classify_backstop_min_conditions`` distinct conditions we nudge those single-focus types
+    to 'complex'. Never touches 'comparative' (a legitimate two-entity compare) and never
+    overrides a user-forced type. Returns (query_type, changed). No-op unless the flag is on.
+    """
+    if user_forced_type or not settings.classify_heuristic_backstop_enabled:
+        return query_type, False
+    if query_type not in ("drug", "evidence", "disease"):
+        return query_type, False
+    if count_named_conditions(condition_context) >= settings.classify_backstop_min_conditions:
+        return "complex", True
+    return query_type, False
+
+
 def _no_llm_fallback(query: str, user_hint: str | None = None) -> tuple[str, float]:
     """Emergency fallback when no LLM key is available.
 
@@ -107,15 +178,64 @@ async def classify_query_llm(
         prompt = LLM_CLASSIFY_PROMPT.format(query=query)
         response = await llm.ainvoke(prompt)
         text = response.content if hasattr(response, "content") else str(response)
-        text = text.strip().strip("`").strip()
-        if text.startswith("json"):
-            text = text[4:].strip()
-        data = json.loads(text)
-        qtype = data.get("type", "complex")
-        conf = float(data.get("confidence", 0.6))
+        qtype, conf = _parse_classification(text)
         if qtype not in _VALID_TYPES:
             return _no_llm_fallback(query)
         return qtype, min(max(conf, 0.0), 1.0)
     except Exception:
         logger.debug("LLM query classification failed", exc_info=True)
         return _no_llm_fallback(query)
+
+
+def _parse_classification(text: str) -> tuple[str, float]:
+    """Robustly extract (type, confidence) from a model response.
+
+    Tiered recovery so a stray fence, prose wrapper, or trailing comma does NOT collapse a
+    valid classification to the expensive 'complex' default:
+      1. strip fences → json.loads
+      2. regex-extract the first {...} object → json.loads
+      3. regex-pull a bare "type": "<valid>" (and optional confidence) from anywhere in the text
+    Returns ('complex', 0.4) only when all three fail.
+    """
+    raw = (text or "").strip()
+    clean = raw.strip("`").strip()
+    if clean[:4].lower() == "json":
+        clean = clean[4:].strip()
+
+    for candidate in (clean, _first_json_object(raw)):
+        if not candidate:
+            continue
+        try:
+            data = json.loads(candidate)
+            qtype = str(data.get("type", "")).strip().lower()
+            if qtype in _VALID_TYPES:
+                # Route through the validated model so confidence is clamped consistently.
+                r = ClassificationResult(query_type=qtype, confidence=data.get("confidence", 0.6))
+                return r.query_type, r.confidence
+        except (json.JSONDecodeError, TypeError, ValueError):
+            pass
+
+    # Last resort: pull "type": "<valid>" out of free text.
+    m = re.search(r'"?type"?\s*[:=]\s*"?(' + "|".join(_VALID_TYPES) + r')"?', raw, re.IGNORECASE)
+    if m:
+        qtype = m.group(1).lower()
+        cm = re.search(r'"?confidence"?\s*[:=]\s*([01]?\.?\d+)', raw)
+        conf = float(cm.group(1)) if cm else 0.55
+        return qtype, conf
+    return "complex", 0.4
+
+
+def _first_json_object(text: str) -> str | None:
+    """Return the first balanced {...} substring, or None."""
+    start = text.find("{")
+    if start == -1:
+        return None
+    depth = 0
+    for i in range(start, len(text)):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+    return None

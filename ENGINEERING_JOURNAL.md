@@ -159,3 +159,40 @@ fetches too much, or the wrong thing.*
 5. **Retrieval breadth is a dial, not a maximum.** Widening the net (raising a threshold) pulled in
    mostly-irrelevant articles and hurt answer quality; a tighter setting was better. Precision/recall
    is a trade-off to tune, not a number to maximise.
+
+## 7. Classifier robustness & the model-selection seam, again (July 2026)
+
+Two user-reported symptoms — "the classifier routes wrong things" and "I picked Haiku but it ran
+Cerebras" — turned out to be three separate bugs. Untangling them was the lesson.
+
+1. **The error message named the wrong culprit.** "CKD hypertension which drugs to use" failed with
+   `'DrugFetchResult' object has no attribute 'drug_name'`, so it *looked* like a misrouted `drug`
+   query. It wasn't — the query classified correctly as `complex`, then crashed in the complex
+   generation branch on a field that never existed (`DrugFetchResult` has `generic_name`/`brand_name`,
+   not `drug_name`). Every other reader used a safe `getattr`; this one line used bare attribute
+   access, so it only blew up when a complex query happened to populate `drug_data`. **Read the
+   traceback's *location*, not its *noun* — the word "drug" in the error was a red herring.**
+
+2. **Seam B reappears: the model picker was decoupled from the engine.** Selecting "Haiku" sent
+   `model_id=claude-haiku…`, but `process_query()` chose the provider purely from `engine_pref` +
+   which BYOK key existed — it never read the selected model. It grabbed the Cerebras key, and the
+   Cerebras adapter's `resolve_model()` defensively swapped Haiku for `gpt-oss-120b`, so the answer
+   *honestly* reported Cerebras. **The label was right; the routing threw the choice away.** Fix:
+   when the model is explicit, the provider is derived from the model and its key is tried first —
+   and if that key is missing we fail honestly instead of silently substituting. The UI now only
+   offers engines you hold a key for, so the mismatch can't be created in the first place.
+
+3. **Robustness ≠ a bigger model — it's deterministic backstops.** The classifier is one LLM call
+   whose worst failure mode was silent: any malformed JSON collapsed to the expensive `complex`
+   default with no signal. The fixes were all deterministic and cheap: tiered JSON recovery, Pydantic
+   coercion of the type/confidence (code-side, **not** provider-specific tool-use — the classifier
+   runs on Cerebras as often as Anthropic), and an entity-count tie-breaker for the genuinely
+   ambiguous `evidence`-vs-`complex` boundary (≥2 named conditions ⇒ complex). The LLM keeps
+   waffling on comorbidity questions; "count the conditions" is an objective signal it can't argue
+   with.
+
+4. **A new env var doesn't load on a single-service `--build`.** Enabling a flag in `.env.dev` and
+   running `docker compose up -d --build <service>` brought the container up *without* the new var —
+   it reused the old container's resolved environment. `--force-recreate` fixed it. Verify a
+   flag-gated feature is actually flagged-on in the running container (`docker exec … printenv`)
+   before concluding it "doesn't work."
