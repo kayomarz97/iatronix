@@ -1,0 +1,319 @@
+[
+  {
+    "label": "drug: empagliflozin MoA",
+    "query_type": "drug",
+    "entities": [
+      "empagliflozin"
+    ],
+    "typed": {
+      "latency_s": 3.79,
+      "esearch_calls": 4,
+      "total_abstracts": 2,
+      "unique_pmids": 2,
+      "duplication_ratio": 1.0,
+      "cap_kept": 2,
+      "cap_waste": 0,
+      "empty_fetch": false,
+      "evidence_tier": "unknown",
+      "fallback_to_llm": false
+    },
+    "fetch_all": {
+      "latency_s": 9.03,
+      "esearch_calls": 25,
+      "total_abstracts": 24,
+      "unique_pmids": 6,
+      "duplication_ratio": 4.0,
+      "cap_kept": 16,
+      "cap_waste": 8,
+      "empty_fetch": false,
+      "evidence_tier": "guideline",
+      "fallback_to_llm": null
+    }
+  },
+  {
+    "label": "disease: CKD staging",
+    "query_type": "disease",
+    "entities": [
+      "chronic kidney disease"
+    ],
+    "typed": {
+      "latency_s": 3.28,
+      "esearch_calls": 4,
+      "total_abstracts": 15,
+      "unique_pmids": 10,
+      "duplication_ratio": 1.5,
+      "cap_kept": 1,
+      "cap_waste": 14,
+      "empty_fetch": false,
+      "evidence_tier": "unknown",
+      "fallback_to_llm": false
+    },
+    "fetch_all": {
+      "latency_s": 8.43,
+      "esearch_calls": 31,
+      "total_abstracts": 36,
+      "unique_pmids": 16,
+      "duplication_ratio": 2.25,
+      "cap_kept": 16,
+      "cap_waste": 20,
+      "empty_fetch": false,
+      "evidence_tier": "guideline",
+      "fallback_to_llm": null
+    }
+  },
+  {
+    "label": "symptom-only: fatigue+night sweats",
+    "query_type": "disease",
+    "entities": [
+      "chronic fatigue",
+      "night sweats"
+    ],
+    "typed": {
+      "latency_s": 2.77,
+      "esearch_calls": 4,
+      "total_abstracts": 13,
+      "unique_pmids": 7,
+      "duplication_ratio": 1.86,
+      "cap_kept": 2,
+      "cap_waste": 11,
+      "empty_fetch": false,
+      "evidence_tier": "unknown",
+      "fallback_to_llm": false
+    },
+    "fetch_all": {
+      "latency_s": 11.2,
+      "esearch_calls": 41,
+      "total_abstracts": 39,
+      "unique_pmids": 11,
+      "duplication_ratio": 3.55,
+      "cap_kept": 27,
+      "cap_waste": 12,
+      "empty_fetch": false,
+      "evidence_tier": "guideline",
+      "fallback_to_llm": null
+    }
+  },
+  {
+    "label": "evidence: SGLT2i in HF",
+    "query_type": "evidence",
+    "entities": [
+      "SGLT2 inhibitors",
+      "heart failure"
+    ],
+    "typed": {
+      "latency_s": 2.41,
+      "esearch_calls": 4,
+      "total_abstracts": 8,
+      "unique_pmids": 5,
+      "duplication_ratio": 1.6,
+      "cap_kept": 3,
+      "cap_waste": 5,
+      "empty_fetch": false,
+      "evidence_tier": "unknown",
+      "fallback_to_llm": false
+    },
+    "fetch_all": {
+      "latency_s": 16.74,
+      "esearch_calls": 43,
+      "total_abstracts": 54,
+      "unique_pmids": 18,
+      "duplication_ratio": 3.0,
+      "cap_kept": 32,
+      "cap_waste": 22,
+      "empty_fetch": false,
+      "evidence_tier": "guideline",
+      "fallback_to_llm": null
+    }
+  },
+  {
+    "label": "procedure: CVC insertion",
+    "query_type": "procedure",
+    "entities": [
+      "central venous catheter insertion"
+    ],
+    "typed": {
+      "latency_s": 3.48,
+      "esearch_calls": 5,
+      "total_abstracts": 1,
+      "unique_pmids": 1,
+      "duplication_ratio": 1.0,
+      "cap_kept": 0,
+      "cap_waste": 1,
+      "empty_fetch": false,
+      "evidence_tier": "unknown",
+      "fallback_to_llm": false
+    },
+    "fetch_all": {
+      "latency_s": 5.87,
+      "esearch_calls": 25,
+      "total_abstracts": 29,
+      "unique_pmids": 8,
+      "duplication_ratio": 3.62,
+      "cap_kept": 17,
+      "cap_waste": 12,
+      "empty_fetch": false,
+      "evidence_tier": "guideline",
+      "fallback_to_llm": null
+    }
+  },
+  {
+    "label": "comparative: warfarin vs apixaban",
+    "query_type": "comparative",
+    "entities": [
+      "warfarin",
+      "apixaban"
+    ],
+    "typed": {
+      "latency_s": 8.61,
+      "esearch_calls": 12,
+      "total_abstracts": 7,
+      "unique_pmids": 2,
+      "duplication_ratio": 3.5,
+      "cap_kept": 7,
+      "cap_waste": 0,
+      "empty_fetch": false,
+      "evidence_tier": "unknown",
+      "fallback_to_llm": false
+    },
+    "fetch_all": {
+      "latency_s": 12.63,
+      "esearch_calls": 41,
+      "total_abstracts": 37,
+      "unique_pmids": 11,
+      "duplication_ratio": 3.36,
+      "cap_kept": 32,
+      "cap_waste": 5,
+      "empty_fetch": false,
+      "evidence_tier": "guideline",
+      "fallback_to_llm": null
+    }
+  },
+  {
+    "label": "complex: DOC for CKD+T2DM+HF",
+    "query_type": "complex",
+    "entities": [
+      "",
+      "chronic kidney disease",
+      "type 2 diabetes"
+    ],
+    "typed": {
+      "latency_s": 3.91,
+      "esearch_calls": 12,
+      "total_abstracts": 16,
+      "unique_pmids": 1,
+      "duplication_ratio": 16.0,
+      "cap_kept": 16,
+      "cap_waste": 0,
+      "empty_fetch": false,
+      "evidence_tier": "guideline",
+      "fallback_to_llm": false
+    },
+    "fetch_all": {
+      "latency_s": 10.79,
+      "esearch_calls": 43,
+      "total_abstracts": 37,
+      "unique_pmids": 6,
+      "duplication_ratio": 6.17,
+      "cap_kept": 31,
+      "cap_waste": 6,
+      "empty_fetch": false,
+      "evidence_tier": "guideline",
+      "fallback_to_llm": null
+    }
+  },
+  {
+    "label": "complex: metformin in CKD+HF",
+    "query_type": "complex",
+    "entities": [
+      "metformin",
+      "chronic kidney disease"
+    ],
+    "typed": {
+      "latency_s": 3.72,
+      "esearch_calls": 12,
+      "total_abstracts": 15,
+      "unique_pmids": 0,
+      "duplication_ratio": 0.0,
+      "cap_kept": 15,
+      "cap_waste": 0,
+      "empty_fetch": true,
+      "evidence_tier": "guideline",
+      "fallback_to_llm": false
+    },
+    "fetch_all": {
+      "latency_s": 12.03,
+      "esearch_calls": 43,
+      "total_abstracts": 57,
+      "unique_pmids": 24,
+      "duplication_ratio": 2.38,
+      "cap_kept": 21,
+      "cap_waste": 36,
+      "empty_fetch": false,
+      "evidence_tier": "guideline",
+      "fallback_to_llm": null
+    }
+  },
+  {
+    "label": "drug-in-disease: amiodarone in AF",
+    "query_type": "evidence",
+    "entities": [
+      "amiodarone",
+      "atrial fibrillation"
+    ],
+    "typed": {
+      "latency_s": 4.13,
+      "esearch_calls": 4,
+      "total_abstracts": 8,
+      "unique_pmids": 4,
+      "duplication_ratio": 2.0,
+      "cap_kept": 2,
+      "cap_waste": 6,
+      "empty_fetch": false,
+      "evidence_tier": "unknown",
+      "fallback_to_llm": false
+    },
+    "fetch_all": {
+      "latency_s": 13.53,
+      "esearch_calls": 41,
+      "total_abstracts": 63,
+      "unique_pmids": 25,
+      "duplication_ratio": 2.52,
+      "cap_kept": 26,
+      "cap_waste": 37,
+      "empty_fetch": false,
+      "evidence_tier": "guideline",
+      "fallback_to_llm": null
+    }
+  },
+  {
+    "label": "non-medical: capital of France",
+    "query_type": "disease",
+    "entities": [
+      "capital of France"
+    ],
+    "typed": {
+      "latency_s": 2.89,
+      "esearch_calls": 4,
+      "total_abstracts": 5,
+      "unique_pmids": 0,
+      "duplication_ratio": 0.0,
+      "cap_kept": 5,
+      "cap_waste": 0,
+      "empty_fetch": true,
+      "evidence_tier": "unknown",
+      "fallback_to_llm": false
+    },
+    "fetch_all": {
+      "latency_s": 5.59,
+      "esearch_calls": 25,
+      "total_abstracts": 20,
+      "unique_pmids": 0,
+      "duplication_ratio": 0.0,
+      "cap_kept": 20,
+      "cap_waste": 0,
+      "empty_fetch": true,
+      "evidence_tier": "guideline",
+      "fallback_to_llm": null
+    }
+  }
+]
