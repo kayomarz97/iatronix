@@ -276,6 +276,7 @@ Behavior is toggled in `.env` without code changes. The main ones:
 | `SEMANTIC_CACHE_ENABLED` | Reuse results for near-duplicate (not just identical) queries |
 | `ADAPTIVE_CROSS_STRATEGY_FALLBACK_ENABLED` | When a search returns too few distinct articles, borrow one complementary retrieval strategy — a bounded, gated slice of "search everything" that leaves well-served queries untouched |
 | `NON_MEDICAL_GUARD_ENABLED` | Politely decline clearly non-clinical questions (an honest "clinical reference assistant" reply) instead of searching the literature and answering anyway |
+| `RELEVANCE_FLOOR_ENABLED` / `RELEVANCE_SYNONYMS_ENABLED` / `QUERY_SENSE_FRAMING_ENABLED` | Relevance precision: drop off-topic keyword-matched articles (e.g. a fever guideline that doesn't mention the drug), match drug synonyms, and reframe "does X cause Y" toward the adverse sense. Chosen by factorial test — see `test/results/RELEVANCE_FINDINGS.md` |
 
 ---
 

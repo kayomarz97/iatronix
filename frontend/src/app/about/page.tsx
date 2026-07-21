@@ -69,6 +69,14 @@ const LESSONS = [
     title: "The right amount of evidence is a dial, not a maximum",
     desc: "It is tempting to treat retrieval as 'more is better' and keep widening the net. We raised a relevance threshold to pull in more articles and answer quality got worse, not better — the extra results were mostly off-topic and dragged the model toward hedging and false consensus. A tighter setting produced cleaner, more decisive answers. The lesson: retrieval breadth is a precision/recall trade-off to tune for the task, not a number to maximise.",
   },
+  {
+    title: "A size budget is not a count cap",
+    desc: "One clinical search returned over 4,000 citations and crashed the response. The citation list was built from every fetched article with no count limit, and a broad query had pulled in thousands of unique papers (PubMed + Semantic Scholar + textbooks). The internal cap only measured characters, so title-only entries slipped through uncounted. The fix caps the list by count — every source the answer actually cites is kept, and the retrieved-but-uncited extras are limited. The lesson: bound what the user sees by count, not just by size.",
+  },
+  {
+    title: "Relevance needs a floor, not just a ranking",
+    desc: "Asked 'does paracetamol cause fever', the app once surfaced an unrelated post-operative arthroplasty fever guideline — it matched the word 'fever' and scored well on study quality, and nothing dropped it, because ranking only reorders. The fix adds a relevance floor that drops articles which never mention the drug, plus adverse-effect query framing so a causation question retrieves 'drug-induced' evidence rather than 'drug used to treat' evidence. Chosen by testing every combination and measuring off-topic rate: together they cut off-topic results sharply and kept more of the right ones.",
+  },
 ];
 
 const API_SOURCES = [

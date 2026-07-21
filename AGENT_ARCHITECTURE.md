@@ -103,6 +103,9 @@
 - SECTION_REFETCH_ENABLED — true/false; per-section LangGraph re-fetch for still-empty sections. Dev true / prod true (promoted 2026-06-15). Also: SECTION_REFETCH_TIMEOUT_SECONDS (10)
 - ADAPTIVE_CROSS_STRATEGY_FALLBACK_ENABLED — true/false; **confidence-gated cross-strategy fallback**. The existing sufficiency bar in `_retrieval_assessment` is very low (score ≥ 1), so a thin/misrouted fetch (e.g. a `procedure` query that returned a single, possibly off-topic article) passes it while holding too few DISTINCT articles. When enabled, `_expand_retrieval_if_needed()` gates on `_unique_evidence_hits()` and, if unique-PMID count < CROSS_STRATEGY_MIN_UNIQUE_HITS, fires exactly ONE complementary strategy (procedure→evidence, disease→evidence, evidence/comparative/drug→disease, complex→evidence on joined entities) via the existing merge/enrich plumbing. A bounded, gated slice of "fetch-all" — well-served queries clear the floor and pay nothing (no added latency/dilution). Backed by test/results/FINDINGS.md + test/results/DEV_VS_MAIN_FINDINGS.md. Dev true / prod false (2026-07-21). Also: CROSS_STRATEGY_MIN_UNIQUE_HITS (3 — floor 5 was tested and diluted precision on thin procedure queries, reverted to 3). NOTE: the gate is also evaluated at the second-pass early-exit, so thin procedure/disease/drug/comparative fetches (which clear the low score≥1 sufficiency bar) still reach the fallback.
 - NON_MEDICAL_GUARD_ENABLED — true/false; **non-medical / out-of-scope fast-guard**. In `process_query()`, right after classification + entity extraction, `_is_non_medical()` returns True only when the analyzer extracted ZERO medical terms (no entities, no `condition_context`, no `answer_entities`) AND the query fell to the default `complex` sink AND no type was forced. On a hit, returns a `DegradedResponse` (`error_code="out_of_scope"`, honest "clinical reference assistant" message) with NO fetch and NO LLM call — instead of burning ~25 PubMed searches and free-answering (behaviour observed for "capital of France" in test/results/DEV_VS_MAIN_FINDINGS.md). Deliberately conservative to avoid rejecting real clinical questions. Dev true / prod false (2026-07-21).
+- RELEVANCE_FLOOR_ENABLED / RELEVANCE_SYNONYMS_ENABLED / QUERY_SENSE_FRAMING_ENABLED — **relevance precision** (stop off-topic keyword-matched articles reaching answers, e.g. the post-op arthroplasty *fever* guideline that appeared for "does paracetamol cause fever"). (a) **floor** (`ranking.rank_article_list(apply_floor=True)`) drops articles whose entity-relevance is 0, keeping ≥ `RELEVANCE_FLOOR_MIN_KEEP` (3) as a recall safeguard — must anchor on the drug/subject entity, not the symptom; (b) **synonyms** (`use_synonyms`) match INN⇄US names (paracetamol⇄acetaminophen) so the floor doesn't wrongly drop legit articles; (c) **sense** (`query_sense.sense_terms()`) adds adverse-sense PubMed terms for causation queries so retrieval targets the *cause* sense not the *indication* sense. Chosen by a 2³ factorial (test/results/RELEVANCE_FINDINGS.md, Haiku-judged): floor+sense cut off-topic 95%→75% and tripled relevant-kept; synonyms kept as the acetaminophen safety net. All default OFF (pipeline wiring pending).
+- **Citation-count cap** (article_registry.py, `to_reference_list(max_uncited=40)`): the reference list always keeps every *cited* source but caps retrieved-but-unused at 40 — without it a broad query that fetched thousands of unique articles emitted thousands of citations (a ~512KB payload broke JSON parsing). A char-based cap (`_cap_abstracts`) does NOT bound item count; title-only abstracts (0 chars) bypass it.
+- CLASSIFY_HEURISTIC_BACKSTOP_ENABLED — true/false; **deterministic comorbidity tie-breaker** for the ambiguous evidence/complex classification boundary. When the analyzer recorded ≥ CLASSIFY_BACKSTOP_MIN_CONDITIONS (default 2) distinct conditions in `condition_context`, a `drug`/`evidence`/`disease` label is nudged to `complex` so the multi-condition path runs. Fixes "CKD hypertension which drugs to use". Never touches `comparative` or a user-forced type. Purely additive/deterministic. Default OFF (dev-first). See "Query classifier robustness" section. Also: CLASSIFY_BACKSTOP_MIN_CONDITIONS (2).
 
 ## API Route Patterns
 - Frontend Next.js API routes: frontend/src/app/api/**
@@ -239,6 +242,40 @@ model picker from `GET /api/v1/providers`). See AGENT_INTEGRATION_GUIDE §6.3.
 | BYOK key storage | `services/keystore/` — Postgres (authoritative) + optional Firestore mirror (`KEYSTORE_FIRESTORE_ENABLED`), dual-write, `keystore.get/set/clear`. No raw `users.*_api_key` access outside the Postgres backend. |
 | Provider endpoints | `GET /api/v1/providers` (canonical, enabled-only, secret-free); `/config/llm` + `/models` registry-backed for back-compat |
 | Circuit breakers | `circuit_breaker.py` — one per registry provider |
+
+### Explicit model selection steers the provider (2026-07-21 fix)
+**Symptom:** picking "Haiku" in Settings still ran Cerebras (result labelled Cerebras). **Root
+cause:** `process_query()` chose the provider purely from `engine_pref` + which BYOK key existed
+— it never read `request.model_id`. It grabbed the Cerebras key, and the Cerebras adapter's
+`resolve_model()` defensively swapped the Haiku id for the Cerebras default (`gpt-oss-120b`), so
+`model_used` honestly reported Cerebras. **Fix:** when `request.model_explicit` is true, the
+provider is derived from the selected model (`get_provider(model_id)`) and that provider's key is
+tried FIRST; if it has no key, we return an honest `DegradedResponse(error_code="provider_key_missing")`
+instead of silently running a different engine. Frontend: the model picker (`settings/page.tsx`
+"AI Engine") now renders **only providers with a saved key** (no disabled/greyed entries; legacy
+Gemma/OpenRouter sections hidden unless their deploy flags are on), the choice is persisted to
+`LLM_PROVIDER_STORAGE_KEY` immediately, and `submitQueryStream` sends `model_explicit=true` when a
+provider was deliberately chosen. Net: you can only pick an engine you can run, and the pick is
+authoritative.
+
+### Query classifier robustness (2026-07-21)
+Classification is a three-tier fallback: `_analyze_and_expand_query` (rich Haiku call) →
+`_analyze_query_with_dspy` → `classify_query_llm` (standalone). Hardening added:
+- **Crash fix:** `rag_pipeline.py` complex-branch drug resolution used `drug_data.drug_name`, a
+  field that does not exist on `DrugFetchResult` (only `generic_name`/`brand_name`) → `AttributeError`
+  on any complex query that populated `drug_data` (e.g. "CKD hypertension which drugs to use"). Now
+  uses the safe `getattr` accessor like every other call site.
+- **Comorbidity backstop** (`query_classifier.apply_classifier_backstop`, flag
+  `CLASSIFY_HEURISTIC_BACKSTOP_ENABLED`, default OFF): deterministic tie-breaker for the ambiguous
+  evidence/complex boundary — when the analyzer recorded ≥ `CLASSIFY_BACKSTOP_MIN_CONDITIONS` (default 2)
+  distinct conditions, a `drug`/`evidence`/`disease` label is nudged to `complex`. Never touches
+  `comparative` or a user-forced type.
+- **Robust parse** (`query_classifier._parse_classification`): tiered recovery (fenced JSON →
+  first balanced `{...}` → bare `type:` regex) so malformed model output no longer collapses to the
+  expensive `complex` default.
+- **Prompt tightening:** analyzer rule 8 now states ≥2 named conditions ⇒ `complex` even when a drug
+  is requested.
+- Tests: `backend/tests/test_classifier_robustness.py` (13 cases, no network/LLM/DB).
 
 **Adapter interface** (`providers/base.py`): `build_client`, `assemble_messages`
 (caching), `resolve_model`, `read_cache_usage`, `supports_caching(model_id)`,

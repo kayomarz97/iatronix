@@ -74,6 +74,24 @@ const SECTIONS: { id: string; title: string; blocks: Block[] }[] = [
     ],
   },
   {
+    id: "precision",
+    title: "Retrieval precision & output bounds (July 2026)",
+    blocks: [
+      {
+        p: "A run of bugs this month all came from the same blind spot: what happens when a query fetches too much, or the wrong thing.",
+      },
+      {
+        list: [
+          "A size budget is not a count cap. The citation list emitted every fetched article with no count limit; one broad query pulled ~4,000 articles and tried to cite all of them — a ~512KB payload that broke JSON parsing. The internal abstract cap only measured characters, so title-only articles (0 chars) bypassed it. Fix: cap the citation list by count — keep every cited source, cap retrieved-but-unused at 40.",
+          "Relevance needs a floor, not just a ranking. 'Does paracetamol cause fever' surfaced an unrelated post-op arthroplasty fever guideline — it matched the symptom, scored high on study-type/recency, and nothing dropped it because the ranker only reorders. Fix (chosen by a 2^3 factorial, Haiku-judged): a relevance floor that drops entity-absent articles + adverse-sense query framing that fetches the cause sense, not the indication sense. Together: off-topic 95%->75%, relevant articles tripled.",
+          "A feature can be live and do nothing. A retrieval fallback merged, tests green, 'live' — and never fired, because it sat behind an early-return whose bar was so low the guarded path almost never ran. Test that a feature triggers on its target case, not just that its helper works.",
+          "Measure noisy external systems more than once. Live PubMed shifts run-to-run; a single before/after showed a phantom 'rescue' that was network noise, gone on the median of three runs.",
+          "Retrieval breadth is a dial, not a maximum. Widening the net pulled in mostly-irrelevant articles and hurt quality; a tighter setting was better. Precision/recall is a trade-off to tune, not a number to maximise.",
+        ],
+      },
+    ],
+  },
+  {
     id: "principles",
     title: "Principles, distilled",
     blocks: [

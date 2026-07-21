@@ -131,3 +131,31 @@ the LangGraph `recursion_limit` default change — all things memory got wrong.
 4. **Read the current docs, not your memory.** APIs drift faster than intuition.
 5. **Preserve the load-bearing invariants** (cache prefixes, timeouts, the
    evidence contract) when refactoring — change structure, not semantics.
+
+## 6. Retrieval precision & output bounds (July 2026)
+
+A run of production bugs this month all came from the same blind spot: *what happens when a query
+fetches too much, or the wrong thing.*
+
+1. **A size budget is not a count cap.** The reference list emitted every fetched article as a
+   citation with no count limit. One broad query pulled ~4,000 unique articles and the answer tried
+   to cite all 4,000 — a ~512 KB payload that broke JSON parsing (`Unterminated string`). The internal
+   abstract cap only measured *characters*, so title-only articles (0 chars) bypassed it entirely.
+   Fix: cap the citation list by *count* — keep every cited source, cap retrieved-but-unused at 40.
+   Bound user-facing lists by count, independent of any internal char/size budget.
+2. **Relevance needs a floor, not just a ranking.** "Does paracetamol cause fever" surfaced an
+   unrelated post-op arthroplasty *fever* guideline — it matched the symptom, scored high on
+   study-type/recency, and nothing dropped it, because the ranker only *reorders*. Fix (chosen by a
+   2³ factorial, Haiku-judged): a relevance floor that drops entity-absent articles + adverse-sense
+   query framing that fetches the *cause* sense instead of the *indication* sense. Together they cut
+   off-topic 95%→75% and tripled the relevant articles kept. Quality can smuggle an off-topic source
+   into an answer; you need a floor that *acts* on relevance, not just ranks by it.
+3. **A feature can be live and do nothing.** A retrieval fallback merged, tests green, "live" — and
+   never fired, because it sat behind an early-return whose bar was so low the guarded path almost
+   never ran. Test that a feature *triggers* on its target case, not just that its helper works.
+4. **Measure noisy external systems more than once.** Live PubMed shifts run-to-run; a single
+   before/after once showed a phantom "rescue" that was network noise — gone on the median of three
+   runs. Sample before trusting a delta.
+5. **Retrieval breadth is a dial, not a maximum.** Widening the net (raising a threshold) pulled in
+   mostly-irrelevant articles and hurt answer quality; a tighter setting was better. Precision/recall
+   is a trade-off to tune, not a number to maximise.
