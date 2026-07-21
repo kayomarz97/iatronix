@@ -50,6 +50,20 @@ def _maybe_differential_guidance(query: str, raw_query: str | None = None) -> st
         return ""
     return _DIFFERENTIAL_DX_GUIDANCE if is_differential_query(raw_query or query or "") else ""
 
+
+# Contradiction surfacing: when retrieved sources disagree, the answer must SAY SO rather than
+# silently pick one — a faithfulness property (a clinician needs to know the evidence is split).
+_CONTRADICTION_RULE = (
+    "\n\nSOURCE DISAGREEMENT: if the retrieved sources conflict on the same question (different "
+    "recommendations, thresholds, doses, or values), do NOT silently pick one. State the disagreement "
+    "explicitly, give each position WITH its citation, and note which is more authoritative or more "
+    "recent if that is determinable from the data. Never blend conflicting figures into a single number.\n"
+)
+
+
+def _maybe_contradiction_rule() -> str:
+    return _CONTRADICTION_RULE if settings.contradiction_surfacing_enabled else ""
+
 # ====================================================================
 # Constants
 # ====================================================================
@@ -985,6 +999,7 @@ def build_bluf_only_messages(
         f"REQUIRED SECTION AREAS: {section_guidance}\n"
         f"{condition_block}"
         f"{_maybe_differential_guidance(query, raw_query)}"
+        f"{_maybe_contradiction_rule()}"
     )
 
     data_block = _build_adaptive_data_block(query_type, fetched_data, vector_results)
@@ -1052,7 +1067,8 @@ def build_section_messages(
         f"QUERY TYPE: {query_type}\n"
         f"SECTION TO GENERATE: \"{section_title}\"\n"
         f"OTHER SECTIONS IN THIS RESPONSE (do NOT duplicate their content): {other_str}\n"
-        f"ALIGNMENT — keep content consistent with this clinical summary: {bluf_text}{valid_tokens_str}\n\n"
+        f"ALIGNMENT — keep content consistent with this clinical summary: {bluf_text}{valid_tokens_str}"
+        f"{_maybe_contradiction_rule()}\n\n"
         f"Generate ONLY the content for the section \"{section_title}\"."
     )
 

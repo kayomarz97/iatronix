@@ -88,6 +88,7 @@ from app.services.source_router import route_query
 from app.services.ranking import rank_article_list, apply_topicality_gate
 from app.services.query_sense import sense_terms
 from app.services.differential_dx import differential_terms, is_differential_query
+from app.services.intent_framing import intent_terms
 
 # PMID/DOI hyperlinking patterns
 
@@ -2278,15 +2279,18 @@ async def _log_search_history(
                 .where(SearchHistory.user_id == user_id)
             )
             count = count_result.scalar() or 0
-            if count >= 100:
+            # Keep only the most recent HISTORY_CAP entries per user (small DB → free tier).
+            HISTORY_CAP = 20
+            if count >= HISTORY_CAP:
+                # Trim to CAP-1 so this insert brings the user back to exactly CAP.
+                excess = count - (HISTORY_CAP - 1)
                 oldest = await session.execute(
                     select(SearchHistory)
                     .where(SearchHistory.user_id == user_id)
                     .order_by(SearchHistory.created_at.asc())
-                    .limit(1)
+                    .limit(excess)
                 )
-                old = oldest.scalar_one_or_none()
-                if old:
+                for old in oldest.scalars().all():
                     await session.delete(old)
             summary = _extract_history_summary(result, query_type) if result else ""
             session.add(
@@ -3357,6 +3361,14 @@ async def process_query(
                 pubmed_expansion_terms["review"] = (pubmed_expansion_terms.get("review") or []) + _ddx
                 logger.info("differential_dx: reframed retrieval toward etiology/differential sense")
         _query_intent = combined.get("intent") or "general"
+        # Intent-framing: thread the analyzer's clinical intent into retrieval so a "which
+        # translocation?" (diagnosis) query stops fetching treatment papers. Anchored on entities.
+        if settings.intent_framing_enabled:
+            _it = intent_terms(_query_intent, combined.get("entities"))
+            if _it:
+                pubmed_expansion_terms = dict(pubmed_expansion_terms or {})
+                pubmed_expansion_terms["review"] = (pubmed_expansion_terms.get("review") or []) + _it
+                logger.info("intent_framing: added %d intent-scoped terms (intent=%s)", len(_it), _query_intent)
         _search_variants = combined.get("search_variants") or []
         # Store patient_context extracted from query (for complex queries)
         _patient_context = combined.get("patient_context", {}) or {}

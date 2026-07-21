@@ -242,6 +242,18 @@ class Settings(BaseSettings):
     # honest no_evidence card. Deterministic, offline-testable, flag-gated. Default OFF.
     topicality_gate_enabled: bool = False
 
+    # RAGnosis-driven retrieval fixes (2026-07-21). All default OFF, dev-first.
+    # Intent-framing (fixes intent-mismatch — 18/40 of the RAGnosis retrieval failures): thread the
+    # analyzer's existing `intent` into retrieval via intent_framing.intent_terms().
+    intent_framing_enabled: bool = False
+    # Reference-first for disease/drug (fixes thin retrieval on fact questions): make StatPearls/NCBI
+    # Books fetch robust (British→US spelling + a bounded retry) so the answer-bearing textbook chapter
+    # ("Laboratory Evaluation of Hereditary Hemochromatosis") reliably grounds the answer before PubMed.
+    reference_first_enabled: bool = False
+    # Contradiction surfacing: when retrieved sources disagree, the answer states the disagreement and
+    # cites both sides rather than silently picking one.
+    contradiction_surfacing_enabled: bool = False
+
     # Per-section LangGraph re-fetch — when a section is still empty after LLM retries,
     # fetch targeted evidence for that section's topic and re-synthesize just that section.
     # Dev true / prod false.

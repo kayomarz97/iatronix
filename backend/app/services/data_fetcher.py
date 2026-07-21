@@ -12,6 +12,7 @@ import contextvars
 import json
 import logging
 import os
+import random
 import re
 import time
 from urllib.parse import quote_plus
@@ -439,10 +440,23 @@ async def _ncbi_eutils_get(
     async with sem:
         await asyncio.sleep(0.15 if api_key else 0.4)
         data = await _safe_get(client, url, params=params)
-        if data is None:  # transient 429/error — one bounded retry inside the throttle slot
+        if data is not None:
+            return data
+        # Transient NCBI 429/error. Old behaviour: ONE fixed 0.5s retry. With REFERENCE_FIRST on,
+        # use NCBI's recommended pattern (PLAYBOOK: 429 on breach, Retry-After unreliable → jittered
+        # exponential backoff). KEY-AWARE: with an api_key NCBI allows 10 req/s (per key) so a
+        # throttled call recovers in a few hundred ms — afford more attempts; without a key (3 req/s
+        # per IP) stay conservative so we don't hold the shared throttle slot too long.
+        if not settings.reference_first_enabled:
             await asyncio.sleep(0.5)
+            return await _safe_get(client, url, params=params)
+        max_retries = 3 if api_key else 1
+        for attempt in range(max_retries):
+            await asyncio.sleep(min(2.0, 0.5 * (2 ** attempt)) + random.uniform(0, 0.25))
             data = await _safe_get(client, url, params=params)
-        return data
+            if data is not None:
+                return data
+        return None
 
 
 # ------------------------------------------------------------------
@@ -1784,6 +1798,30 @@ async def _fetch_ncbi_books(
         return None
 
 
+def _americanize_term(term: str) -> str:
+    """British→American medical spelling for source lookups (StatPearls uses US spelling).
+    Additive only — the result is used as an EXTRA search variant, never a replacement, so an
+    over-eager substitution just yields a variant that matches nothing. Covers the productive
+    morphemes that break disease/drug title matches: haem/anaem/leukaem (ae→e), oesophag/oedema/
+    coeliac/diarrhoea (oe→e), sulphonylurea (sulph→sulf), tumour (our→or)."""
+    low = term.lower()
+    for a, b in (("oe", "e"), ("ae", "e"), ("sulph", "sulf"), ("tumour", "tumor")):
+        low = low.replace(a, b)
+    return low
+
+
+# Generic title tokens that must NOT, on their own, qualify a StatPearls chapter as a match —
+# colours, laterality, acuity, and generic clinical filler. Prevents "black eschar" → "Black Piedra".
+_GENERIC_TITLE_TOKENS: frozenset[str] = frozenset({
+    "black", "white", "red", "blue", "green", "brown", "yellow",
+    "acute", "chronic", "primary", "secondary", "early", "late", "mild", "severe",
+    "left", "right", "upper", "lower", "anterior", "posterior", "bilateral",
+    "disease", "syndrome", "disorder", "condition", "disorders", "diseases",
+    "cell", "cells", "gene", "type", "stage", "grade", "adult", "child", "infant",
+    "acquired", "congenital", "benign", "malignant", "and", "of", "the", "in", "with",
+})
+
+
 async def _fetch_book_monographs(
     client: httpx.AsyncClient, term: str, *, max_chapters: int = 2, char_cap: int = 16000
 ) -> list[dict]:
@@ -1812,20 +1850,43 @@ async def _fetch_book_monographs(
         #    (a chapter that merely shares one word). Then broad fallbacks.
         ids: list[str] = []
         _precise = False
+        # British→American medical spelling: StatPearls chapters use US spelling, so a British
+        # query term ("haemochromatosis", "oesophagus", "tumour") misses the [title] match. Add a
+        # normalized variant so the precise chapter is still found. Pure additive — only used when
+        # the spelling actually differs. (Fixes RAGnosis "Laboratory Evaluation of Hereditary
+        # Hemochromatosis" not reaching a "haemochromatosis" query.)
+        _us = _americanize_term(term)
+        _title_variants = [f"{term}[title] AND statpearls[book]"]
+        if _us != term:
+            _title_variants.append(f"{_us}[title] AND statpearls[book]")
         # StatPearls is OPTIONAL enrichment (abstracts alone ground answers). Fail FAST — a
         # single throttled attempt per variant, NO retry loop. Retrying here held the shared
         # NCBI semaphore and starved the main PubMed gather → empty data → cards.
         for _q in (
-            f"{term}[title] AND statpearls[book]",   # precise: chapter title match
+            *_title_variants,                        # precise: chapter title match (British + US spelling)
             f"{term} AND statpearls[book]",          # broad StatPearls
+            f"{_us} AND statpearls[book]" if _us != term else term,
             term,                                     # broad Bookshelf
         ):
             sd = await _ncbi_eutils_get(client, _ESEARCH, params={
                 "db": "books", "term": _q, "retmax": 20, "retmode": "json", **_api})
             ids = ((sd or {}).get("esearchresult", {}) or {}).get("idlist", []) or []
             if ids:
-                _precise = _q.startswith(f"{term}[title]")
+                _precise = _q.startswith((f"{term}[title]", f"{_us}[title]"))
                 break
+        # REFERENCE_FIRST: the fail-fast above zeroes StatPearls on a single NCBI throttle, but for
+        # fact/diagnosis questions the chapter IS the answer, so one bounded retry on the precise
+        # title variants is worth it. Still bounded (one extra pass, short backoff) so it can't
+        # starve the main gather.
+        if not ids and settings.reference_first_enabled:
+            await asyncio.sleep(0.6)
+            for _q in _title_variants:
+                sd = await _ncbi_eutils_get(client, _ESEARCH, params={
+                    "db": "books", "term": _q, "retmax": 20, "retmode": "json", **_api})
+                ids = ((sd or {}).get("esearchresult", {}) or {}).get("idlist", []) or []
+                if ids:
+                    _precise = True
+                    break
         if not ids:
             return []
 
@@ -1868,7 +1929,7 @@ async def _fetch_book_monographs(
             h1 = _re.sub(r"^\s*Bookshelf\s*", "", h1).strip()
             title_tokens = set(_re.findall(r"[a-z0-9]+", h1.lower()))
             score = len(term_tokens & title_tokens)
-            scored.append((score, candidates.index(acc), acc, h1, doc))
+            scored.append((score, candidates.index(acc), acc, h1, doc, title_tokens))
         if not scored:
             return []
         # Best title-overlap first; break ties by original relevance rank.
@@ -1878,11 +1939,30 @@ async def _fetch_book_monographs(
         # fallback must clear at least half the disease's title tokens.
         min_overlap = 1 if _precise else max(1, (len(term_tokens) + 1) // 2)
         scored = [s for s in scored if s[0] >= min_overlap]
+        # REFERENCE_FIRST concept-level match (RAGnosis 120-run flaw): a "precise" [title] hit only
+        # needs ONE shared token, so "black eschar" surfaced "Black Piedra" on the generic word "black"
+        # and a "Kaposi sarcoma / HIV" query matched an "HIV-Prevention" chapter on the broad token
+        # "hiv". Tighten to a CONCEPT match: the chapter title must contain the entity's most
+        # DISTINCTIVE token (its longest content word — the disease itself: promyelocytic, sarcoma,
+        # pneumothorax) OR share a strong majority (≥60%) of the entity's meaningful tokens. Generic
+        # colour/laterality/acuity words never qualify on their own.
+        if settings.reference_first_enabled:
+            meaningful_term = term_tokens - _GENERIC_TITLE_TOKENS
+            if meaningful_term:
+                _distinctive = max(meaningful_term, key=len)
+
+                def _concept_match(ttoks: set) -> bool:
+                    shared = meaningful_term & ttoks
+                    if not shared:
+                        return False
+                    return (_distinctive in ttoks) or (len(shared) / len(meaningful_term) >= 0.6)
+
+                scored = [s for s in scored if _concept_match(s[5])]
         if not scored:
             return []
 
         out: list[dict] = []
-        for score, _rank, acc, h1, doc in scored[:max_chapters]:
+        for score, _rank, acc, h1, doc, _ttoks in scored[:max_chapters]:
             for bad in doc.xpath(
                 "//script|//style|//nav|//header|//footer|//aside|//form|//button"
             ):
@@ -2368,7 +2448,15 @@ async def fetch_disease_data(disease_name: str, *, extra_pubmed_terms: list[str]
         # gather (no added critical-path latency; a sequential fetch pushed total past the
         # 31s fetch timeout → empty data → cards). Safe to run concurrently because its eUtils
         # calls go through _ncbi_eutils_get (shared NCBI rate-limit semaphore → no 429).
-        _book_task = asyncio.ensure_future(_fetch_book_monographs(client, disease_name))
+        # REFERENCE_FIRST: import the WHOLE best-matched chapter (the RAGnosis re-measure showed the
+        # answer often sits deep in the chapter — e.g. the t(15;17) fact is in the APL Etiology section,
+        # past the old 16k cut). One full chapter (~1 chapter × large cap) rather than two partial ones
+        # keeps total grounding within the model's context budget.
+        if settings.reference_first_enabled:
+            _book_task = asyncio.ensure_future(
+                _fetch_book_monographs(client, disease_name, max_chapters=1, char_cap=60000))
+        else:
+            _book_task = asyncio.ensure_future(_fetch_book_monographs(client, disease_name))
         # Phase 1: ALL esearch calls + non-PubMed sources in parallel
         # NOTE: Limited to 4 esearch calls to avoid NCBI rate limits (3 req/s without key, 10 req/s with)
         tasks: list = [
