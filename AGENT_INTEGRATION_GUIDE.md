@@ -316,7 +316,7 @@ These gates control which pipeline steps are active. Toggle in `.env` without co
 | `MULTI_VARIATION_SEARCH_ENABLED` | `true` | `true` | Fetch using DSPy `search_variants` (phrasing-diverse) to de-bias the evidence base (anti-sycophancy) |
 | `SECTION_REFETCH_ENABLED` | `true` | `true` | Per-section LangGraph re-fetch + re-synthesis for sections still empty after LLM retries |
 | `DEEP_SEARCH_ENABLED` | `true` | `true` | Bounded citation-chasing (iCite forward/backward) when retrieval is thin |
-| `ADAPTIVE_CROSS_STRATEGY_FALLBACK_ENABLED` | `true` | `false` | Confidence-gated cross-strategy fallback: when a typed fetch returns fewer than `CROSS_STRATEGY_MIN_UNIQUE_HITS` (default 5) DISTINCT articles, fire ONE complementary strategy (a bounded slice of "fetch-all"). Leaves well-served queries untouched. See `test/results/FINDINGS.md` + `test/results/DEV_VS_MAIN_FINDINGS.md` |
+| `ADAPTIVE_CROSS_STRATEGY_FALLBACK_ENABLED` | `true` | `false` | Confidence-gated cross-strategy fallback: when a typed fetch returns fewer than `CROSS_STRATEGY_MIN_UNIQUE_HITS` (default 3) DISTINCT articles, fire ONE complementary strategy (a bounded slice of "fetch-all"). Leaves well-served queries untouched. See `test/results/FINDINGS.md` + `test/results/DEV_VS_MAIN_FINDINGS.md` |
 | `STANCE_NEUTRALIZER_ENABLED` | `true` | `true` | Rewrite loaded queries to a neutral clinical question for retrieval (anti-sycophancy) |
 | `GROUNDING_FLOOR_ENABLED` | `true` | `true` | Replace ungrounded answers with the honest no-evidence card |
 | `VECTOR_SEARCH_ENABLED` | `false` | `false` | pgvector similarity search from uploaded PDFs |

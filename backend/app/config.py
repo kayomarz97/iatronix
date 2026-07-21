@@ -192,7 +192,7 @@ class Settings(BaseSettings):
     # complementary strategy instead of broadening the same way. A bounded, gated slice of
     # "fetch-all" that leaves well-served queries untouched. Default OFF → prod unaffected.
     adaptive_cross_strategy_fallback_enabled: bool = False
-    cross_strategy_min_unique_hits: int = 5       # fire fallback when unique articles < this
+    cross_strategy_min_unique_hits: int = 3       # fire fallback when unique articles < this (5 diluted precision — see test/results/DEV_VS_MAIN_FINDINGS.md)
 
     # Per-section LangGraph re-fetch — when a section is still empty after LLM retries,
     # fetch targeted evidence for that section's topic and re-synthesize just that section.
