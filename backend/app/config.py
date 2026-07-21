@@ -187,6 +187,13 @@ class Settings(BaseSettings):
     multi_variation_search_enabled: bool = False
     multi_variation_max_variants: int = 2         # extra phrasings fetched per second pass
 
+    # Confidence-gated cross-strategy fallback — when a typed fetch returns too few UNIQUE
+    # articles (a thin/misrouted query, e.g. a procedure lookup that got 1 article), fire ONE
+    # complementary strategy instead of broadening the same way. A bounded, gated slice of
+    # "fetch-all" that leaves well-served queries untouched. Default OFF → prod unaffected.
+    adaptive_cross_strategy_fallback_enabled: bool = False
+    cross_strategy_min_unique_hits: int = 3       # fire fallback when unique articles < this
+
     # Per-section LangGraph re-fetch — when a section is still empty after LLM retries,
     # fetch targeted evidence for that section's topic and re-synthesize just that section.
     # Dev true / prod false.

@@ -572,6 +572,107 @@ def _retrieval_assessment(
     return 0, False, ["unsupported query type"]
 
 
+def _unique_evidence_hits(fetched_data: "FetchedData | None", query_type: str) -> int:
+    """Count DISTINCT PubMed articles (by PMID) across every evidence pool of a FetchedData.
+
+    Used as the confidence gate for the cross-strategy fallback: the existing sufficiency
+    threshold is very low (score >= 1), so a thin fetch (e.g. a procedure query that returned a
+    single, possibly off-topic article) still passes. A distinct-PMID count is a stricter,
+    dilution-aware signal of whether retrieval is actually confident."""
+    if not fetched_data:
+        return 0
+    pmids: set[str] = set()
+
+    def _add(obj):
+        if obj is None:
+            return
+        for attr in ("guideline_abstracts", "systematic_review_abstracts",
+                     "clinical_trial_abstracts", "practice_guideline_abstracts"):
+            for a in getattr(obj, attr, None) or []:
+                if isinstance(a, dict):
+                    pmid = str(a.get("pmid") or "").strip()
+                    if pmid:
+                        pmids.add(pmid)
+
+    _add(getattr(fetched_data, "drug_data", None))
+    _add(getattr(fetched_data, "disease_data", None))
+    _add(getattr(fetched_data, "condition_data", None))
+    _add(getattr(fetched_data, "procedure_data", None))
+    _add(getattr(fetched_data, "evidence_data", None))
+    _add(getattr(fetched_data, "comparative_evidence", None))
+    for c in getattr(fetched_data, "comorbidity_data", None) or []:
+        _add(c)
+    for d in getattr(fetched_data, "comparative_drug_data", None) or []:
+        _add(d)
+    return len(pmids)
+
+
+async def _run_cross_strategy_fallback(
+    fetched_data: "FetchedData",
+    query_type: str,
+    query: str,
+    rewritten_query: str | None,
+    entities: list[str],
+    condition_context: str | None,
+    notes: list[str],
+) -> None:
+    """Fire exactly ONE complementary fetch strategy and merge it into the existing pools.
+
+    A bounded, gated slice of "fetch-all": only reached when `_unique_evidence_hits` is below the
+    floor. Each type borrows the ONE other strategy most likely to hold the missing evidence, using
+    the existing merge/enrich plumbing. Best-effort — any failure is a no-op (caller wraps in try)."""
+    primary = (rewritten_query or query or "").strip()
+    ent0 = (entities[0].strip() if entities and entities[0] and entities[0].strip() else "")
+    background = condition_context or ent0 or primary
+
+    if query_type == "procedure":
+        # Technique/management evidence often lives in trials & reviews, not practice guidelines.
+        ev = await fetch_evidence_data(primary)
+        if isinstance(ev, EvidenceFetchResult) and ev.fetch_success and fetched_data.procedure_data:
+            fetched_data.procedure_data.guideline_abstracts = _merge_abstracts(
+                fetched_data.procedure_data.guideline_abstracts,
+                (ev.guideline_abstracts or []) + (ev.systematic_review_abstracts or []) + (ev.clinical_trial_abstracts or []),
+                max_total_chars=7000,
+            )
+            notes.append("cross-strategy: procedure→evidence")
+
+    elif query_type == "disease":
+        ev = await fetch_evidence_data(primary)
+        if isinstance(ev, EvidenceFetchResult) and ev.fetch_success and fetched_data.disease_data:
+            fetched_data.disease_data.guideline_abstracts = _merge_abstracts(
+                fetched_data.disease_data.guideline_abstracts,
+                (ev.guideline_abstracts or []) + (ev.clinical_trial_abstracts or []),
+                max_total_chars=7000,
+            )
+            fetched_data.disease_data.systematic_review_abstracts = _merge_abstracts(
+                fetched_data.disease_data.systematic_review_abstracts,
+                ev.systematic_review_abstracts or [],
+                max_total_chars=7000,
+            )
+            notes.append("cross-strategy: disease→evidence")
+
+    elif query_type in ("evidence", "comparative", "drug"):
+        # Add disease/background context (pathophysiology, guidelines) the evidence search misses.
+        if background:
+            dis = await fetch_disease_data(background)
+            if isinstance(dis, DiseaseFetchResult) and dis.fetch_success:
+                fetched_data.condition_data = _enrich_disease_result(
+                    fetched_data.condition_data, dis
+                )
+                notes.append(f"cross-strategy: {query_type}→disease")
+
+    elif query_type in ("complex", "general"):
+        # Complex mis-routes when the positional drug slot is empty; a joined-entity evidence
+        # search recovers the intended multi-condition evidence.
+        joined = " ".join([e for e in (entities or []) if e and e.strip()]).strip() or primary
+        ev = await fetch_evidence_data(joined)
+        if isinstance(ev, EvidenceFetchResult) and ev.fetch_success:
+            fetched_data.evidence_data = _enrich_evidence_result(
+                fetched_data.evidence_data, ev
+            )
+            notes.append("cross-strategy: complex→evidence(joined entities)")
+
+
 def compute_evidence_confidence(
     fetched_data: "FetchedData | None",
     query_type: str,
@@ -887,6 +988,28 @@ async def _expand_retrieval_if_needed(
     score2, sufficient2, reasons2 = _retrieval_assessment(fetched_data, query_type)
     notes.append(f"post-expansion retrieval score={score2}")
     notes.extend(reasons2)
+
+    # Confidence-gated cross-strategy fallback. The sufficiency bar above is intentionally low
+    # (score >= 1), so a thin/misrouted fetch can pass it while holding too few DISTINCT articles
+    # to answer well. When enabled, gate on unique-PMID count and fire ONE complementary strategy
+    # (a bounded slice of "fetch-all") — well-served queries clear the floor and pay nothing.
+    if settings.adaptive_cross_strategy_fallback_enabled:
+        _uniq = _unique_evidence_hits(fetched_data, query_type)
+        if _uniq < settings.cross_strategy_min_unique_hits:
+            notes.append(
+                f"cross-strategy fallback: {_uniq} unique article(s) < floor "
+                f"{settings.cross_strategy_min_unique_hits}"
+            )
+            try:
+                await _run_cross_strategy_fallback(
+                    fetched_data, query_type, query, rewritten_query,
+                    entities, condition_context, notes,
+                )
+            except Exception:
+                logger.warning("cross-strategy fallback failed", exc_info=True)
+            score2, sufficient2, reasons2 = _retrieval_assessment(fetched_data, query_type)
+            notes.append(f"post-cross-strategy retrieval score={score2}")
+
     if not sufficient2:
         # Deep citation-chasing (Phase 5): if we already have >=1 article, chase its
         # forward/backward citations for primary evidence BEFORE the broadening floor.

@@ -26,6 +26,7 @@ services:
     env_file: .env.dev
     environment:
       DSPY_ENABLED: "true"
+      ADAPTIVE_CROSS_STRATEGY_FALLBACK_ENABLED: "true"
       GUNICORN_WORKERS: "2"
     volumes:
       - ./backend/firebase-adminsdk.json:/app/firebase-adminsdk.json:ro
