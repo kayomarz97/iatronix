@@ -166,7 +166,7 @@ These are stored in `FetchedData.patient_context` dict (empty `{}` for simple qu
 
 **Scoring factors:**
 - Study type (guideline: 10, systematic review: 8, RCT: 7, cohort: 5, case report: 1, etc.)
-- Relevance (entity matches in title +3, abstract +2, capped at 6)
+- Relevance (entity matches in title +3, abstract +2, capped at 6). Optional (flag-gated): **synonym** matching (paracetamol⇄acetaminophen) and a **relevance floor** — `rank_article_list(apply_floor=True)` DROPS entity-absent articles (keep ≥ `RELEVANCE_FLOOR_MIN_KEEP`) so a high-quality but off-topic article can't ride in on study-type/recency alone. `query_sense.sense_terms()` complements this by fetching the adverse sense for causation queries. See `test/results/RELEVANCE_FINDINGS.md`.
 - Recency (≤5y: 2.0, 6-15y: 1.0, 16-25y: 0.5, >25y: 0.0) — preserves landmark trials (HOPE 2000, ALLHAT 2002, etc.)
 - Fulltext availability (1.0 if PMCID present, 0.0 otherwise)
 - Citation count (1.0 if ≥100 citations, 0.0 otherwise)
@@ -622,7 +622,7 @@ The `complex` query type handles questions like: _"rivaroxaban dosing in severe 
 - Every `RegistryArticle` carries: `ref_token`, `title`, `source`, `source_type`, `pmid`, `nct_id`, `doi`, `url` (always present), `year`, `origin_section`, `used_inline`.
 - Lookup: `registry.lookup_token("REF_3")`, `registry.lookup_id(pmid=..., title=...)`.
 - Backfill: `registry.best_match(claim_text, source_hint)` → tiered (ID substring, Jaccard ≥0.30, source authority).
-- Output: `registry.to_reference_list()` returns the complete list (cited first, then retrieved-only).
+- Output: `registry.to_reference_list(max_uncited=40)` returns cited references first, then retrieved-only **capped at 40** — every cited source is kept, but retrieved-but-unused extras are bounded so a broad query that fetched thousands of unique articles can't emit thousands of citations (a ~512KB payload once broke JSON parsing). NB: a char-based cap (`_cap_abstracts`) does not bound item COUNT — title-only abstracts (0 chars) bypass it.
 
 The registry does NOT alter the LLM-facing prompt bytes. The cached prefix is produced by the unchanged `prompt_engine.build_ref_map`, so prompt-cache hit rate is preserved.
 
@@ -659,7 +659,7 @@ When adding a new fetcher, ensure each item has at least one of: `pmid`, `nct_id
    - **Guardrail**: `ANTI_SYCOPHANCY_RULES` in system prefix — explicit "present balanced evidence even if question phrasing suggests a desired conclusion"
 
 4. **Reference completeness fix**:
-   - `ArticleRegistry.attach_orphans_to_references(parsed)` ensures all fetched articles appear in final reference list.
+   - `ArticleRegistry.attach_orphans_to_references(parsed)` surfaces fetched articles into the reference list; the final list is then produced by `to_reference_list(max_uncited=40)`, which keeps every cited source and caps retrieved-only extras at 40.
    - `_quarantine_sourceless_items()` (v2) uses registry match with Jaccard ≥0.5 to accept refs without identifiers — blocks hallucinations, rescues real articles.
 
 ### Configuration

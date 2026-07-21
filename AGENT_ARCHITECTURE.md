@@ -42,8 +42,10 @@
 | frontend/src/components/layout/Header.tsx | Nav header, logo, tabs |
 | frontend/src/components/ui/SearchBar.tsx | Search input component |
 | frontend/src/components/ui/SearchSuggestions.tsx | Autocomplete dropdown |
-| frontend/src/components/ui/IatronixLogo.tsx | Favicon-based SVG logo |
-| frontend/src/components/results/AdaptiveResultRenderer.tsx | Main result display; filters empty sections; `getSourceFallbackUrl()` helper for source-aware reference links (FDA → accessdata.fda.gov, NICE → nice.org.uk, ClinicalTrials → clinicaltrials.gov, etc.) |
+| frontend/src/components/ui/IatronixLogo.tsx | "Solid" SVG logo — code brackets + ECG pulse in one weight, token-coloured (`stroke=currentColor`, `color: var(--accent)`) so it follows the accent in both themes |
+| frontend/src/components/about/QueryFlowDiagram.tsx | About-page query-flow diagram (9 stages: query → understand → scope-guard → 6-type branch → merge → confidence gate → ground → generate → deliver) with a Plain/Technical/Both tab toggle; token-based |
+| frontend/src/components/results/ResultChrome.tsx | `ResultSection` (accepts `accent`/`tag` for section colouring), `ResultHero`, `ResultChipRow` |
+| frontend/src/components/results/AdaptiveResultRenderer.tsx | Main result display; filters empty sections; `getSourceFallbackUrl()` source-aware reference links; **`sectionMeta()`** maps section titles → semantic colour + category tag (A×B hybrid: rose=contraindications, amber=side-effects, blue=dosing, violet=mechanism, teal=monitoring…); evidence LOE/COR badges use theme tokens via `color-mix` |
 | frontend/src/components/results/MermaidClient.tsx | Mermaid chart rendering (legacy — no longer used by FlowchartRenderer) |
 | frontend/src/components/results/FlowchartRenderer.tsx | Clinical pathway flowcharts — custom CSS step flow, no Mermaid; branch steps rendered from "Condition → Outcome" format |
 | frontend/src/components/providers/QueryProvider.tsx | Stream state — handles bluf/section_complete/token events; exposes streamingSectionTitles, streamingFlowcharts, streamingTables |
@@ -52,7 +54,7 @@
 | frontend/src/lib/types.ts | TypeScript interfaces |
 | frontend/src/lib/api.ts | API call utilities + StreamEvent union type |
 | frontend/src/lib/constants.ts | App-wide constants |
-| frontend/src/app/globals.css | CSS variables + Tailwind config |
+| frontend/src/app/globals.css | Design tokens — **"Emerald" theme**: neutral grounds (white/greys light, black/greys dark, no tint) + emerald accent (`#10b981`/`#34d399`), across `@theme` + `:root`/light/dark blocks; `--sec-*` answer-section semantic colours (theme-aware); DM Sans/DM Mono |
 
 ## Critical Backend Files
 | File | Purpose |
@@ -63,7 +65,9 @@
 | backend/app/services/rag_pipeline_stream.py | SSE event source — `iter_query_events()` yields (kind,payload); legacy `stream_query()` formats to SSE. Emits stage/token/bluf/section_complete/done/error |
 | backend/app/services/stream_jobs.py | **Resumable streaming** (`RESUMABLE_STREAM_ENABLED`) — `start_job()` (detached producer → Redis Stream) + `tail_job()` (XREAD resume by `last_event_id`). Survives client disconnect (mobile tab switch / screen off) |
 | backend/app/services/data_fetcher.py | Parallel fetch from 10+ medical APIs; includes `_cascade_pubmed_for_complex()` and `_fetch_comorbidities()` for complex multi-condition queries; new NCBI Books + ClinicalTrials.gov sources |
-| backend/app/services/ranking.py | Evidence quality ranker — multi-factor scoring (study type, relevance, recency, fulltext, citations) with penalties for animal/off-population studies |
+| backend/app/services/ranking.py | Evidence quality ranker — multi-factor scoring (study type, relevance, recency, fulltext, citations) with penalties for animal/off-population studies. `rank_article_list(use_synonyms, apply_floor, min_keep)`: **relevance floor** drops entity-absent articles (keep ≥ min_keep); **synonym** matching (paracetamol⇄acetaminophen). Flag-gated, default OFF |
+| backend/app/services/query_sense.py | **NEW** — `sense_terms()`: for causation queries ("does X cause Y") returns adverse-sense PubMed terms so retrieval targets the *cause* sense, not the *indication* sense (`QUERY_SENSE_FRAMING_ENABLED`) |
+| backend/app/services/article_registry.py | Post-fetch article registry (validated article-level URLs); the reference list is built here, not from LLM output. `to_reference_list(max_uncited=40)` — **caps** retrieved-but-unused citations (keeps all cited) so a broad query can't emit thousands of references / break the response payload |
 | backend/app/services/prompt_engine.py | All prompt builders: `build_adaptive_messages`, `build_bluf_only_messages`, `build_section_messages`, `build_complex_bluf_messages`, `build_complex_section_messages` (complex multi-condition queries) |
 | backend/app/services/langgraph_search.py | LangGraph parallel search (fetch + vector + semantic_cache); also `run_section_refetch_graph()` for per-section re-fetch (`SECTION_REFETCH_ENABLED`) |
 | backend/app/services/dspy_lm.py | DSPy LM factory |
@@ -105,7 +109,8 @@
 - NON_MEDICAL_GUARD_ENABLED — true/false; **non-medical / out-of-scope fast-guard**. In `process_query()`, right after classification + entity extraction, `_is_non_medical()` returns True only when the analyzer extracted ZERO medical terms (no entities, no `condition_context`, no `answer_entities`) AND the query fell to the default `complex` sink AND no type was forced. On a hit, returns a `DegradedResponse` (`error_code="out_of_scope"`, honest "clinical reference assistant" message) with NO fetch and NO LLM call — instead of burning ~25 PubMed searches and free-answering (behaviour observed for "capital of France" in test/results/DEV_VS_MAIN_FINDINGS.md). Deliberately conservative to avoid rejecting real clinical questions. Dev true / prod false (2026-07-21).
 - RELEVANCE_FLOOR_ENABLED / RELEVANCE_SYNONYMS_ENABLED / QUERY_SENSE_FRAMING_ENABLED — **relevance precision** (stop off-topic keyword-matched articles reaching answers, e.g. the post-op arthroplasty *fever* guideline that appeared for "does paracetamol cause fever"). (a) **floor** (`ranking.rank_article_list(apply_floor=True)`) drops articles whose entity-relevance is 0, keeping ≥ `RELEVANCE_FLOOR_MIN_KEEP` (3) as a recall safeguard — must anchor on the drug/subject entity, not the symptom; (b) **synonyms** (`use_synonyms`) match INN⇄US names (paracetamol⇄acetaminophen) so the floor doesn't wrongly drop legit articles; (c) **sense** (`query_sense.sense_terms()`) adds adverse-sense PubMed terms for causation queries so retrieval targets the *cause* sense not the *indication* sense. Chosen by a 2³ factorial (test/results/RELEVANCE_FINDINGS.md, Haiku-judged): floor+sense cut off-topic 95%→75% and tripled relevant-kept; synonyms kept as the acetaminophen safety net. All default OFF (pipeline wiring pending).
 - **Citation-count cap** (article_registry.py, `to_reference_list(max_uncited=40)`): the reference list always keeps every *cited* source but caps retrieved-but-unused at 40 — without it a broad query that fetched thousands of unique articles emitted thousands of citations (a ~512KB payload broke JSON parsing). A char-based cap (`_cap_abstracts`) does NOT bound item count; title-only abstracts (0 chars) bypass it.
-- CLASSIFY_HEURISTIC_BACKSTOP_ENABLED — true/false; **deterministic comorbidity tie-breaker** for the ambiguous evidence/complex classification boundary. When the analyzer recorded ≥ CLASSIFY_BACKSTOP_MIN_CONDITIONS (default 2) distinct conditions in `condition_context`, a `drug`/`evidence`/`disease` label is nudged to `complex` so the multi-condition path runs. Fixes "CKD hypertension which drugs to use". Never touches `comparative` or a user-forced type. Purely additive/deterministic. Default OFF (dev-first). See "Query classifier robustness" section. Also: CLASSIFY_BACKSTOP_MIN_CONDITIONS (2).
+- CLASSIFY_HEURISTIC_BACKSTOP_ENABLED — true/false; **deterministic comorbidity tie-breaker** for the ambiguous evidence/complex classification boundary. When the analyzer recorded ≥ CLASSIFY_BACKSTOP_MIN_CONDITIONS (default 2) distinct conditions in `condition_context`, a `drug`/`evidence`/`disease` label is nudged to `complex` so the multi-condition path runs. Fixes "CKD hypertension which drugs to use". Never touches `comparative` or a user-forced type. Purely additive/deterministic. Dev true / prod false (2026-07-21). See "Query classifier robustness" section. Also: CLASSIFY_BACKSTOP_MIN_CONDITIONS (2).
+- CLASSIFICATION_CACHE_ENABLED — true/false; **query-analysis cache (R6)**. Caches the full `_analyze_and_expand_query` result (query_type + entities + rewritten_query + pubmed_terms) in Redis keyed by normalized query, so exact repeats skip the Haiku analysis call. Busted by `prompt_version`. Dev true / prod false (2026-07-21). Also: CLASSIFICATION_CACHE_TTL_SECONDS (86400). **Deploy note:** adding a new env var needs `docker compose ... up -d --force-recreate <service>` — a single-service `--build` reuses the old container env.
 
 ## API Route Patterns
 - Frontend Next.js API routes: frontend/src/app/api/**
@@ -275,7 +280,18 @@ Classification is a three-tier fallback: `_analyze_and_expand_query` (rich Haiku
   expensive `complex` default.
 - **Prompt tightening:** analyzer rule 8 now states ≥2 named conditions ⇒ `complex` even when a drug
   is requested.
-- Tests: `backend/tests/test_classifier_robustness.py` (13 cases, no network/LLM/DB).
+- **Structured validation (R2, LLM-agnostic):** `query_classifier.ClassificationResult` (Pydantic) +
+  `normalize_query_type()` coerce `query_type` to the valid set and clamp `confidence` — applied on the
+  PRIMARY analyzer path (`_analyze_and_expand_query`) and the fallback classifier. NOT provider-specific
+  tool-use (the classifier often runs on Cerebras via the OpenAI-compatible API); prompt-based JSON is
+  validated in code so it works identically across providers.
+- **Analysis cache (R6, `CLASSIFICATION_CACHE_ENABLED`, default OFF):** `cache.analysis_cache_get/set`
+  cache the full `_analyze_and_expand_query` result (query_type + entities + rewritten_query +
+  pubmed_terms) keyed by normalized query (`analysis:v{prompt_version}:{sha256}`), TTL
+  `CLASSIFICATION_CACHE_TTL_SECONDS` (86400). Identical queries skip the Haiku analysis call.
+  `_analyze_and_expand_query_cached()` wraps the call in the process_query gather; busted by
+  `prompt_version`. Dev true (2026-07-21). Redis round-trip verified in-container.
+- Tests: `backend/tests/test_classifier_robustness.py` (16 cases, no network/LLM/DB).
 
 **Adapter interface** (`providers/base.py`): `build_client`, `assemble_messages`
 (caching), `resolve_model`, `read_cache_usage`, `supports_caching(model_id)`,
