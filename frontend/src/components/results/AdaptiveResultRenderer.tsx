@@ -26,24 +26,26 @@ interface Props {
 }
 
 // ── LOE / COR colour maps ────────────────────────────────────────────────────
+// Evidence colours map to theme tokens (Lancet: olive / clay / rose), so they track light+dark.
 const LOE_CLR: Record<string, string> = {
-  I: "#10b981",
-  II: "#3b82f6",
-  III: "#64748b",
+  I: "var(--success)",
+  II: "var(--warning)",
+  III: "var(--text-muted)",
 };
 
 const COR_CLR: Record<string, string> = {
-  I: "#10b981",
-  IIa: "#06b6d4",
-  IIb: "#f59e0b",
-  "III-no-benefit": "#f97316",
-  "III-harm": "#ef4444",
+  I: "var(--success)",
+  IIa: "var(--accent)",
+  IIb: "var(--warning)",
+  "III-no-benefit": "var(--warning)",
+  "III-harm": "var(--danger)",
 };
 
 function badgeStyle(color: string) {
+  // color-mix so a CSS var() (token) can carry its own tinted bg/border — no hex concatenation.
   return {
-    backgroundColor: color + "26",
-    border: `1px solid ${color}5c`,
+    backgroundColor: `color-mix(in srgb, ${color} 15%, transparent)`,
+    border: `1px solid color-mix(in srgb, ${color} 36%, transparent)`,
     color,
     fontWeight: 600,
     letterSpacing: "0.01em",
@@ -68,7 +70,7 @@ function EvidenceBadge({
       {loe && (
         <span
           className={cls}
-          style={badgeStyle(LOE_CLR[loe] ?? "#64748b")}
+          style={badgeStyle(LOE_CLR[loe] ?? "var(--text-muted)")}
           title="Level of Evidence"
         >
           LoE&nbsp;{loe}
@@ -77,7 +79,7 @@ function EvidenceBadge({
       {cor && (
         <span
           className={cls}
-          style={badgeStyle(COR_CLR[cor] ?? "#64748b")}
+          style={badgeStyle(COR_CLR[cor] ?? "var(--text-muted)")}
           title="Class of Recommendation"
         >
           Class&nbsp;{cor}
@@ -202,19 +204,19 @@ function EvidenceQualityBar({ sections }: { sections: AdaptiveSection[] }) {
     <div className="flex items-center gap-3 px-4 py-2 rounded-xl border border-border/50 bg-surface/60">
       <div className="flex-1 h-[5px] rounded-full overflow-hidden flex">
         {counts.I > 0 && (
-          <div style={{ width: `${(counts.I / total) * 100}%`, background: "#10b981" }} />
+          <div style={{ width: `${(counts.I / total) * 100}%`, background: "var(--success)" }} />
         )}
         {counts.II > 0 && (
-          <div style={{ width: `${(counts.II / total) * 100}%`, background: "#3b82f6" }} />
+          <div style={{ width: `${(counts.II / total) * 100}%`, background: "var(--warning)" }} />
         )}
         {counts.III > 0 && (
-          <div style={{ width: `${(counts.III / total) * 100}%`, background: "#64748b" }} />
+          <div style={{ width: `${(counts.III / total) * 100}%`, background: "var(--text-muted)" }} />
         )}
       </div>
       <div className="flex gap-3 shrink-0 font-mono text-[10px]">
-        {counts.I > 0 && <span style={{ color: "#10b981" }}>{counts.I} High</span>}
-        {counts.II > 0 && <span style={{ color: "#3b82f6" }}>{counts.II} Mod</span>}
-        {counts.III > 0 && <span style={{ color: "#64748b" }}>{counts.III} Low</span>}
+        {counts.I > 0 && <span style={{ color: "var(--success)" }}>{counts.I} High</span>}
+        {counts.II > 0 && <span style={{ color: "var(--warning)" }}>{counts.II} Mod</span>}
+        {counts.III > 0 && <span style={{ color: "var(--text-muted)" }}>{counts.III} Low</span>}
       </div>
     </div>
   );
