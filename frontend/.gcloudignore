@@ -1,0 +1,10 @@
+# Cloud Build upload excludes. NOTE: presence of this file makes gcloud ignore
+# .gitignore, so .env.local (public NEXT_PUBLIC_* config, needed by `next build`)
+# IS uploaded because it is NOT listed here.
+node_modules/
+.next/
+out/
+.git/
+*.log
+npm-debug.log*
+.DS_Store

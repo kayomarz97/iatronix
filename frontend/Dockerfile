@@ -5,12 +5,9 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm install
 
-ARG NEXT_PUBLIC_POSTHOG_KEY
-ARG NEXT_PUBLIC_POSTHOG_HOST
-ENV NEXT_PUBLIC_POSTHOG_KEY=$NEXT_PUBLIC_POSTHOG_KEY
-ENV NEXT_PUBLIC_POSTHOG_HOST=$NEXT_PUBLIC_POSTHOG_HOST
-
-
+# All NEXT_PUBLIC_* build-time config (Firebase + PostHog) comes from .env.local,
+# which is copied in below and read by `next build`. (Previously PostHog was also
+# wired via ARG/ENV, but empty build-args silently overrode .env.local — removed.)
 COPY . .
 RUN npm run build
 
