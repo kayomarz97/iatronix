@@ -29,10 +29,13 @@ const HALLUCINATION_PREVENTION = [
 const DATA_SOURCES = [
   { name: "FDA OpenFDA", url: "https://open.fda.gov/", desc: "Drug labels, adverse events, recalls" },
   { name: "PubMed / NCBI", url: "https://pubmed.ncbi.nlm.nih.gov/", desc: "Guidelines, RCTs, systematic reviews" },
+  { name: "ClinicalTrials.gov", url: "https://clinicaltrials.gov/", desc: "Registered & completed trial summaries" },
   { name: "PMC Open Access", url: "https://www.ncbi.nlm.nih.gov/pmc/", desc: "Full-text articles & StatPearls monographs" },
   { name: "Unpaywall", url: "https://unpaywall.org/", desc: "Free legal PDFs for open-access articles" },
   { name: "RxNorm", url: "https://www.nlm.nih.gov/research/umls/rxnorm/", desc: "Drug names & interaction data" },
+  { name: "ChEMBL", url: "https://www.ebi.ac.uk/chembl/", desc: "Drug mechanism & pharmacology" },
   { name: "DailyMed", url: "https://dailymed.nlm.nih.gov/dailymed/", desc: "FDA-approved prescribing information" },
+  { name: "Semantic Scholar", url: "https://www.semanticscholar.org/", desc: "Paper metadata & citation counts" },
   { name: "MedlinePlus", url: "https://medlineplus.gov/", desc: "Drug & disease patient-facing summaries" },
   { name: "NICE", url: "https://www.nice.org.uk/", desc: "UK clinical practice guidelines" },
 ];
