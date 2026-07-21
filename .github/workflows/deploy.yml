@@ -1,0 +1,68 @@
+name: Deploy to Cloud Run
+
+# Push to main → build + deploy both services to Cloud Run.
+# Auth is keyless (Workload Identity Federation) — no GCP key stored in GitHub.
+# Frontend public build config (NEXT_PUBLIC_*) comes from repo Actions variables.
+on:
+  push:
+    branches: [main, migration]   # TEMP: migration included to validate the pipeline; reverted to main-only after
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  id-token: write        # required for WIF
+
+env:
+  PROJECT: iatronix-med-search-v1
+  REGION: us-central1
+  RUNTIME_SA: firebase-adminsdk-fbsvc@iatronix-med-search-v1.iam.gserviceaccount.com
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/508115127911/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+          service_account: gh-deployer@iatronix-med-search-v1.iam.gserviceaccount.com
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy backend
+        run: |
+          gcloud run deploy iatronix-backend \
+            --source ./backend --region "$REGION" --project "$PROJECT" \
+            --port 8000 --min-instances 0 --max-instances 10 \
+            --cpu 2 --memory 2Gi --timeout 600 --concurrency 40 \
+            --allow-unauthenticated --service-account "$RUNTIME_SA" \
+            --set-env-vars '^@^DSPY_ENABLED=true@MODEL_ROUTING_ENABLED=true@API_FETCH_ENABLED=true@DEEP_SEARCH_ENABLED=true@ADAPTIVE_SECOND_PASS_ENABLED=true@MULTI_VARIATION_SEARCH_ENABLED=true@PARALLEL_SECTIONS_ENABLED=true@RESUMABLE_STREAM_ENABLED=true@SECTION_REFETCH_ENABLED=true@FAIL_CLOSED_EVIDENCE_ONLY=false@PROMPT_VERSION=3@SEMANTIC_CACHE_THRESHOLD=0.88@GCS_ARCHIVE_BUCKET=iatronix-med-search-v1-archive@GUNICORN_WORKERS=4@FLUSH_REDIS=0@OPENROUTER_CALLBACK_BASE=https://med.kayomarz.com@ALLOWED_ORIGINS=https://med.kayomarz.com,https://www.med.kayomarz.com' \
+            --set-secrets DATABASE_URL=DATABASE_URL:latest,REDIS_URL=REDIS_URL:latest,ENCRYPTION_KEY=ENCRYPTION_KEY:latest,IATRONIX_API_KEY=IATRONIX_API_KEY:latest,PUBMED_API_KEY=PUBMED_API_KEY:latest,SENTRY_DSN=SENTRY_DSN:latest \
+            --quiet
+
+      - name: Write frontend build config (public NEXT_PUBLIC_* from Actions variables)
+        run: |
+          cat > frontend/.env.production.local <<EOF
+          NEXT_PUBLIC_FIREBASE_API_KEY=${{ vars.NEXT_PUBLIC_FIREBASE_API_KEY }}
+          NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=${{ vars.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN }}
+          NEXT_PUBLIC_FIREBASE_PROJECT_ID=${{ vars.NEXT_PUBLIC_FIREBASE_PROJECT_ID }}
+          NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=${{ vars.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET }}
+          NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=${{ vars.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID }}
+          NEXT_PUBLIC_FIREBASE_APP_ID=${{ vars.NEXT_PUBLIC_FIREBASE_APP_ID }}
+          NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID=${{ vars.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID }}
+          NEXT_PUBLIC_FRONTEND_VERSION=${{ vars.NEXT_PUBLIC_FRONTEND_VERSION }}
+          NEXT_PUBLIC_POSTHOG_KEY=${{ vars.NEXT_PUBLIC_POSTHOG_KEY }}
+          NEXT_PUBLIC_POSTHOG_HOST=${{ vars.NEXT_PUBLIC_POSTHOG_HOST }}
+          INTERNAL_API_URL=${{ vars.INTERNAL_API_URL }}
+          EOF
+
+      - name: Deploy frontend
+        run: |
+          gcloud run deploy iatronix-frontend \
+            --source ./frontend --region "$REGION" --project "$PROJECT" \
+            --min-instances 0 --max-instances 10 --cpu 1 --memory 1Gi --timeout 300 \
+            --allow-unauthenticated \
+            --set-env-vars "INTERNAL_API_URL=${{ vars.INTERNAL_API_URL }}" \
+            --quiet
