@@ -48,8 +48,13 @@ Next.js Proxy  →  FastAPI Backend (port 8000)
   │  11. Cache Write + Async DB Log        │
   └────────────────────────────────────────┘
             │
-  PostgreSQL (pgvector) + Redis
+  Neon (Postgres + pgvector) + Upstash (Redis)
 ```
+
+> **Hosting:** both tiers run as scale-to-zero **Google Cloud Run** services (frontend + backend,
+> us-central1) behind med.kayomarz.com. The data tier (Neon + Upstash) is reached over the network
+> via connection strings held in GCP Secret Manager. Locally, the same stack runs in Docker Compose
+> with Postgres + Redis containers.
 
 ---
 
@@ -728,6 +733,9 @@ Migrations are in `backend/migrations/versions/` (Alembic).
 
 - Registration → bcrypt password → generates a UUID JWT `api_key` stored in `users`
 - Login → verify password → return JWT signed with `ENCRYPTION_KEY`
+- **Google sign-in** (Firebase) is also supported — on first Google login the identity is safely
+  merged into any existing password account for the same email (no duplicate account), then the same
+  JWT `api_key` flow applies. Server-side verification uses the Firebase Admin SDK (`middleware/firebase_auth.py`)
 - Every request carries `X-API-Key: <JWT>` validated by `ApiKeyAuthMiddleware`
 - User's LLM key is stored as `Fernet(ENCRYPTION_KEY).encrypt(user_llm_key)` in `users.encrypted_llm_key`
 - Middleware decrypts it and attaches it to `request.state` — never logged or returned
@@ -778,15 +786,41 @@ docker compose exec iatronix-backend pytest backend/tests/ -v
 
 ## 12. Deployment Stack
 
-```
-Cloudflare (CDN, SSL, DDoS)
-  └─ VPS Nginx (med.kayomarz.com)
-       ├─ :80/:443  → localhost:3200 (Next.js)
-       └─ /api/     → localhost:8200 (FastAPI)
+**Production — Google Cloud Run (us-central1), served at med.kayomarz.com:**
 
+```
+GitHub  ──push to main──▶  GitHub Actions (.github/workflows/deploy.yml)
+                              │  keyless auth via Workload Identity Federation
+                              ▼
+                          gcloud run deploy --source  (Cloud Build → Artifact Registry)
+                              │
+              ┌───────────────┴────────────────┐
+              ▼                                 ▼
+   iatronix-frontend (Cloud Run)     iatronix-backend (Cloud Run)
+   Next.js 15, scale-to-zero          FastAPI + Gunicorn, cpu2/2Gi, scale-to-zero
+   NEXT_PUBLIC_* from Actions vars     env + secrets from GCP Secret Manager
+                                          │
+                          ┌───────────────┼─────────────────┐
+                          ▼               ▼                 ▼
+                 Neon (Postgres      Upstash (Redis)   Google Cloud Storage
+                 + pgvector)                            (retention archive)
+```
+
+- **CI/CD** — a push to `main` builds and deploys both services from source. Auth is keyless
+  (Workload Identity Federation) — no GCP key stored in GitHub. A new revision receives traffic only
+  after its health check passes → zero-downtime, auto-rollback on failure.
+- **Secrets** — `DATABASE_URL`, `REDIS_URL`, `ENCRYPTION_KEY`, `IATRONIX_API_KEY`, `PUBMED_API_KEY`,
+  `SENTRY_DSN` come from **GCP Secret Manager** (`--set-secrets`), not the image or repo.
+- **Retention archival** — the backend runs a daily background task archiving `query_audit` (30d)
+  and `query_cache` (60d) to GCS as gzipped JSONL before purging (see §12 note / retention.py):
+  archive-then-purge, so a failed upload never loses rows.
+
+**Local development — Docker Compose:**
+
+```
 Docker Compose:
   iatronix-frontend   (Next.js 15, port 3200)
-  iatronix-backend    (FastAPI + Gunicorn 6 workers, port 8200)
+  iatronix-backend    (FastAPI + Gunicorn, port 8200)
   iatronix-db         (PostgreSQL 16 + pgvector)
   iatronix-redis      (Redis 7)
 ```

@@ -51,8 +51,10 @@ A snapshot of what actually works on the live site right now.
 | Semantic + exact-match caching | ✅ Live | Redis exact-match (always on) + pgvector cosine-similarity cache (configurable) |
 | Waves — spirometry analysis | ✅ Live | Upload a spirometry image → Claude vision → ATS/ERS interpretation |
 | Waves — ECG | 🟡 Coming soon | Placeholder in the UI |
-| Firebase authentication | ✅ Live | Client SDK + server-side Admin SDK |
+| Firebase authentication | ✅ Live | Email/password **and Google sign-in** (client SDK + server-side Admin SDK); Google merges safely into an existing password account |
 | PDF upload + vector store | 🟡 Partial | Upload + embedding works; RAG retrieval not yet wired into the main query path |
+| Cloud hosting + auto-deploy | ✅ Live | Google Cloud Run (two scale-to-zero services) + push-to-`main` CI/CD via GitHub Actions (keyless Workload Identity Federation) |
+| Retention archival to GCS | ✅ Live | Daily background job archives audit/cache rows to Google Cloud Storage (gzipped JSONL) **before** purging — never deletes an un-archived row |
 
 *(flag)* = controlled by a feature flag in `.env`, so it can be turned on/off per environment without a code change.
 
@@ -187,12 +189,15 @@ Cerebras model is a one-line change to `CEREBRAS_DEFAULT_MODEL` in `.env`.
 | Frontend | Next.js 15 (App Router), React 19, TypeScript, Tailwind CSS v4, Lucide icons |
 | Backend | FastAPI, Python 3.12, async SQLAlchemy, Gunicorn (multi-worker) |
 | AI orchestration | DSPy (adaptive analysis), LangGraph (parallel search graphs), LangChain (LLM clients) |
-| Database | PostgreSQL 16 + pgvector (semantic cache, user data, PDF chunks) |
-| Cache | Redis 7 (exact-match) + pgvector (semantic) |
+| Database | Neon — serverless PostgreSQL 16 + pgvector (semantic cache, user data, PDF chunks); scales to zero |
+| Cache | Upstash Redis (exact-match) + pgvector (semantic) |
 | LLM | BYOK — Cerebras (default) / Anthropic, with Google, xAI, OpenAI, OpenRouter wired |
-| Auth | Firebase Auth (client SDK + server-side Admin SDK) |
-| Storage | Cloudflare R2 (PDF uploads) |
-| Infra | Docker Compose, Nginx, Cloudflare proxy |
+| Auth | Firebase Auth — email/password + Google sign-in (client SDK + server-side Admin SDK) |
+| Object storage | Cloudflare R2 (PDF uploads) · Google Cloud Storage (retention archive) |
+| Hosting | Google Cloud Run — two scale-to-zero services (frontend + backend), `us-central1` |
+| CI/CD | GitHub Actions → Cloud Run source deploy on push to `main` (keyless Workload Identity Federation) |
+| Secrets | GCP Secret Manager (`DATABASE_URL`, `REDIS_URL`, `ENCRYPTION_KEY`, provider keys) |
+| Local dev | Docker Compose (Postgres + Redis containers) |
 
 ---
 
@@ -325,6 +330,32 @@ curl http://localhost:8200/api/v1/health
 
 **Provided at runtime, not in `.env`** (saved encrypted per user in the database):
 - Your Cerebras / Anthropic / other provider API key
+
+---
+
+## Deployment
+
+Production runs on **Google Cloud Run** — two independent, scale-to-zero services
+(`iatronix-frontend`, `iatronix-backend`) in `us-central1`, served at
+[med.kayomarz.com](https://med.kayomarz.com). Because both services scale to zero when idle,
+hosting cost stays near zero at low traffic.
+
+- **CI/CD** — a push to `main` triggers `.github/workflows/deploy.yml`, which builds each service
+  from source and rolls out a new Cloud Run revision. Auth to GCP is **keyless** via Workload
+  Identity Federation, so no service-account key is ever stored in GitHub. Traffic shifts to a new
+  revision only after it passes its health check, making deploys zero-downtime with automatic
+  rollback on failure.
+- **Data tier** — **Neon** (serverless Postgres + pgvector) and **Upstash** (serverless Redis),
+  reached via connection strings held in **GCP Secret Manager** and injected at deploy time. No
+  credential lives in the image or the repo.
+- **Retention archival** — a daily background task archives `query_audit` (30-day) and
+  `query_cache` (60-day) rows to a **Google Cloud Storage** bucket as gzipped JSONL *before*
+  deleting them. A row is never purged unless its archive upload succeeded, so a transient GCS
+  error loses nothing — the next cycle retries. GCS auth uses the Cloud Run service account (ADC);
+  there is no key file to manage.
+
+Local development still runs the full stack in Docker Compose (see **Running locally** above) —
+Cloud Run and the managed data tier are the production target only.
 
 ---
 

@@ -27,8 +27,12 @@
 - Frontend: Next.js 15, React 19, TypeScript, Tailwind CSS v4, Lucide icons
 - Backend: FastAPI, Python 3.12, async SQLAlchemy, pgvector, Redis
 - LLM: Cerebras Llama 3.1 8B (default BYOK) + Anthropic Claude (optional BYOK) + LangChain + DSPy + LangGraph
-- Auth: Firebase (client-side) + Firebase Admin SDK (server-side)
-- CDN/proxy: Cloudflare → nginx → Docker containers
+- Auth: Firebase (client-side, email/password + Google sign-in) + Firebase Admin SDK (server-side)
+- Data tier: Neon (serverless Postgres + pgvector) + Upstash (serverless Redis) — connection strings via GCP Secret Manager
+- Hosting: Google Cloud Run (2 scale-to-zero services, us-central1) — custom domain med.kayomarz.com
+- CI/CD: GitHub Actions → Cloud Run source deploy on push to main; keyless auth via Workload Identity Federation
+- Object storage: Cloudflare R2 (PDF uploads) + Google Cloud Storage (retention archive)
+- Local dev: Docker Compose (Postgres + Redis containers)
 
 ## Critical Frontend Files
 | File | Purpose |
@@ -82,22 +86,23 @@
 ## Deployment Files
 | File | Purpose |
 |------|---------|
-| docker-compose.prod.yml | Production Docker services |
-| docker-compose.dev.yml | Development Docker services |
-| nginx/iatronix-prod.conf | Nginx config for med.kayomarz.com |
-| nginx/iatronix-dev.conf | Nginx config for med.kayomarz.com |
-| scripts/deploy-prod.sh | Deploy to production |
-| scripts/deploy-dev.sh | Deploy to development |
-| .env | Production environment variables (gitignored) |
-| .env.dev | Development environment variables (gitignored) |
+| .github/workflows/deploy.yml | **Production CI/CD** — push to main → build + deploy both Cloud Run services (backend cpu2/2Gi, frontend cpu1/1Gi, us-central1, min-instances 0). Keyless GCP auth via Workload Identity Federation; runtime SA `firebase-adminsdk-fbsvc@…`. Backend env + `--set-secrets` (Secret Manager) are declared here; frontend `NEXT_PUBLIC_*` come from repo Actions variables |
+| backend/.gcloudignore, frontend/.gcloudignore | Exclude secrets/local files (`firebase-adminsdk.json`, `.env*`) from the Cloud Run source upload |
+| docker-compose.dev.yml | Local development stack (Postgres + Redis containers) |
+| docker-compose.prod.yml | Legacy self-hosted stack (pre-Cloud-Run); retained for reference |
 | .env.example | Template showing all required variables |
-| DEPLOY_COMMANDS.md | All Linux commands for managing both envs (gitignored) |
+| .env / .env.dev | Local environment variables (gitignored) |
+
+**Production hosting:** Google Cloud Run — data tier is **Neon** (Postgres+pgvector) and **Upstash**
+(Redis), with `DATABASE_URL` / `REDIS_URL` / `ENCRYPTION_KEY` / provider keys stored in **GCP
+Secret Manager** and injected at deploy time. No credential lives in the image or the repo.
 
 ## Key Environment Variables (see .env.example for full list)
-- DATABASE_URL — PostgreSQL connection string (shared prod/dev DB)
-- REDIS_URL — Redis URL (separate prod/dev)
-- ENCRYPTION_KEY — Fernet key for BYOK key encryption
-- SENTRY_DSN — Error tracking (optional)
+- DATABASE_URL — Postgres connection string. Prod = Neon (serverless PG + pgvector), injected from GCP Secret Manager; local = the docker-compose Postgres container
+- REDIS_URL — Redis URL. Prod = Upstash (serverless), injected from GCP Secret Manager; local = the docker-compose Redis container
+- ENCRYPTION_KEY — Fernet key for BYOK key encryption (prod: Secret Manager)
+- SENTRY_DSN — Error tracking (optional; prod: Secret Manager)
+- GCS_ARCHIVE_BUCKET — Google Cloud Storage bucket for retention archival (prod: `iatronix-med-search-v1-archive`). Empty ⇒ archiving disabled, rows deleted directly. Also: GCS_ARCHIVE_ENABLED (default true), AUDIT_RETENTION_DAYS (30), QUERY_CACHE_RETENTION_DAYS (60). See "GCS Retention Archival" below
 - MODEL_CLASSIFY / MODEL_GENERATE — LLM model IDs
 - CEREBRAS_DEFAULT_MODEL — Cerebras model ID (default: gpt-oss-120b); one-line change to switch models
 - CEREBRAS_API_BASE — Cerebras API base URL (default: https://api.cerebras.ai/v1)
@@ -435,14 +440,40 @@ Detection in `rag_pipeline.py`: `comparative_is_drug` flag passed to `build_adap
 - Spirometry: Claude claude-sonnet-4-6 with base64 image → deterministic ATS/ERS logic
 - ECG: Coming Soon placeholder
 
+## GCS Retention Archival (services/retention.py)
+Data-retention runs as a **daily background task**, scheduled in `main.py`'s lifespan
+(`asyncio.create_task(_archive_and_purge_old_rows())`, `await asyncio.sleep(86400)` per cycle).
+Each cycle calls `retention.archive_and_purge()` for two tables:
+- `query_audit` — older than `AUDIT_RETENTION_DAYS` (30)
+- `query_cache` — older than `QUERY_CACHE_RETENTION_DAYS` (60)
+
+**Archive-then-purge safety contract:** rows are serialized to gzipped JSONL and uploaded to
+`gs://$GCS_ARCHIVE_BUCKET/<kind>/YYYY/MM/DD/HHMMSS-<bytes>b.jsonl.gz`, and are deleted **by id**
+only after the upload confirms success. If archiving is enabled but the upload fails, the rows are
+left in place and retried next cycle — nothing is ever lost to a transient GCS error. GCS auth uses
+the attached Cloud Run service account (ADC) — no key file. If `GCS_ARCHIVE_BUCKET` is empty,
+old rows are deleted directly (legacy behaviour).
+
+## CI/CD — GitHub Actions → Cloud Run (.github/workflows/deploy.yml)
+Push to `main` builds and deploys both Cloud Run services from source (`gcloud run deploy --source`).
+Authentication to GCP is **keyless** via Workload Identity Federation — GitHub mints a short-lived
+OIDC token exchanged for `gh-deployer@…` credentials; no GCP key is stored in the repo. Backend env
++ `--set-secrets` (Secret Manager: DATABASE_URL, REDIS_URL, ENCRYPTION_KEY, IATRONIX_API_KEY,
+PUBMED_API_KEY, SENTRY_DSN) are declared in the workflow; frontend public `NEXT_PUBLIC_*` build
+config comes from repo Actions variables. A new revision only receives traffic after its health
+check passes → zero-downtime, auto-rollback on failure.
+
 ## Testing a Change
-1. Edit code on dev branch
-2. docker compose -f docker-compose.dev.yml up -d --build
-3. Verify on https://med.kayomarz.com
-4. If approved: git checkout main && git merge dev && bash scripts/deploy-prod.sh
+1. Edit code on the dev branch
+2. `docker compose -f docker-compose.dev.yml up -d --build` (local stack)
+3. Verify locally / on the dev environment
+4. When ready, merge to `main` and push → GitHub Actions auto-deploys both Cloud Run services.
+   Watch it: `gh run watch <run-id> --exit-status`. **Prod deploys are a deliberate, explicit step —
+   never push `main` without intent, since the push itself ships to production.**
 
 ## Files That Must Never Break
 - backend/app/services/vector_store.py (pgvector)
+- backend/app/services/retention.py (archive-then-purge safety contract)
 - backend/app/middleware/ (rate limiting, circuit breaker)
 - frontend/src/lib/firebase.ts (auth)
-- docker-compose.prod.yml (production)
+- .github/workflows/deploy.yml (production CI/CD)
