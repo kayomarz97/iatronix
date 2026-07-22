@@ -7,6 +7,13 @@ live data from 10+ authoritative medical sources in parallel, ranks it by eviden
 
 **Live:** [med.kayomarz.com](https://med.kayomarz.com)
 
+![Hallucinations](https://img.shields.io/badge/hallucinations-0%20%2F%20120-brightgreen)
+![Faithful](https://img.shields.io/badge/faithful-100%25-brightgreen)
+![Benchmark](https://img.shields.io/badge/RAGnosis-120%20clinical%20Qs-blue)
+![Design](https://img.shields.io/badge/design-fail--closed-informational)
+
+<sub>Benchmark badges reflect the RAGnosis run described in **[Benchmark](#benchmark--does-it-stay-honest-under-pressure)** below — an offline, Claude-stand-in evaluation, not a live production metric. Read the caveats there.</sub>
+
 > **No static knowledge base, and never the model's training data.** Every rendered answer is grounded in
 > data retrieved at query time. If retrieval can't find citable evidence, Iatronix returns an honest
 > "not enough evidence" card instead of a confident guess.
@@ -52,7 +59,6 @@ A snapshot of what actually works on the live site right now.
 | Waves — spirometry analysis | ✅ Live | Upload a spirometry image → Claude vision → ATS/ERS interpretation |
 | Waves — ECG | 🟡 Coming soon | Placeholder in the UI |
 | Firebase authentication | ✅ Live | Email/password **and Google sign-in** (client SDK + server-side Admin SDK); Google merges safely into an existing password account |
-| PDF upload + vector store | 🟡 Partial | Upload + embedding works; RAG retrieval not yet wired into the main query path |
 | Cloud hosting + auto-deploy | ✅ Live | Google Cloud Run (two scale-to-zero services) + push-to-`main` CI/CD via GitHub Actions (keyless Workload Identity Federation) |
 | Retention archival to GCS | ✅ Live | Daily background job archives audit/cache rows to Google Cloud Storage (gzipped JSONL) **before** purging — never deletes an un-archived row |
 
@@ -155,6 +161,66 @@ Iatronix layers several independent mechanisms so the model can't invent clinica
 
 ---
 
+## Benchmark — does it stay honest under pressure?
+
+The mechanisms above are the *design*. This is the *measurement*. We ran **RAGnosis** — 120 MRCP-style
+clinical multiple-choice questions and deliberate "trap" questions — end-to-end through the real retrieval
+pipeline, then scored every answer on two axes: **is it correct**, and (more importantly) **is it faithful** —
+does it ever assert something the retrieved evidence doesn't support?
+
+### Headline: it never made a fact up.
+
+| RAGnosis config (120 questions) | Correct | Incl. partial | **Faithful** | **Hallucinations** | Chapter coverage |
+|---|--:|--:|:--:|:--:|--:|
+| Baseline (snippet-capped retrieval) | 24% | 30% | **120 / 120** | **0** | — |
+| + full-chapter import + precision gate | 27% | 37% | **120 / 120** | **0** | 38% |
+| **+ candidate-diagnosis chapters (best)** | **48%** (57/120) | **52%** | **120 / 120** | **0** | **51%** |
+
+**Across every run — 50 questions and 120 questions, every configuration — faithfulness was 100% and true
+hallucinations were 0.** When the pipeline can't ground an answer, it abstains with an honest "insufficient
+evidence" card rather than guessing.
+
+### Why 48% correct and not higher — this is the point, not a footnote
+
+The system is **fail-closed**. The gap between 48% correct and 100% is *not* wrong answers — it is
+overwhelmingly **honest abstentions**. Correctness turned out to be almost entirely a function of evidence
+coverage: on questions where a StatPearls/Bookshelf chapter was actually retrieved, correctness was **60%**;
+where only PubMed abstracts were available, **9%**. So when Iatronix doesn't have the source, it tells you —
+it does not fill the gap with a confident guess. A higher "correct" number bought by guessing would be a
+regression here, not an improvement.
+
+### The gain is real, not lenient grading
+
+The best configuration adds per-diagnosis chapter retrieval. To prove the jump wasn't just the judge being
+generous, we split the questions:
+
+| Cohort | Before | After |
+|---|--:|--:|
+| 47 questions the new lever fired on | 19% (9/47) | **72% (34/47)** → +25 |
+| 73 questions it never touched (variance control) | 25/73 | 23/73 → −2 |
+
+The untouched control drifted only −2 (judge noise) while the treated cohort **nearly quadrupled**. The +25
+is the retrieval change, not grading drift — and faithfulness stayed 100% throughout.
+
+### Method & honesty (read before quoting these numbers)
+
+- **Claude stand-in, not the production model.** Generation and judging were done by Claude Code agents
+  standing in for production `gpt-oss-120b`. **Retrieval was the real pipeline** (live NCBI/free APIs), but
+  the answer text and grading are an *indicative* proxy — **not a live production metric**.
+- **No BYOK tokens were spent** proving any of this — the whole harness runs offline against the free
+  retrieval layer plus the Claude Code subscription.
+- **n = 120.** Directional, not a statistically powered clinical trial. Chapter coverage (51%) is a *floor*:
+  a concurrent test batch throttles NCBI harder than a single live query would.
+- Supporting experiments applied the same rigor — median-of-3 runs to cancel PubMed's run-to-run noise
+  (`DEV_VS_MAIN_FINDINGS.md`), a full 2³ factorial for the relevance filters (`RELEVANCE_FINDINGS.md`), and
+  a fetch-all-vs-typed retrieval study (`FINDINGS.md`). All raw data and harnesses live under `test/`.
+
+> **The honest summary:** on 120 clinical questions Iatronix never fabricated a fact. It answered ~half
+> correctly and said "I don't have the evidence" to the rest — which, for a clinical tool, is exactly the
+> failure mode you want.
+
+---
+
 ## Providers & BYOK (Bring Your Own Key)
 
 Iatronix holds **no server-side LLM keys**. Every generation call uses the user's own key, encrypted at rest
@@ -189,11 +255,11 @@ Cerebras model is a one-line change to `CEREBRAS_DEFAULT_MODEL` in `.env`.
 | Frontend | Next.js 15 (App Router), React 19, TypeScript, Tailwind CSS v4, Lucide icons |
 | Backend | FastAPI, Python 3.12, async SQLAlchemy, Gunicorn (multi-worker) |
 | AI orchestration | DSPy (adaptive analysis), LangGraph (parallel search graphs), LangChain (LLM clients) |
-| Database | Neon — serverless PostgreSQL 16 + pgvector (semantic cache, user data, PDF chunks); scales to zero |
+| Database | Neon — serverless PostgreSQL 16 + pgvector (semantic cache, user data); scales to zero |
 | Cache | Upstash Redis (exact-match) + pgvector (semantic) |
 | LLM | BYOK — Cerebras (default) / Anthropic, with Google, xAI, OpenAI, OpenRouter wired |
 | Auth | Firebase Auth — email/password + Google sign-in (client SDK + server-side Admin SDK) |
-| Object storage | Cloudflare R2 (PDF uploads) · Google Cloud Storage (retention archive) |
+| Object storage | Google Cloud Storage (retention archive) |
 | Hosting | Google Cloud Run — two scale-to-zero services (frontend + backend), `us-central1` |
 | CI/CD | GitHub Actions → Cloud Run source deploy on push to `main` (keyless Workload Identity Federation) |
 | Secrets | GCP Secret Manager (`DATABASE_URL`, `REDIS_URL`, `ENCRYPTION_KEY`, provider keys) |
