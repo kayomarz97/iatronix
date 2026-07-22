@@ -1,6 +1,21 @@
 services:
-  # Dev shares the same DB as prod (shared user base)
-  # but has its own Redis to prevent cache pollution
+  # Dev has its own isolated Postgres AND Redis — no shared state with any other
+  # environment. (Prod runs on Cloud Run + Neon; this stack is local dev only.)
+
+  iatronix-dev-db:
+    image: pgvector/pgvector:pg16
+    container_name: iatronix-dev-db
+    restart: unless-stopped
+    networks: [iatronix-net]
+    env_file: .env.dev          # POSTGRES_DB / POSTGRES_USER / POSTGRES_PASSWORD
+    volumes:
+      - iatronix-dev-pgdata:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U medadmin -d medvectordb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   iatronix-dev-redis:
     image: redis:7-alpine
@@ -21,6 +36,8 @@ services:
     restart: unless-stopped
     networks: [iatronix-net]
     depends_on:
+      iatronix-dev-db:
+        condition: service_healthy
       iatronix-dev-redis:
         condition: service_healthy
     env_file: .env.dev
@@ -80,3 +97,4 @@ networks:
 
 volumes:
   iatronix-dev-redis-data: {}
+  iatronix-dev-pgdata: {}
