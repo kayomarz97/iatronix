@@ -90,28 +90,51 @@ const SOURCES = [
 
 export function QueryFlowDiagram() {
   const [mode, setMode] = useState<Mode>("both");
+  const [open, setOpen] = useState(true);
 
   return (
     <div>
-      {/* Plain / Technical / Both toggle — app-native segmented control */}
-      <div style={toggleRow}>
-        <span style={toggleHint}>Read it as</span>
-        <div className="segment-control" role="tablist" aria-label="Explanation detail level">
-          {(["plain", "technical", "both"] as Mode[]).map((m) => (
-            <button
-              key={m}
-              type="button"
-              role="tab"
-              aria-selected={mode === m}
-              className={`segment-btn ${mode === m ? "active" : ""}`}
-              onClick={() => setMode(m)}
-            >
-              {m === "plain" ? "Plain" : m === "technical" ? "Technical" : "Both"}
-            </button>
-          ))}
-        </div>
+      {/* Header: detail-level tabs (when open) + collapse/expand control */}
+      <div style={headerRow}>
+        {open ? (
+          <div style={toggleRow}>
+            <span style={toggleHint}>Read it as</span>
+            <div className="segment-control" role="tablist" aria-label="Explanation detail level">
+              {(["plain", "technical", "both"] as Mode[]).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  role="tab"
+                  aria-selected={mode === m}
+                  className={`segment-btn ${mode === m ? "active" : ""}`}
+                  onClick={() => setMode(m)}
+                >
+                  {m === "plain" ? "Plain" : m === "technical" ? "Technical" : "Both"}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <span style={toggleHint}>The full search pipeline — 9 steps, tap to open</span>
+        )}
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          style={collapseBtn}
+          aria-expanded={open}
+        >
+          {open ? "Collapse" : "Show diagram"}
+          <ChevronDown
+            size={15}
+            style={{
+              transform: open ? "rotate(180deg)" : "none",
+              transition: "transform var(--transition)",
+            }}
+          />
+        </button>
       </div>
 
+      {open && (
       <div style={wrap}>
         {/* 1 — Ask */}
         <FlowNode
@@ -252,6 +275,7 @@ export function QueryFlowDiagram() {
           terminal
         />
       </div>
+      )}
     </div>
   );
 }
@@ -471,26 +495,49 @@ function Connector({ label, icon }: { label?: string; icon?: ReactNode }) {
   return (
     <div style={connectorWrap} aria-hidden={!label}>
       <span style={connectorLine} />
-      {label ? (
-        <span style={connectorLabel}>
-          {icon}
-          {label}
-        </span>
-      ) : (
-        <ChevronDown size={17} style={{ color: "var(--text-muted)" }} />
+      {label && (
+        <>
+          <span style={connectorLabel}>
+            {icon}
+            {label}
+          </span>
+          <span style={connectorLine} />
+        </>
       )}
-      <span style={connectorLine} />
+      <span style={connectorArrowhead} />
     </div>
   );
 }
 
 /* ── Styles (tokens only) ───────────────────────────────────────────────── */
 
+const headerRow: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: "0.75rem",
+  flexWrap: "wrap",
+  marginBottom: "1.1rem",
+};
+
+const collapseBtn: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: "0.35rem",
+  fontSize: "0.8rem",
+  fontWeight: 600,
+  color: "var(--accent)",
+  background: "var(--accent-glow)",
+  border: "1px solid var(--border-focus)",
+  borderRadius: 999,
+  padding: "5px 12px",
+  cursor: "pointer",
+};
+
 const toggleRow: CSSProperties = {
   display: "flex",
   alignItems: "center",
   gap: "0.6rem",
-  marginBottom: "1.1rem",
   flexWrap: "wrap",
 };
 
@@ -575,26 +622,32 @@ const nodeTech: CSSProperties = {
 
 const connectorWrap: CSSProperties = {
   display: "flex",
+  flexDirection: "column",
   alignItems: "center",
   justifyContent: "center",
-  gap: "0.6rem",
-  padding: "0.5rem 0",
+  padding: "0.15rem 0",
 };
 
 const connectorLine: CSSProperties = {
-  flex: 1,
-  maxWidth: 90,
-  height: 2,
+  width: 2,
+  height: 20,
   borderRadius: 1,
-  background:
-    "linear-gradient(90deg, transparent, var(--border-focus), transparent)",
-  opacity: 0.7,
+  background: "linear-gradient(180deg, var(--border-focus), var(--accent))",
+};
+
+const connectorArrowhead: CSSProperties = {
+  width: 0,
+  height: 0,
+  borderLeft: "5px solid transparent",
+  borderRight: "5px solid transparent",
+  borderTop: "7px solid var(--accent)",
 };
 
 const connectorLabel: CSSProperties = {
   display: "inline-flex",
   alignItems: "center",
   gap: "0.4rem",
+  margin: "0.3rem 0",
   fontSize: "0.8rem",
   fontWeight: 500,
   color: "var(--accent)",
