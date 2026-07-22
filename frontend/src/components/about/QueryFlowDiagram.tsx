@@ -15,6 +15,7 @@ import {
   ChevronDown,
   ShieldCheck,
   SearchX,
+  RefreshCw,
   Pill,
   Stethoscope,
   Syringe,
@@ -199,34 +200,27 @@ export function QueryFlowDiagram() {
 
         <Connector label="six result sets converge into one" icon={<GitMerge size={14} />} />
 
-        {/* 5 — Merge */}
+        {/* 5 — Rank & merge */}
         <FlowNode
           mode={mode}
           num={5}
           icon={<GitMerge size={19} />}
-          title="Merge into one evidence set"
-          plain="Everything found is pooled together into a single body of evidence."
-          tech="all retrieved results combined into one evidence set"
+          title="Rank, then merge into one evidence set"
+          plain="Everything found is scored for quality, then pooled into a single body of evidence — the strongest studies rise to the top."
+          tech="score by study type · relevance · recency · citations → combine into one evidence set"
         />
 
-        <Connector />
+        <Connector label="is the evidence strong enough?" icon={<Gauge size={14} />} />
 
-        {/* 6 — Confidence gate */}
+        {/* Confidence gate — a decision with an escalation loop and an honest dead end */}
+        <ConfidenceGate mode={mode} />
+
+        <Connector label="enough evidence — continue" icon={<Link2 size={14} />} />
+
+        {/* 6 — Ground */}
         <FlowNode
           mode={mode}
           num={6}
-          icon={<Gauge size={19} />}
-          title="Check if it's enough"
-          plain="If the evidence looks thin, the app tries harder before answering — or honestly says the evidence isn't strong."
-          tech="confidence gate · if weak: reword search → borrow a complementary strategy → chase citations → broad safety-net search, else report no strong evidence"
-        />
-
-        <Connector />
-
-        {/* 7 — Ground */}
-        <FlowNode
-          mode={mode}
-          num={7}
           icon={<Link2 size={19} />}
           title="Ground every claim"
           plain="Each fact is tied to a real, cited article. Anything that can't be backed up is flagged, never stated as fact."
@@ -235,10 +229,10 @@ export function QueryFlowDiagram() {
 
         <Connector />
 
-        {/* 8 — Write */}
+        {/* 7 — Write */}
         <FlowNode
           mode={mode}
-          num={8}
+          num={7}
           icon={<PenLine size={19} />}
           title="Write the answer"
           plain="The bottom line comes first, then each section is written and streamed to you live."
@@ -247,10 +241,10 @@ export function QueryFlowDiagram() {
 
         <Connector />
 
-        {/* 9 — Deliver */}
+        {/* 8 — Deliver */}
         <FlowNode
           mode={mode}
-          num={9}
+          num={8}
           icon={<FileCheck size={19} />}
           title="Deliver"
           plain="You get a clear, structured answer with confidence badges and links to the real sources."
@@ -379,6 +373,91 @@ function ScopeGuard({ mode }: { mode: Mode }) {
             )}
             {showTech && (
               <p style={continueTech}>medical entity extracted &rarr; in_scope, continue</p>
+            )}
+          </div>
+          <ChevronDown size={17} style={{ color: "var(--accent)", alignSelf: "center", flexShrink: 0 }} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ConfidenceGate({ mode }: { mode: Mode }) {
+  const showPlain = mode !== "technical";
+  const showTech = mode !== "plain";
+  return (
+    <div style={guardWrap}>
+      <div style={guardHeader}>
+        <Gauge size={16} style={{ flexShrink: 0, color: "var(--accent)" }} />
+        <span>
+          <strong style={{ color: "var(--text-primary)", fontWeight: 600 }}>
+            Confidence gate
+          </strong>{" "}
+          — is there enough distinct evidence to answer?
+        </span>
+      </div>
+
+      {/* Escalation ladder — the loop that runs BEFORE the app is allowed to give up */}
+      <div style={escalateStrip}>
+        <div style={escalateIcon}>
+          <RefreshCw size={16} />
+        </div>
+        <div style={{ minWidth: 0 }}>
+          <p style={escalateTitle}>If it looks thin, it tries harder before answering</p>
+          {showPlain && (
+            <p style={escalatePlain}>
+              It rewords the search, borrows a complementary strategy, follows citation trails, and
+              broadens step by step — looping back to re-check each time — rather than answering on
+              weak evidence.
+            </p>
+          )}
+          {showTech && (
+            <p style={escalateTech}>
+              same-strategy 2nd pass &rarr; cross-strategy borrow &rarr; iCite citation-chase &rarr;
+              up to 5 progressive broadenings &rarr; re-evaluate
+            </p>
+          )}
+        </div>
+      </div>
+
+      <div style={guardFork}>
+        {/* Still nothing — honest dead end (muted, never alarming) */}
+        <div style={declineCard}>
+          <span style={declineTag}>No</span>
+          <div style={declineBody}>
+            <div style={declineIcon}>
+              <SearchX size={16} />
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <p style={declineTitle}>No strong evidence</p>
+              {showPlain && (
+                <p style={declinePlain}>
+                  If every attempt still comes up short, the app returns an honest &ldquo;not enough
+                  evidence&rdquo; card and <strong>never</strong> writes an answer.
+                </p>
+              )}
+              {showTech && (
+                <p style={declineTech}>
+                  evidence floor unmet after escalation &rarr; DegradedResponse, no generation
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Enough — continue to grounding */}
+        <div style={continueCard}>
+          <span style={continueTag}>Yes</span>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <p style={continueTitle}>Strong enough</p>
+            {showPlain && (
+              <p style={continuePlain}>
+                Enough distinct, on-topic evidence is in hand, so the query flows on to grounding
+                and writing.
+              </p>
+            )}
+            {showTech && (
+              <p style={continueTech}>&ge; unique-article floor of distinct sources &rarr; proceed</p>
             )}
           </div>
           <ChevronDown size={17} style={{ color: "var(--accent)", alignSelf: "center", flexShrink: 0 }} />
@@ -701,6 +780,52 @@ const guardFork: CSSProperties = {
   gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))",
   gap: "0.7rem",
   marginTop: "0.85rem",
+};
+
+/* Confidence-gate escalation ladder (the loop before giving up) */
+const escalateStrip: CSSProperties = {
+  display: "flex",
+  gap: "0.6rem",
+  alignItems: "flex-start",
+  marginTop: "0.85rem",
+  padding: "0.8rem 0.9rem",
+  background: "var(--accent-glow)",
+  border: "1px dashed var(--border-focus)",
+  borderRadius: "var(--radius-md)",
+};
+
+const escalateIcon: CSSProperties = {
+  flexShrink: 0,
+  width: 30,
+  height: 30,
+  borderRadius: "var(--radius-sm)",
+  background: "var(--bg-surface)",
+  color: "var(--accent)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+};
+
+const escalateTitle: CSSProperties = {
+  margin: "0 0 0.2rem",
+  fontWeight: 600,
+  fontSize: "0.92rem",
+  color: "var(--text-primary)",
+};
+
+const escalatePlain: CSSProperties = {
+  margin: 0,
+  fontSize: "0.88rem",
+  color: "var(--text-secondary)",
+  lineHeight: 1.5,
+};
+
+const escalateTech: CSSProperties = {
+  margin: "0.3rem 0 0",
+  fontSize: "0.85rem",
+  color: "var(--text-muted)",
+  lineHeight: 1.45,
+  fontFamily: "var(--font-mono)",
 };
 
 const declineCard: CSSProperties = {

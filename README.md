@@ -68,62 +68,69 @@ A snapshot of what actually works on the live site right now.
 
 ## How a search works — the pipeline
 
+Every question follows the same path: it is understood, scope-checked, branched to the right strategy,
+searched across trusted sources in parallel, merged into one evidence set, gated on confidence, grounded
+to real citations, then written and delivered. **No LLM token is spent until real evidence has been
+retrieved and quality-checked.**
+
+```mermaid
+flowchart TD
+    A(["1 · A clinician asks a question"]) --> B["2 · Understand the question<br/>classify into 1 of 6 types · extract key terms<br/>· neutralize leading phrasing"]
+    B --> S{"Scope check —<br/>is this a clinical question?"}
+    S -->|"no medical entity"| X["Decline · out_of_scope<br/>never searches the literature"]
+    S -->|"medical entity found"| BR
+
+    subgraph BR["3 · Branch by query type — one path splits into six"]
+      direction LR
+      T1["Drug"]
+      T2["Disease"]
+      T3["Procedure"]
+      T4["Evidence"]
+      T5["Comparative"]
+      T6["Complex"]
+    end
+
+    BR --> F["4 · Fetch — in parallel · no LLM tokens spent<br/>PubMed · openFDA · RxNorm · ClinicalTrials.gov<br/>· NICE · StatPearls / Bookshelf · MedlinePlus"]
+    F --> RK["5 · Rank and merge into one evidence set<br/>score by study type · relevance · recency · citations"]
+    RK --> G{"6 · Enough distinct evidence?"}
+    G -->|"weak"| ESC["Escalate — second pass · borrow a<br/>complementary strategy · chase citations<br/>· up to 5 broadenings"]
+    ESC --> G
+    G -->|"still none"| NE["Honest 'no strong evidence' card<br/>— generation never runs"]
+    G -->|"sufficient"| GR["7 · Ground every claim<br/>REF-token to real citation · unbackable<br/>claims demoted or dropped"]
+    GR --> W["8 · Write with your key<br/>bottom-line first, then parallel sections, streamed"]
+    W --> D(["9 · Deliver<br/>structured, cited answer · LOE/COR · confidence badges"])
+
+    classDef terminal fill:#2563eb,stroke:#1d4ed8,color:#ffffff;
+    classDef step fill:#eff6ff,stroke:#93c5fd,color:#12335c;
+    classDef decision fill:#fef3c7,stroke:#f59e0b,color:#5b3d09;
+    classDef deadend fill:#f1f5f9,stroke:#cbd5e1,color:#41506a;
+    classDef branch fill:#faf5ff,stroke:#c4b5fd,color:#42167e;
+
+    class A,D terminal;
+    class B,F,RK,GR,W step;
+    class S,G decision;
+    class X,NE,ESC deadend;
+    class T1,T2,T3,T4,T5,T6 branch;
+    style BR fill:#faf5ff,stroke:#c4b5fd,color:#42167e;
 ```
-Query
-  │
-  ├─ 1. Query rewriting & analysis (DSPy)
-  │     Typos fixed, abbreviations expanded (HTN → hypertension, MI → myocardial infarction)
-  │     Extracts entities, clinical intent (10 intents), and patient context
-  │     (age / renal / hepatic / weight / pregnancy / concurrent drugs)
-  │
-  ├─ 2. Stance neutralization  [STANCE_NEUTRALIZER_ENABLED]
-  │     "why is X NOT rational?" → neutral "X: clinical rationale and evidence base"
-  │     The neutral form is what gets searched, so retrieval isn't one-sided
-  │
-  ├─ 3. Classification → drug / disease / comparative / procedure / evidence / complex
-  │     User hint > DSPy analysis > LLM classifier > safe "complex" fallback
-  │     Robust: malformed output is recovered (not silently dropped), type/confidence are
-  │     validated, and ≥2 named conditions force the multi-condition path [CLASSIFY_HEURISTIC_BACKSTOP_ENABLED]
-  │     Non-medical guard [NON_MEDICAL_GUARD_ENABLED]: if no medical term is found at all,
-  │     politely decline instead of searching — no fetch, no generation
-  │
-  ├─ 4. Cache lookup
-  │     Redis exact-match (24h) on the normalized query  → instant return on hit
-  │     pgvector semantic cache (cosine similarity)      → near-duplicate questions
-  │
-  ├─ 5. Parallel data fetch (no LLM tokens spent here)
-  │     asyncio.gather across 10+ medical APIs; each source times out and fails silently
-  │     Complex queries cascade PubMed across comorbidity combinations to guarantee evidence
-  │     Multi-variation retrieval [MULTI_VARIATION_SEARCH_ENABLED] fetches several phrasings
-  │
-  ├─ 6. Evidence ranking
-  │     Every article scored: study type, relevance, recency, full-text, citation count
-  │     Penalties for animal-only / off-population studies
-  │     Highest-evidence articles survive the abstract budget
-  │
-  ├─ 7. Confidence gate: enough distinct evidence?  [ADAPTIVE_CROSS_STRATEGY_FALLBACK_ENABLED]
-  │     Same-strategy second pass + phrasing variants; if still under 3 distinct articles,
-  │     borrow ONE complementary strategy (procedure→evidence, disease→evidence, …)
-  │     Then evidence floor: has_minimum_evidence()? If not, up to 5 progressive broadenings run
-  │     Still thin? Deep citation-chasing [DEEP_SEARCH_ENABLED] follows iCite references
-  │     All strategies exhausted → honest "no evidence" card (no generation)
-  │
-  ├─ 8. LLM formatting — your key, two phases  [PARALLEL_SECTIONS_ENABLED]
-  │     Phase 1: BLUF agent → headline + section titles + flowcharts/tables (streams immediately)
-  │     Phase 2: one agent per section, in parallel → each section streams in as it finishes
-  │     Every article is tokenized as [REF_N]; the model cites tokens, not free-text titles
-  │
-  ├─ 9. Grounding gate + post-processing  [GROUNDING_FLOOR_ENABLED]
-  │     [REF_N] tokens resolved to real titles/PMIDs/URLs
-  │     Claims with no real source are demoted (low-confidence) or dropped
-  │     Too few grounded claims remain → answer becomes the honest "no evidence" card
-  │     Per-section re-fetch [SECTION_REFETCH_ENABLED] fills any section still empty
-  │
-  └─ 10. Validation + cache store
-        LOE/COR assigned structurally by source type — not inferred from the model's wording
-        Article registry builds the final reference list (every link is article-level)
-        Only grounded answers are cached
-```
+
+<details>
+<summary><strong>Stage-by-stage — the engineering detail (with the feature flag that controls each)</strong></summary>
+
+| Stage | What actually happens | Flag |
+|---|---|---|
+| **Query analysis** (DSPy) | Typos fixed, abbreviations expanded (HTN → hypertension, MI → myocardial infarction); extracts entities, clinical intent (10 intents), and patient context (age / renal / hepatic / weight / pregnancy / concurrent drugs). | — |
+| **Stance neutralization** | "why is X *NOT* rational?" → neutral "X: clinical rationale and evidence base". The neutral form is what gets searched, so retrieval isn't one-sided. | `STANCE_NEUTRALIZER_ENABLED` |
+| **Classification + scope guard** | 6 types; precedence is user hint > DSPy analysis > LLM classifier > safe `complex` fallback. Malformed output is recovered, not dropped; ≥2 named conditions force the multi-condition path. If no medical term is found at all, it politely declines — no fetch, no generation. | `CLASSIFY_HEURISTIC_BACKSTOP_ENABLED`, `NON_MEDICAL_GUARD_ENABLED` |
+| **Cache lookup** | Redis exact-match (24h) on the normalized query → instant return; pgvector semantic cache (cosine similarity) catches near-duplicate questions. | `SEMANTIC_CACHE_ENABLED` |
+| **Parallel fetch** (no LLM tokens) | `asyncio.gather` across 10+ medical APIs; each source times out and fails silently. Complex queries cascade PubMed across comorbidity combinations; multi-variation retrieval fetches several phrasings. | `MULTI_VARIATION_SEARCH_ENABLED` |
+| **Evidence ranking** | Every article scored by study type, relevance, recency, full-text availability, and citation count; animal-only / off-population studies are penalized; the highest-evidence articles survive the abstract budget. | — |
+| **Confidence gate + evidence floor** | Same-strategy second pass + phrasing variants; if still under 3 distinct articles, borrow ONE complementary strategy (procedure→evidence, …); then up to 5 progressive broadenings; still thin → deep citation-chasing (iCite). All exhausted → honest "no evidence" card. | `ADAPTIVE_CROSS_STRATEGY_FALLBACK_ENABLED`, `DEEP_SEARCH_ENABLED` |
+| **LLM formatting** (your key) | Phase 1: BLUF agent streams the headline + section titles immediately. Phase 2: one agent per section in parallel, each streaming in as it finishes. Every article is tokenized as `[REF_N]` — the model cites tokens, not free-text titles. | `PARALLEL_SECTIONS_ENABLED` |
+| **Grounding gate** | `[REF_N]` tokens resolved to real titles/PMIDs/URLs; claims with no real source are demoted (low-confidence) or dropped; too few grounded claims → the honest "no evidence" card; per-section re-fetch fills any section still empty. | `GROUNDING_FLOOR_ENABLED`, `SECTION_REFETCH_ENABLED` |
+| **Validation + cache store** | LOE/COR assigned structurally by source type — not inferred from the model's wording; the article registry builds the final reference list (every link is article-level); only grounded answers are cached. | — |
+
+</details>
 
 ---
 
