@@ -65,3 +65,33 @@ DEPLOY_COMMANDS.md
 
 # Runtime locks / scheduler state
 .claude/scheduled_tasks.lock
+
+# ── Internal working files — keep local, never publish ──
+# Agent config/plans and the working-agreement file
+.claude/
+/CLAUDE.md
+# Internal architecture/handoff docs (referenced by the local agent workflow)
+AGENT_ARCHITECTURE.md
+AGENT_INTEGRATION_GUIDE.md
+# Internal planning / audit / refactor notes
+/plans/
+AUDIT.md
+REFACTOR_PLAN.md
+Code_refactor.md
+COMPLEX_QUERY_SCALING_PLAN.md
+IMPLEMENTATION_CHECKLIST.md
+INTEGRATION_NOTES.md
+ENGINEERING_JOURNAL.md
+DEPLOY_AND_SCALING.md
+.codex
+model_quotas.png
+# Ad-hoc research harness & outputs (the real test suite lives in backend/tests/)
+/test/
+# One-off internal notes (dirs kept for their real tracked files)
+docs/CONTINUOUS_GOAL_PROMPT.md
+nginx/DOMAIN_MIGRATION.md
+
+# Tooling caches & backups
+.pytest_cache/
+.ruff_cache/
+*.bak
