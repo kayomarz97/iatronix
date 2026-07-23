@@ -11,6 +11,10 @@ RUN npm install
 COPY . .
 RUN npm run build
 
+# Drop root: node:alpine ships an unprivileged `node` user (uid 1000).
+RUN chown -R node:node /app
+USER node
+
 EXPOSE 3000
 
 CMD ["npm", "start"]

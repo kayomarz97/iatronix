@@ -35,8 +35,8 @@ jobs:
         run: |
           gcloud run deploy iatronix-backend \
             --source ./backend --region "$REGION" --project "$PROJECT" \
-            --port 8000 --min-instances 0 --max-instances 10 \
-            --cpu 2 --memory 2Gi --timeout 600 --concurrency 40 \
+            --port 8000 --min-instances 0 --max-instances 4 \
+            --cpu 2 --memory 2Gi --timeout 300 --concurrency 40 \
             --allow-unauthenticated --service-account "$RUNTIME_SA" \
             --set-env-vars '^@^DSPY_ENABLED=true@MODEL_ROUTING_ENABLED=true@API_FETCH_ENABLED=true@DEEP_SEARCH_ENABLED=true@ADAPTIVE_SECOND_PASS_ENABLED=true@MULTI_VARIATION_SEARCH_ENABLED=true@PARALLEL_SECTIONS_ENABLED=true@RESUMABLE_STREAM_ENABLED=true@SECTION_REFETCH_ENABLED=true@FAIL_CLOSED_EVIDENCE_ONLY=false@PROMPT_VERSION=3@SEMANTIC_CACHE_THRESHOLD=0.88@GCS_ARCHIVE_BUCKET=iatronix-med-search-v1-archive@GUNICORN_WORKERS=4@FLUSH_REDIS=0@OPENROUTER_CALLBACK_BASE=https://med.kayomarz.com@ALLOWED_ORIGINS=https://med.kayomarz.com,https://www.med.kayomarz.com' \
             --set-secrets DATABASE_URL=DATABASE_URL:latest,REDIS_URL=REDIS_URL:latest,ENCRYPTION_KEY=ENCRYPTION_KEY:latest,IATRONIX_API_KEY=IATRONIX_API_KEY:latest,PUBMED_API_KEY=PUBMED_API_KEY:latest,SENTRY_DSN=SENTRY_DSN:latest \
@@ -62,7 +62,7 @@ jobs:
         run: |
           gcloud run deploy iatronix-frontend \
             --source ./frontend --region "$REGION" --project "$PROJECT" \
-            --min-instances 0 --max-instances 10 --cpu 1 --memory 1Gi --timeout 300 \
+            --min-instances 0 --max-instances 3 --cpu 1 --memory 1Gi --timeout 300 \
             --allow-unauthenticated \
             --set-env-vars "INTERNAL_API_URL=${{ vars.INTERNAL_API_URL }}" \
             --quiet

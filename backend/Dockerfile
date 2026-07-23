@@ -59,7 +59,13 @@ COPY entrypoint.sh .
 COPY data/ data/
 COPY tests/ tests/
 
-RUN chmod +x entrypoint.sh && mkdir -p /app/logs
+RUN chmod +x entrypoint.sh && mkdir -p /app/logs \
+    && adduser --system --uid 10001 appuser \
+    && chown -R appuser /app
+
+# Drop root: run the app as an unprivileged user so a runtime compromise
+# does not start with in-container admin. Port 8000 (>1024) needs no privilege.
+USER appuser
 
 EXPOSE 8000
 

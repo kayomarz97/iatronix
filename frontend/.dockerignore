@@ -1,0 +1,12 @@
+# Docker build-context excludes (mirrors .gcloudignore).
+# NOTE: .env.local is intentionally NOT excluded — `next build` reads the
+# public NEXT_PUBLIC_* config from it. It contains only public-by-design keys.
+.git/
+node_modules/
+.next/
+out/
+*.log
+npm-debug.log*
+.DS_Store
+Dockerfile
+.dockerignore
