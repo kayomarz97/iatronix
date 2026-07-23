@@ -66,6 +66,13 @@ class Settings(BaseSettings):
 
     # Rate limiting — path-aware buckets
     rate_limit_ip_per_minute: int = 100
+    # Number of trusted proxy hops in front of the app (they append the real client
+    # IP to the RIGHT of X-Forwarded-For). Cloud Run's Google Front End = 1 hop, so
+    # the rightmost XFF entry is the real client. Increase if you add a load balancer
+    # in front. The leftmost XFF entry and CF-Connecting-IP are attacker-controllable
+    # (no Cloudflare proxy in front) and are NOT trusted. Verify against Cloud Run
+    # request logs and tune via RATE_LIMIT_TRUSTED_PROXY_HOPS if needed.
+    rate_limit_trusted_proxy_hops: int = 1
     rate_limit_key_per_minute: int = 10  # kept for backward-compat; unused in path-aware logic
     # General bucket (auth writes, documents, etc.)
     rate_limit_free_key_per_minute: int = 30   # raised from 20; queries/suggestions now in own buckets

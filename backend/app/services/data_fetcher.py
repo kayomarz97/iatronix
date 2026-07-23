@@ -9,13 +9,14 @@ All API calls are async, fire-and-forget, and silent on failure.
 import asyncio
 import contextlib
 import contextvars
+import ipaddress
 import json
 import logging
 import os
 import random
 import re
 import time
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urljoin, urlparse
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from typing import Optional
@@ -360,6 +361,37 @@ async def shutdown_http_client() -> None:
     if _HTTP_CLIENT is not None:
         await _HTTP_CLIENT.aclose()
         _HTTP_CLIENT = None
+
+
+async def _is_public_http_url(url: str) -> bool:
+    """SSRF guard for URLs sourced from third-party API responses.
+
+    Allows only http(s) URLs whose hostname resolves entirely to public IPs.
+    Blocks internal / loopback / link-local targets such as the cloud metadata
+    endpoint (169.254.169.254), which on Cloud Run would vend the runtime
+    service-account token. DNS is resolved off the event loop.
+    """
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return False
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        return False
+    try:
+        loop = asyncio.get_event_loop()
+        infos = await loop.getaddrinfo(parsed.hostname, None)
+    except Exception:
+        return False
+    if not infos:
+        return False
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            return False
+        if not ip.is_global or ip.is_multicast or ip.is_reserved:
+            return False
+    return True
 
 
 def _get_client() -> httpx.AsyncClient:
@@ -1351,7 +1383,22 @@ async def _fetch_unpaywall(
         return None
 
     try:
-        resp = await client.get(pdf_url, timeout=10, follow_redirects=True)
+        # SSRF guard: pdf_url comes from a third-party (Unpaywall) response. Validate
+        # the host is public, then follow redirects manually, re-validating each hop —
+        # a redirect to an internal address must not be followed.
+        if not await _is_public_http_url(pdf_url):
+            logger.warning("Unpaywall PDF URL blocked by SSRF guard (non-public target)")
+            return None
+        resp = await client.get(pdf_url, timeout=10, follow_redirects=False)
+        _hops = 0
+        while resp.is_redirect and _hops < 3:
+            location = resp.headers.get("location")
+            next_url = urljoin(str(resp.url), location) if location else None
+            if not next_url or not await _is_public_http_url(next_url):
+                logger.warning("Unpaywall PDF redirect blocked by SSRF guard")
+                return None
+            resp = await client.get(next_url, timeout=10, follow_redirects=False)
+            _hops += 1
         if resp.status_code != 200:
             return None
         import io

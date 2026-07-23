@@ -59,27 +59,28 @@ async def _check_redis_rate_limit(
         return limited, 0, int(time.time()) + window
 
 
+def _trusted_client_ip(request: Request) -> str:
+    """Derive the client IP from X-Forwarded-For, trusting ONLY the hop(s) we sit
+    behind (they append the real client on the RIGHT). The leftmost XFF entry and
+    CF-Connecting-IP are attacker-supplied (no Cloudflare proxy in front) and are
+    never trusted — that was the spoofable-bucket bypass. Falls back to the direct
+    peer when no forwarded header is present.
+    """
+    hops = settings.rate_limit_trusted_proxy_hops
+    xff = request.headers.get("x-forwarded-for")
+    if hops > 0 and xff:
+        parts = [p.strip() for p in xff.split(",") if p.strip()]
+        if parts:
+            idx = max(0, len(parts) - hops)
+            return parts[idx]
+    return request.client.host if request.client else "unknown"
+
+
 class PreAuthRateLimitMiddleware(BaseHTTPMiddleware):
     """IP-based rate limiting that runs BEFORE auth."""
 
     async def dispatch(self, request: Request, call_next) -> Response:
-        # Robust IP extraction order:
-        # 1. CF-Connecting-IP (Directly from Cloudflare)
-        # 2. X-Forwarded-For (First entry is the original client)
-        # 3. X-Real-IP (Set by Nginx)
-        # 4. request.client.host (Fallback to direct connection)
-        cf_ip = request.headers.get("cf-connecting-ip")
-        forwarded = request.headers.get("x-forwarded-for")
-        real_ip = request.headers.get("x-real-ip")
-
-        if cf_ip:
-            client_ip = cf_ip
-        elif forwarded:
-            client_ip = forwarded.split(",")[0].strip()
-        elif real_ip:
-            client_ip = real_ip
-        else:
-            client_ip = request.client.host if request.client else "unknown"
+        client_ip = _trusted_client_ip(request)
 
         key = f"rate:ip:{client_ip}"
         limit = settings.rate_limit_ip_per_minute

@@ -65,6 +65,10 @@ RUN chmod +x entrypoint.sh && mkdir -p /app/logs \
 
 # Drop root: run the app as an unprivileged user so a runtime compromise
 # does not start with in-container admin. Port 8000 (>1024) needs no privilege.
+# HOME/XDG_CACHE_HOME point at the app-owned tree so libraries that write a
+# cache (dspy, huggingface, matplotlib, etc.) don't fail on a read-only home.
+ENV HOME=/app \
+    XDG_CACHE_HOME=/app/.cache
 USER appuser
 
 EXPOSE 8000
