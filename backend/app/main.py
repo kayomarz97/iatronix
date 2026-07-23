@@ -21,6 +21,7 @@ from app.config import settings
 from app.middleware.firebase_auth import FirebaseAuthMiddleware
 from app.middleware.payload_limit import PayloadLimitMiddleware
 from app.middleware.rate_limit import PreAuthRateLimitMiddleware
+from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.services.data_fetcher import init_http_client, shutdown_http_client
 from app.services.rag_pipeline import init_log_queue, shutdown_log_queue
 
@@ -49,6 +50,11 @@ async def lifespan(app: FastAPI):
     except ProviderRegistryError:
         logger.exception("Provider registry failed to load — refusing to start")
         raise
+
+    # Fail fast if the BYOK encryption key is missing/invalid — never boot on a
+    # random ephemeral key (would silently orphan every stored user API key).
+    from app.services.byok import validate_encryption_key
+    validate_encryption_key()
 
     await init_http_client()
 
@@ -199,16 +205,29 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
     default_response_class=ORJSONResponse,
+    # Do not expose the API surface publicly unless explicitly enabled (dev only).
+    docs_url="/docs" if settings.docs_enabled else None,
+    redoc_url="/redoc" if settings.docs_enabled else None,
+    openapi_url="/openapi.json" if settings.docs_enabled else None,
 )
 
-# Middleware order: outermost first → Payload → PreAuth Rate Limit → API Key Auth
+# Middleware order: outermost first → SecurityHeaders → Payload → PreAuth Rate Limit → API Key Auth
 # (FastAPI adds in reverse order, so add innermost first)
 app.add_middleware(FirebaseAuthMiddleware)
 app.add_middleware(PreAuthRateLimitMiddleware)
 app.add_middleware(PayloadLimitMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
 
 # CORS
-origins = [o.strip() for o in settings.allowed_origins.split(",")]
+origins = [o.strip() for o in settings.allowed_origins.split(",") if o.strip()]
+# Credentialed CORS with a wildcard origin is unsafe: Starlette would reflect any
+# Origin back with Access-Control-Allow-Credentials: true. Refuse rather than
+# silently allow every website to make authenticated cross-origin calls.
+if "*" in origins:
+    raise RuntimeError(
+        "ALLOWED_ORIGINS must be explicit origin(s), not '*', because "
+        "allow_credentials=True. Set ALLOWED_ORIGINS to your exact domain(s)."
+    )
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,

@@ -53,6 +53,11 @@ class Settings(BaseSettings):
     # Logging
     log_level: str = "INFO"
 
+    # Interactive API docs (/docs, /redoc, /openapi.json). OFF by default so the
+    # full API surface is not disclosed on the public production service. Set
+    # DOCS_ENABLED=true locally when you need Swagger UI.
+    docs_enabled: bool = False
+
     # --- Limits (single source of truth) ---
 
     # Payload

@@ -133,6 +133,16 @@ const mdComponents: React.ComponentProps<typeof ReactMarkdown>["components"] = {
   td: ({ children }) => <td className="border border-border px-2 py-1">{children}</td>,
 };
 
+// ── URL safety ───────────────────────────────────────────────────────────────
+// Model/retrieved content can carry attacker-influenced URLs. React does not
+// sanitize href/src, so a `javascript:`/`data:` URL would execute on click.
+// Allow only http(s) links; drop everything else.
+function safeHttpUrl(u: string | null | undefined): string | null {
+  if (!u) return null;
+  const t = u.trim();
+  return /^https?:\/\//i.test(t) ? t : null;
+}
+
 // ── Source-aware fallback URL helper (article-level only — no homepages) ──────
 function getSourceFallbackUrl(_source: string | undefined, pmid: string | undefined): string | null {
   if (pmid && /^\d+$/.test(pmid)) return `https://pubmed.ncbi.nlm.nih.gov/${pmid}/`;
@@ -141,7 +151,7 @@ function getSourceFallbackUrl(_source: string | undefined, pmid: string | undefi
 
 // ── Single claim row ─────────────────────────────────────────────────────────
 function ClaimRow({ item, fetchSources }: { item: AdaptiveContentItem; fetchSources?: string[] }) {
-  const sourceHref = item.url ?? getSourceFallbackUrl(item.source, item.pmid);
+  const sourceHref = safeHttpUrl(item.url) ?? getSourceFallbackUrl(item.source, item.pmid);
 
   const displaySource = item.source?.replace(/^\[SOURCE:\s*/i, "").replace(/\]$/, "") ?? null;
 
@@ -286,9 +296,9 @@ function ReferenceRow({ ref: r, index }: { ref: AdaptiveReference; index: number
     <li className="flex items-start gap-1.5 text-xs">
       <span className="text-muted-foreground shrink-0 mt-0.5">{index + 1}.</span>
       <span>
-        {r.url ? (
+        {safeHttpUrl(r.url) ? (
           <a
-            href={r.url}
+            href={safeHttpUrl(r.url)!}
             target="_blank"
             rel="noopener noreferrer"
             className="text-primary dark:text-primary hover:underline"
@@ -414,7 +424,7 @@ function MedicalImageRenderer({ images }: { images?: AdaptiveImage[] }) {
           <figure key={i} className="max-w-sm w-full">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src={img.url}
+              src={safeHttpUrl(img.url) ?? ""}
               alt={img.caption ?? "Medical illustration"}
               className="rounded-lg border border-border w-full object-contain max-h-72"
             />

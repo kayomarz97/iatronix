@@ -31,15 +31,31 @@ def _get_fernet() -> Fernet:
     global _fernet
     if _fernet is None:
         key = settings.encryption_key
-        if key == "CHANGE_ME":
-            # Auto-generate for development; log warning
-            key = Fernet.generate_key().decode()
-            logger.warning(
-                "ENCRYPTION_KEY not set — using auto-generated key. "
-                "Set ENCRYPTION_KEY in .env for production."
+        # FAIL CLOSED. A random/ephemeral key would silently make every stored
+        # BYOK key undecryptable after a restart or on another Cloud Run instance,
+        # permanently orphaning user secrets. Refuse to operate without a real key.
+        if not key or key == "CHANGE_ME":
+            raise RuntimeError(
+                "ENCRYPTION_KEY is missing or still 'CHANGE_ME'. Refusing to start: "
+                "encrypting BYOK keys with an auto-generated key loses them on the next "
+                "restart/instance. Generate one with:\n"
+                '  python -c "from cryptography.fernet import Fernet; '
+                'print(Fernet.generate_key().decode())"\n'
+                "and set it as ENCRYPTION_KEY."
             )
-        _fernet = Fernet(key.encode() if isinstance(key, str) else key)
+        try:
+            _fernet = Fernet(key.encode() if isinstance(key, str) else key)
+        except (ValueError, TypeError) as exc:
+            raise RuntimeError(
+                "ENCRYPTION_KEY is not a valid Fernet key (expected 32 url-safe "
+                "base64-encoded bytes)."
+            ) from exc
     return _fernet
+
+
+def validate_encryption_key() -> None:
+    """Fail fast at startup if ENCRYPTION_KEY is missing/invalid (see _get_fernet)."""
+    _get_fernet()
 
 
 def encrypt_key(plaintext_key: str) -> str:
