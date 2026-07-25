@@ -6,6 +6,7 @@ import { API_KEY_STORAGE_KEY, LLM_PROVIDER_STORAGE_KEY } from "@/lib/constants";
 import { useTheme } from "@/hooks/useTheme";
 import { saveServiceKey, deleteServiceKey, listServiceKeys } from "@/lib/api";
 import { getLLMConfig, getProviders, type LLMConfig, type ProviderPublic } from "@/lib/modelRegistry";
+import { SignInMethods } from "@/components/SignInMethods";
 // Voyage AI hidden — reserved for future re-enable
 
 const POSITIONS = [
@@ -554,6 +555,9 @@ export default function SettingsPage() {
           Sign Out
         </button>
       </section>
+
+      {/* ── Sign-in methods (Google / password linking) ── */}
+      <SignInMethods />
 
       {/* ── Appearance ── */}
       <section className="space-y-3">

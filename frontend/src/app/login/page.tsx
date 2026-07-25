@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Activity, Mail } from "lucide-react";
 import { PasswordInput } from "@/components/ui/PasswordInput";
@@ -8,19 +8,65 @@ import { API_KEY_STORAGE_KEY } from "@/lib/constants";
 import { signInWithEmailAndPassword, setPersistence, browserLocalPersistence, browserSessionPersistence } from "firebase/auth";
 import { auth } from "@/lib/firebase";
 import { GoogleSignIn } from "@/components/GoogleSignIn";
+import { requestPasswordReset } from "@/lib/authGoogle";
 import posthog from "posthog-js";
+
+/**
+ * Turn a Firebase sign-in error into something a human can act on.
+ *
+ * `auth/invalid-credential` is deliberately ambiguous on Firebase's side: with email
+ * enumeration protection on (default since 2023-09-15) it covers "wrong password",
+ * "no such user" AND "this account has no password provider at all" — and
+ * fetchSignInMethodsForEmail, which used to tell them apart, is deprecated and returns
+ * empty. We cannot distinguish them client-side without building an enumeration
+ * oracle, so we name both realistic causes in one honest message. The Google case is
+ * real and common: see the provider matrix in lib/authGoogle.ts.
+ */
+function loginErrorMessage(err: any): string {
+  switch (err?.code) {
+    case "auth/too-many-requests":
+      return "Too many failed attempts. Please try again later or reset your password.";
+    case "auth/invalid-credential":
+    case "auth/wrong-password":
+    case "auth/user-not-found":
+      return "Wrong email or password — or this account signs in with Google. If you've used \"Continue with Google\" before, use that below, then add a password from Settings → Sign-in methods.";
+    case "auth/invalid-email":
+      return "That doesn't look like a valid email address.";
+    case "auth/user-disabled":
+      return "This account has been disabled. Please contact support.";
+    case "auth/network-request-failed":
+      return "Network error. Check your connection and try again.";
+    default:
+      return err?.message || "Invalid email or password";
+  }
+}
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [resetting, setResetting] = useState(false);
   const [shaking, setShaking] = useState(false);
+
+  // Read the post-registration flags. Deliberately window.location rather than
+  // useSearchParams(), which would force this page into a Suspense boundary at build.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (!params.get("registered")) return;
+    setNotice(
+      params.get("verify") === "failed"
+        ? "Account created, but we couldn't send the verification email. Use \"Forgot password?\" to request it again — verifying keeps email login working if you also use Google."
+        : "Account created. Check your inbox and click the verification link — it keeps email sign-in working even after you use Google.",
+    );
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setNotice(null);
     setLoading(true);
 
     try {
@@ -31,21 +77,53 @@ export default function LoginPage() {
       localStorage.setItem(API_KEY_STORAGE_KEY, token);
       localStorage.setItem("iatronix_email", userCredential.user.email || email);
 
-      posthog.identify(userCredential.user.uid, { email: userCredential.user.email ?? email });
-      posthog.capture("user_logged_in", { method: "email" });
+      // Analytics is best-effort — a PostHog failure must never be reported to the
+      // user as a failed login, which is what happened when these were unwrapped.
+      try {
+        posthog.identify(userCredential.user.uid, { email: userCredential.user.email ?? email });
+        posthog.capture("user_logged_in", { method: "email" });
+      } catch {
+        /* ignore */
+      }
 
       window.location.href = "/";
     } catch (err: any) {
-      if (err.code === "auth/too-many-requests") {
-        setError("Too many failed attempts. Please try again later or reset your password.");
-      } else {
-        setError(err.message || "Invalid email or password");
-      }
+      setError(loginErrorMessage(err));
       setShaking(true);
       setTimeout(() => setShaking(false), 500);
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleForgotPassword = async () => {
+    setError(null);
+    setNotice(null);
+    if (!email.trim()) {
+      setError("Enter your email address above first, then tap \"Forgot password?\".");
+      return;
+    }
+    setResetting(true);
+    try {
+      await requestPasswordReset(email.trim());
+    } catch (err: any) {
+      // Anything other than a malformed address is swallowed on purpose: reporting
+      // "no such user" would turn this form into an email-enumeration oracle.
+      if (err?.code === "auth/invalid-email") {
+        setError("That doesn't look like a valid email address.");
+        setResetting(false);
+        return;
+      }
+      if (err?.code === "auth/too-many-requests") {
+        setError("Too many requests. Please wait a few minutes and try again.");
+        setResetting(false);
+        return;
+      }
+    }
+    setResetting(false);
+    setNotice(
+      "If an account exists for that address, a password reset link is on its way. If you normally sign in with Google, use \"Continue with Google\" below instead.",
+    );
   };
 
   return (
@@ -101,6 +179,23 @@ export default function LoginPage() {
             Evidence-based medical intelligence
           </p>
         </div>
+
+        {/* Informational notice (registration confirmation, reset requested) */}
+        {notice && (
+          <div
+            style={{
+              marginBottom: "1.25rem",
+              padding: "0.75rem 1rem",
+              background: "var(--accent-glow)",
+              border: "1px solid rgba(59,130,246,0.3)",
+              borderRadius: "var(--radius-md)",
+              fontSize: "0.85rem",
+              color: "var(--text-secondary)",
+            }}
+          >
+            {notice}
+          </div>
+        )}
 
         {/* Error message */}
         {error && (
@@ -191,16 +286,19 @@ export default function LoginPage() {
               </label>
               <button
                 type="button"
+                onClick={handleForgotPassword}
+                disabled={resetting}
                 style={{
                   background: "none",
                   border: "none",
                   fontSize: "0.8rem",
                   color: "var(--accent)",
-                  cursor: "pointer",
+                  cursor: resetting ? "not-allowed" : "pointer",
                   padding: 0,
+                  opacity: resetting ? 0.6 : 1,
                 }}
               >
-                Forgot password?
+                {resetting ? "Sending…" : "Forgot password?"}
               </button>
             </div>
             <PasswordInput

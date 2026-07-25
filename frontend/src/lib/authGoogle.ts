@@ -1,12 +1,29 @@
 "use client";
 
-// Google sign-in with SAFE merge into an existing email/password account.
+// Google sign-in, account linking, and password recovery.
 //
-// Firebase deliberately does NOT auto-link a password account to Google. When a
-// user signs in with Google for an email that already has a password account, it
-// throws `auth/account-exists-with-different-credential` and hands us the email +
-// the pending Google credential. We only merge AFTER the user proves ownership by
-// entering their existing password — result: ONE account (one uid), both methods.
+// Firebase ranks providers as "trusted" or "untrusted" and the ranking decides what
+// happens when the same email arrives via a second provider
+// (https://firebase.google.com/docs/auth/users):
+//
+//   trusted   = Google for @gmail.com, Yahoo for @yahoo.com, Microsoft for
+//               @outlook.com/@hotmail.com, Apple
+//   untrusted = every other OAuth domain, AND "Email / Password without email
+//               verification"
+//
+//   untrusted -> untrusted : throws auth/account-exists-with-different-credential
+//   trusted   -> untrusted : throws auth/account-exists-with-different-credential
+//   untrusted -> TRUSTED   : "The trusted provider OVERWRITES the untrusted provider"
+//                            — silently, with NO error to catch
+//   trusted   -> trusted   : both link, no error
+//
+// That third row is the one that bites: an UNVERIFIED password account whose owner
+// then signs in with Google on a @gmail.com address loses its password credential
+// outright. The uid and all app data survive; only the password door is removed.
+// startGoogleSignIn() below can only handle the rows that actually throw — the
+// silent-overwrite row is prevented at registration (we now send a verification
+// email, which promotes password to "trusted") and repaired by
+// linkPasswordToCurrentUser() from Settings.
 //
 // NB: we intentionally do NOT use `fetchSignInMethodsForEmail` — it is deprecated
 // and returns empty once email-enumeration-protection is on (default for projects
@@ -14,13 +31,17 @@
 
 import {
   GoogleAuthProvider,
+  EmailAuthProvider,
   signInWithPopup,
   signInWithEmailAndPassword,
+  reauthenticateWithPopup,
+  sendPasswordResetEmail,
   linkWithCredential,
   setPersistence,
   browserLocalPersistence,
   browserSessionPersistence,
   type AuthCredential,
+  type User,
   type UserCredential,
 } from "firebase/auth";
 import { auth } from "@/lib/firebase";
@@ -75,4 +96,46 @@ export async function linkGoogleToPassword(
   const result = await signInWithEmailAndPassword(auth, email, password);
   await linkWithCredential(result.user, pendingCred);
   await completeSignIn(result, "google_linked");
+}
+
+/** Which sign-in methods are currently attached to this account. */
+export function providerIds(user: User | null): string[] {
+  return user?.providerData.map((p) => p.providerId) ?? [];
+}
+
+export function hasPasswordProvider(user: User | null): boolean {
+  return providerIds(user).includes("password");
+}
+
+/**
+ * Attach an email/password credential to the CURRENTLY SIGNED-IN account, so a
+ * Google-only user can also sign in with email + password. One account, two doors.
+ *
+ * This is the repair path for accounts whose password was overwritten by the
+ * untrusted -> trusted rule documented at the top of this file.
+ *
+ * Firebase requires a recent login before changing credentials; on
+ * `auth/requires-recent-login` we re-prove identity via the Google popup and retry
+ * once, so the user never sees a dead end.
+ */
+export async function linkPasswordToCurrentUser(password: string): Promise<void> {
+  const user = auth.currentUser;
+  if (!user) throw new Error("You are signed out. Sign in again and retry.");
+  if (!user.email) throw new Error("This account has no email address on file.");
+
+  const credential = EmailAuthProvider.credential(user.email, password);
+  try {
+    await linkWithCredential(user, credential);
+  } catch (err: any) {
+    if (err?.code !== "auth/requires-recent-login") throw err;
+    await reauthenticateWithPopup(user, new GoogleAuthProvider());
+    await linkWithCredential(user, credential);
+  }
+  // Providers changed — refresh the cached ID token so the backend sees current claims.
+  localStorage.setItem(API_KEY_STORAGE_KEY, await user.getIdToken(true));
+}
+
+/** Ordinary "I forgot my password" reset for an account that HAS a password. */
+export async function requestPasswordReset(email: string): Promise<void> {
+  await sendPasswordResetEmail(auth, email);
 }

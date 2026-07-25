@@ -4,7 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { Activity, Mail, ChevronRight, ExternalLink, Check } from "lucide-react";
 import { PasswordInput } from "@/components/ui/PasswordInput";
-import { createUserWithEmailAndPassword } from "firebase/auth";
+import { createUserWithEmailAndPassword, sendEmailVerification } from "firebase/auth";
 import { auth } from "@/lib/firebase";
 import { GoogleSignIn } from "@/components/GoogleSignIn";
 
@@ -100,8 +100,22 @@ export default function RegisterPage() {
     setError(null);
 
     try {
-      await createUserWithEmailAndPassword(auth, email, password);
-      window.location.href = "/login?registered=1";
+      const cred = await createUserWithEmailAndPassword(auth, email, password);
+
+      // Send the verification email. This is NOT cosmetic: Firebase treats
+      // "Email / Password without email verification" as an UNTRUSTED provider, and a
+      // later Google sign-in on a trusted domain (e.g. @gmail.com) OVERWRITES an
+      // untrusted provider — silently deleting this password. Verifying promotes the
+      // password to trusted, so Google then links alongside it instead.
+      // See lib/authGoogle.ts for the full provider matrix.
+      let verificationSent = true;
+      try {
+        await sendEmailVerification(cred.user);
+      } catch {
+        verificationSent = false; // never block signup on mail delivery
+      }
+
+      window.location.href = `/login?registered=1&verify=${verificationSent ? "sent" : "failed"}`;
     } catch (err: any) {
       setError(err.message || "Network error. Please try again.");
     } finally {
