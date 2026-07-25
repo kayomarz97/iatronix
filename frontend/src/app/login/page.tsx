@@ -56,11 +56,23 @@ export default function LoginPage() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (!params.get("registered")) return;
-    setNotice(
+
+    // Registration reports what it managed to save. Never claim more than happened —
+    // a user told "all set" who then finds an empty profile has been lied to.
+    const parts: string[] = [
       params.get("verify") === "failed"
-        ? "Account created, but we couldn't send the verification email. Use \"Forgot password?\" to request it again — verifying keeps email login working if you also use Google."
+        ? "Account created, but we couldn't send the verification email — use \"Forgot password?\" to request it again."
         : "Account created. Check your inbox and click the verification link — it keeps email sign-in working even after you use Google.",
-    );
+    ];
+    if (params.get("profile") === "failed") {
+      parts.push("We couldn't save your profile details — you can add them in Settings.");
+    }
+    if (params.get("key") === "rejected") {
+      parts.push("Your API key was rejected by the provider and not saved — add a valid key in Settings.");
+    } else if (params.get("key") === "saved") {
+      parts.push("Your API key was saved.");
+    }
+    setNotice(parts.join(" "));
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {

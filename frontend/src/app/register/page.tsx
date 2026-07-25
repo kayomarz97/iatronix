@@ -115,7 +115,67 @@ export default function RegisterPage() {
         verificationSent = false; // never block signup on mail delivery
       }
 
-      window.location.href = `/login?registered=1&verify=${verificationSent ? "sent" : "failed"}`;
+      // Persist everything the user just typed. Until 2026-07-25 this whole block was
+      // missing: the form collected 11 profile fields plus an API key and threw them all
+      // away, because the page made no network calls at all. The Firebase account already
+      // exists by this point, so NOTHING below may block sign-in — each step is caught
+      // independently and its outcome is carried to /login as a flag.
+      const token = await cred.user.getIdToken();
+      const authHeaders = {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      };
+
+      let profileSaved = true;
+      try {
+        // The backend's UpdateProfileRequest matches these field names exactly.
+        // `position` is a plain String column, so the display label is stored as-is
+        // (same as the Settings page does).
+        const res = await fetch("/api/v1/auth/profile", {
+          method: "PUT",
+          headers: authHeaders,
+          body: JSON.stringify({
+            username: username.trim() || null,
+            full_name: fullName.trim() || null,
+            country: country.trim() || null,
+            position: position || null,
+            institute: institute.trim() || null,
+            specialty: (specialty || specialtyInput).trim() || null,
+            institution_type: institutionType || null,
+            age: age ? Number(age) : null,
+            gender: gender || null,
+            newsletter_consent: newsletter,
+          }),
+        });
+        profileSaved = res.ok;
+      } catch {
+        profileSaved = false;
+      }
+
+      // Step 3 is skippable, and the key is validated live by the provider — a rejected
+      // key is the provider's verdict, not a bug, so it gets its own message.
+      const enteredKey = skip ? "" : (activeKeyTab === "anthropic" ? anthropicKey : openaiKey).trim();
+      let keyOutcome: "none" | "saved" | "rejected" = "none";
+      if (enteredKey) {
+        try {
+          const res = await fetch("/api/v1/auth/llm-key", {
+            method: "PUT",
+            headers: authHeaders,
+            body: JSON.stringify({ provider: activeKeyTab, key: enteredKey }),
+          });
+          keyOutcome = res.ok ? "saved" : "rejected";
+        } catch {
+          keyOutcome = "rejected";
+        }
+      }
+
+      const params = new URLSearchParams({
+        registered: "1",
+        verify: verificationSent ? "sent" : "failed",
+      });
+      if (!profileSaved) params.set("profile", "failed");
+      if (keyOutcome !== "none") params.set("key", keyOutcome);
+      window.location.href = `/login?${params.toString()}`;
     } catch (err: any) {
       setError(err.message || "Network error. Please try again.");
     } finally {
@@ -525,6 +585,18 @@ export default function RegisterPage() {
               />
               Keep me updated on new features (optional)
             </label>
+
+            <p style={{ margin: "0.25rem 0 0", fontSize: "0.75rem", color: "var(--text-muted)", lineHeight: 1.5 }}>
+              By creating an account you agree to our{" "}
+              <Link href="/terms" style={{ color: "var(--accent)", textDecoration: "none" }}>
+                Terms of Service
+              </Link>{" "}
+              and{" "}
+              <Link href="/privacy" style={{ color: "var(--accent)", textDecoration: "none" }}>
+                Privacy Policy
+              </Link>
+              . Iatronix is a clinical reference tool — never enter patient-identifiable information.
+            </p>
 
             <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", marginTop: "0.5rem" }}>
               <button type="submit" style={primaryBtnStyle}>

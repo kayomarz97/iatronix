@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import dynamic from "next/dynamic";
+import Link from "next/link";
 
 const TetrisModal = dynamic(() => import("@/components/ui/TetrisModal"), { ssr: false });
 
@@ -40,6 +41,17 @@ export function Footer() {
           Iatronix Medical Reference — For clinical decision support only. Not a
           substitute for professional medical judgment.
         </p>
+        <nav style={{ display: "flex", gap: "1rem", fontSize: "0.75rem" }}>
+          <Link href="/privacy" style={{ color: "var(--text-muted)", textDecoration: "none" }}>
+            Privacy
+          </Link>
+          <Link href="/terms" style={{ color: "var(--text-muted)", textDecoration: "none" }}>
+            Terms
+          </Link>
+          <Link href="/about" style={{ color: "var(--text-muted)", textDecoration: "none" }}>
+            About
+          </Link>
+        </nav>
         <p
           onClick={handleEasterEggClick}
           style={{
