@@ -135,7 +135,19 @@ export async function linkPasswordToCurrentUser(password: string): Promise<void>
   localStorage.setItem(API_KEY_STORAGE_KEY, await user.getIdToken(true));
 }
 
-/** Ordinary "I forgot my password" reset for an account that HAS a password. */
+/**
+ * "I forgot my password" reset.
+ *
+ * Verified 2026-07-25 against this project's own Firebase: the reset is accepted for a
+ * GOOGLE-ONLY account too (accounts:sendOobCode returns 200 and the mail is delivered),
+ * so completing it sets a password on an account that had none. That makes this a second
+ * recovery route alongside linkPasswordToCurrentUser() — useful when the user cannot get
+ * in at all and so cannot reach Settings.
+ *
+ * Callers must NOT branch on the outcome: with email-enumeration protection on, this
+ * resolves successfully whether or not the address exists. Reporting the difference would
+ * turn the login form into an enumeration oracle.
+ */
 export async function requestPasswordReset(email: string): Promise<void> {
   await sendPasswordResetEmail(auth, email);
 }
