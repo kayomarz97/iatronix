@@ -193,6 +193,14 @@ class AdaptiveBLUF(BaseModel):
     caveats: list[str] = []
 
 
+class AdaptiveSourceRef(BaseModel):
+    """One extra source behind a claim that cites more than one article."""
+    title: Optional[str] = None
+    source: Optional[str] = None
+    pmid: Optional[str] = None
+    url: Optional[str] = None
+
+
 class AdaptiveContentItem(BaseModel):
     text: str
     loe: Optional[str] = None
@@ -200,6 +208,11 @@ class AdaptiveContentItem(BaseModel):
     source: Optional[str] = None
     pmid: Optional[str] = None
     url: Optional[str] = None
+    # Multi-token citations ("[REF_3, REF_4]") — _resolve_ref_tokens has always populated
+    # this, but without a field here pydantic silently discarded it, so every claim citing
+    # two articles rendered as citing only the first. Frontend already types it
+    # (frontend/src/lib/types.ts AdaptiveContentItem.additional_sources).
+    additional_sources: list[AdaptiveSourceRef] = []
 
 
 class AdaptiveReference(BaseModel):

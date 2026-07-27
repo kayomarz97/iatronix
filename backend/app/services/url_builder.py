@@ -346,14 +346,7 @@ def enrich_references(data: dict, fetched_data=None) -> None:
         # (Removed ref["url"] = None — this was nuking URLs from _build_complete_references)
 
 
-# ── Internal helpers ──────────────────────────────────────────────────────────
-
-
-def _match_source_pattern(source_lower: str, title: str) -> str | None:
-    for keyword, base_url in _SOURCE_URL_MAP:
-        if keyword in source_lower:
-            if keyword == "pubmed" and title:
-                # Steps 2/3 already handle PubMed via PMID; base URL is useless here
-                return None
-            return base_url
-    return None
+# _match_source_pattern() was removed 2026-07-27. It iterated `_SOURCE_URL_MAP`, which the
+# May 2026 homepage cleanup had already deleted (see the note above Step 6), so any call
+# would have raised NameError. It had no callers — Steps 0.5–5 build article-level URLs from
+# validated IDs, which is what replaced the source→homepage table.

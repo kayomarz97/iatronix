@@ -19,6 +19,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from app.config import settings
 from app.services.url_builder import is_safe_url
 
 
@@ -410,10 +411,19 @@ def build_article_registry(fetched_data: Any) -> ArticleRegistry:
         for paper in getattr(obj, "semantic_papers", None) or []:
             if isinstance(paper, dict):
                 _add(seen, items, paper, "semantic_scholar", f"{attr}.semantic_papers")
-        # NCBI Books (field name: ncbi_books or books — check both)
-        for book in (getattr(obj, "ncbi_books", None) or getattr(obj, "books", None) or []):
-            if isinstance(book, dict):
-                _add(seen, items, book, "ncbi_books", f"{attr}.ncbi_books")
+        # NCBI Books / StatPearls full chapters.
+        # The real field on every *FetchResult is `book_monographs` (data_fetcher.py:283,
+        # entries {title,url,text,source,nbk_id}); `ncbi_books`/`books` do not exist on any
+        # object, so this walk was a silent no-op and chapters never reached the reference
+        # list. Kept behind a flag because it changes what the user sees. See
+        # settings.citation_integrity_fix_enabled for the measurement.
+        _book_attrs = ("ncbi_books", "books")
+        if settings.citation_integrity_fix_enabled:
+            _book_attrs = ("book_monographs", "ncbi_books", "books")
+        for _battr in _book_attrs:
+            for book in (getattr(obj, _battr, None) or []):
+                if isinstance(book, dict):
+                    _add(seen, items, book, "ncbi_books", f"{attr}.{_battr}")
         # MedlinePlus topic page (single optional dict)
         ml = getattr(obj, "medlineplus_topic", None)
         if isinstance(ml, dict):

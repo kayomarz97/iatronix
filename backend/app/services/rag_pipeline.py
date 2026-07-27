@@ -1579,6 +1579,14 @@ def _resolve_ref_tokens(parsed: dict, ref_map: dict, registry: "ArticleRegistry 
                 art = ref_map.get(key)
                 if art:
                     resolved_articles.append(art)
+                    # The inline branch previously never marked the article used_inline —
+                    # only the _TOKEN_FULL fallback below did. So the INSTRUCTED format
+                    # ("[REF_1]") left its article unmarked: it was grouped under "Additional
+                    # sources retrieved" instead of "Cited in this answer", and it lost its
+                    # exemption from to_reference_list(max_uncited=...), so a cited reference
+                    # could be evicted from the list while the claim still pointed at it.
+                    if settings.citation_integrity_fix_enabled:
+                        _mark(key)
 
             if not resolved_articles:
                 m_full = _TOKEN_FULL.match(src)
@@ -1701,7 +1709,15 @@ def _quarantine_sourceless_items(
         for item in items:
             if not isinstance(item, dict):
                 continue
-            has_real_source = bool((item.get("source") or "").strip()) and item.get("source") != "Expert opinion"
+            _src = (item.get("source") or "").strip()
+            # "__UNRESOLVED_TOKEN__" is a sentinel, not a source. It is set by
+            # _resolve_ref_tokens for a token with no entry in ref_map (e.g. the model emitted
+            # [REF_99]) and is meant to trigger backfill. When backfill also fails, the old
+            # truthiness test counted the sentinel as a real source, so it was never demoted
+            # and rendered to the clinician verbatim as the claim's source.
+            if settings.citation_integrity_fix_enabled and _src == "__UNRESOLVED_TOKEN__":
+                _src = ""
+            has_real_source = bool(_src) and _src != "Expert opinion"
             has_url = bool(item.get("url"))
             has_pmid = bool(item.get("pmid"))
             if not (has_real_source or has_url or has_pmid):

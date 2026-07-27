@@ -287,6 +287,26 @@ class Settings(BaseSettings):
     # Citation token grounding — [REF_N] tokens for deterministic source attribution
     citation_ref_tokens_enabled: bool = True
 
+    # Citation-integrity fixes (2026-07-27) — three defects that made a cited source vanish from
+    # the reference list. Measured with test/citation_integrity.py (deterministic, no LLM):
+    #   (a) build_article_registry looked for `ncbi_books`/`books`, but the real field is
+    #       `book_monographs` — so StatPearls FULL CHAPTERS never entered the registry. Proven by
+    #       test/ref_integrity.py: 0 of 119 references across 12 queries had a /books/ URL, even
+    #       though chapters carry 79% of this app's correct answers (RAGNOSIS_FINDINGS.md).
+    #       Consequence: a claim grounded in a chapter cites a source absent from the list, and
+    #       _title_rescue_pass/_backfill_from_registry can never match a chapter (so chapter-grounded
+    #       claims got demoted to "Expert opinion" or misattributed to an unrelated PubMed abstract).
+    #   (b) _resolve_ref_tokens marked used_inline ONLY in the _TOKEN_FULL fallback branch, never in
+    #       the inline branch — so the INSTRUCTED format ([REF_1]) left the cited article unmarked.
+    #       It was then filed under "Additional sources retrieved" and, worse, lost its exemption
+    #       from the max_uncited cap: harness case `cap_eviction` shows a cited reference dropped
+    #       from the list entirely while the claim still points at it.
+    #   (c) AdaptiveContentItem had no `additional_sources` field, so pydantic silently discarded
+    #       the multi-token result ([REF_3, REF_4]) that Citation Hardening v3 builds.
+    # All three are provider-agnostic (they sit in post-processing, after any model's JSON).
+    # Dev true / prod false — promote deliberately.
+    citation_integrity_fix_enabled: bool = False
+
     # Smart PubMed expansion + snowballing
     pubmed_expansion_enabled: bool = True
     snowball_enabled: bool = True
