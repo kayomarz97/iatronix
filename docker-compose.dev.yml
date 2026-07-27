@@ -58,6 +58,10 @@ services:
       CITATION_INTEGRITY_FIX_ENABLED: "true"
       REFERENCE_FIRST_ALL_TYPES_ENABLED: "true"
       DRUG_ENTITY_GUARD_ENABLED: "true"
+      # Docs said this was disabled; it was NOT (code default True, never set in .env.dev).
+      # At threshold 0.88 a DIFFERENT clinical question can be served another question's
+      # cached answer. Set explicitly here so dev matches documented intent.
+      SEMANTIC_CACHE_ENABLED: "false"
       TRIALS_WITH_RESULTS_ONLY_ENABLED: "true"
       EVIDENCE_TIER_LABELS_ENABLED: "true"
       GUNICORN_WORKERS: "2"
