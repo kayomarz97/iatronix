@@ -1,0 +1,76 @@
+{
+  "query": "empagliflozin in heart failure with reduced ejection fraction",
+  "expected_sections": 3,
+  "tier_by_token": {
+    "REF_1": "A", "REF_2": "A", "REF_3": "B",
+    "REF_4": "D", "REF_5": "R", "REF_6": "T"
+  },
+  "source_legend": {
+    "REF_1": "2022 AHA/ACC/HFSA guideline for the management of heart failure",
+    "REF_2": "Systematic review and meta-analysis of SGLT2 inhibitors in HFrEF",
+    "REF_3": "EMPEROR-Reduced: randomised controlled trial of empagliflozin in HFrEF",
+    "REF_4": "Case report: euglycaemic ketoacidosis on empagliflozin",
+    "REF_5": "NCT01234567 — ongoing trial of empagliflozin in advanced HF (no posted results)",
+    "REF_6": "StatPearls chapter: Empagliflozin"
+  },
+
+  "off": {
+    "bluf": {
+      "headline": "Empagliflozin reduces cardiovascular death and heart failure hospitalisation in HFrEF.",
+      "body": "Empagliflozin 10 mg once daily is used in heart failure with reduced ejection fraction, in addition to standard therapy. It reduces the composite of cardiovascular death and hospitalisation for heart failure, and improves outcomes in advanced disease.",
+      "key_points": [
+        "Dose is 10 mg once daily.",
+        "Reduces cardiovascular death and heart failure hospitalisation.",
+        "Also shows benefit in advanced heart failure."
+      ],
+      "caveats": ["Monitor renal function.", "Euglycaemic ketoacidosis can occur."]
+    },
+    "sections": [
+      {"title": "Efficacy", "content_items": [
+        {"text": "Empagliflozin reduces the composite of cardiovascular death or hospitalisation for heart failure in HFrEF.", "source": "EMPEROR-Reduced", "ref_token": "REF_3", "loe": "I"},
+        {"text": "Empagliflozin improves outcomes in patients with advanced heart failure.", "source": "NCT01234567", "ref_token": "REF_5", "loe": "I"},
+        {"text": "Pooled data show a consistent benefit across SGLT2 inhibitors.", "source": "Systematic review", "ref_token": "REF_2", "loe": "I"}
+      ]},
+      {"title": "Dosing", "content_items": [
+        {"text": "The dose is 10 mg once daily, taken with or without food.", "source": "StatPearls: Empagliflozin", "ref_token": "REF_6", "loe": "II"}
+      ]},
+      {"title": "Adverse effects", "content_items": [
+        {"text": "Euglycaemic diabetic ketoacidosis occurs and may present without marked hyperglycaemia.", "source": "Case report", "ref_token": "REF_4", "loe": "I"},
+        {"text": "Genital mycotic infection and volume depletion are recognised.", "source": "StatPearls: Empagliflozin", "ref_token": "REF_6", "loe": "II"}
+      ]}
+    ]
+  },
+
+  "on": {
+    "bluf": {
+      "headline": "Empagliflozin 10 mg daily is guideline-recommended in HFrEF, on the strength of a randomised trial and a meta-analysis.",
+      "body": "Guideline-level evidence supports empagliflozin 10 mg once daily as part of quadruple therapy in heart failure with reduced ejection fraction. The randomised EMPEROR-Reduced trial and a systematic review of SGLT2 inhibitors both show reduced cardiovascular death or heart failure hospitalisation. Evidence in advanced heart failure is limited: the relevant trial is registered but has not reported, so no efficacy claim can be made there.",
+      "key_points": [
+        "Guideline-recommended: 10 mg once daily added to standard HFrEF therapy.",
+        "Randomised trial and meta-analysis agree on reduced CV death or HF hospitalisation.",
+        "Advanced heart failure: only a registered, unreported trial — insufficient evidence."
+      ],
+      "caveats": [
+        "Euglycaemic ketoacidosis is described in case reports only (low-quality evidence) but is clinically important.",
+        "Check renal function and volume status before and after initiation."
+      ]
+    },
+    "sections": [
+      {"title": "Efficacy", "content_items": [
+        {"text": "Guideline-level recommendation for SGLT2 inhibition in HFrEF as part of quadruple therapy.", "source": "2022 AHA/ACC/HFSA heart failure guideline", "ref_token": "REF_1", "loe": "I"},
+        {"text": "The randomised EMPEROR-Reduced trial showed a reduction in cardiovascular death or hospitalisation for heart failure.", "source": "EMPEROR-Reduced", "ref_token": "REF_3", "loe": "I"},
+        {"text": "A systematic review and meta-analysis found a consistent class effect across SGLT2 inhibitors.", "source": "Systematic review and meta-analysis of SGLT2 inhibitors in HFrEF", "ref_token": "REF_2", "loe": "I"}
+      ]},
+      {"title": "Evidence gaps", "content_items": [
+        {"text": "In advanced heart failure a trial is registered but has not reported results, so efficacy in that population is not established.", "source": "NCT01234567", "ref_token": "REF_5", "loe": "III"}
+      ]},
+      {"title": "Dosing", "content_items": [
+        {"text": "10 mg once daily, with or without food; no titration is required.", "source": "StatPearls: Empagliflozin", "ref_token": "REF_6", "loe": "II"}
+      ]},
+      {"title": "Adverse effects", "content_items": [
+        {"text": "Euglycaemic diabetic ketoacidosis is reported in case reports only, so incidence is uncertain; it may present without marked hyperglycaemia.", "source": "Case report: euglycaemic ketoacidosis on empagliflozin", "ref_token": "REF_4", "loe": "III"},
+        {"text": "Genital mycotic infection and volume depletion are recognised class effects.", "source": "StatPearls: Empagliflozin", "ref_token": "REF_6", "loe": "II"}
+      ]}
+    ]
+  }
+}

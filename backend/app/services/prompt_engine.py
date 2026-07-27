@@ -509,6 +509,15 @@ def _format_drug_block(drug_result: Any, ref_map: Optional[dict[str, dict]] = No
     )
     if drug_name:
         lines.append(f"Drug: {drug_name}")
+        # Tier A — an FDA/DailyMed product label is regulatory-grade. Without this the most
+        # authoritative source on a drug query was the ONLY one arriving unlabelled while every
+        # abstract carried a tier, which understates it exactly as the unlabelled chapter did.
+        if settings.evidence_tier_labels_enabled:
+            _lu = getattr(drug_result, "label_url", None) or ""
+            lines.append(
+                "Evidence: Tier A — regulatory product label"
+                + (" (DailyMed)" if "dailymed" in _lu else " (FDA)")
+            )
 
     drug_class = getattr(drug_result, "drug_class", None)
     if drug_class:
