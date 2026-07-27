@@ -132,3 +132,20 @@ def test_top_chapter_survives_whole_under_budget(monkeypatch):
     out = _format_monographs([top, tail], None, budget=50000)
     assert "TOP-TAIL" in out, "top chapter was truncated"
     assert "OVERFLOW-TAIL" not in out, "overflow chapter should be trimmed, not the top one"
+
+
+def test_rule_states_an_loe_for_every_tier(monkeypatch):
+    """Every tier the data block can emit must have an explicit loe mapping in the rule.
+
+    Found 2026-07-28 by a blind multi-query generation run: the rule said
+    "Tier A/B -> I, Tier C -> II, Tier D/R -> III" and said NOTHING about Tier T, so the
+    generator guessed III for a textbook chapter while the rubric expects II. An unstated
+    mapping produces inconsistent loe on chapter-grounded answers — which, since the
+    2026-07-27 coverage levers, is most of them.
+    """
+    monkeypatch.setattr(settings, "evidence_tier_labels_enabled", True)
+    from app.services.prompt_engine import _maybe_evidence_tier_rule
+    rule = _maybe_evidence_tier_rule()
+    assert "Tier T -> II" in rule, "Tier T has no stated loe — the model will guess"
+    assert "Tier R -> III" in rule
+    assert "Tier A/B -> I" in rule and "Tier C -> II" in rule and "Tier D -> III" in rule
