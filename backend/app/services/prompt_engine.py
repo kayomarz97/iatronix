@@ -858,6 +858,14 @@ def _build_adaptive_data_block(
                 )
                 if per_drug_abs:
                     parts.append(f"=== DRUG {i} EVIDENCE ===\n" + _format_abstracts(per_drug_abs[:8], ref_map))
+                # Per-drug StatPearls chapter (reference_first_all_types) — comparative queries
+                # call fetch_drug_data per entity, so each drug already carries its chapter;
+                # without this the chapter was fetched and then never shown to the model.
+                if getattr(drug, "book_monographs", None):
+                    parts.append(
+                        f"=== DRUG {i} TEXTBOOK / OVERVIEW (StatPearls — full chapter) ===\n"
+                        + _format_monographs(drug.book_monographs, ref_map)
+                    )
             # Head-to-head comparative evidence (currently fetched but never injected)
             if fetched_data.comparative_evidence and fetched_data.comparative_evidence.fetch_success:
                 ce = fetched_data.comparative_evidence
@@ -890,6 +898,12 @@ def _build_adaptive_data_block(
                 parts.append("=== SYSTEMATIC REVIEWS ===\n" + _format_abstracts(d.systematic_review_abstracts, ref_map))
             if d.guideline_abstracts:
                 parts.append("=== GUIDELINES ===\n" + _format_abstracts(d.guideline_abstracts, ref_map))
+            # Whole StatPearls chapter for the primary entity (reference_first_all_types).
+            if getattr(d, "book_monographs", None):
+                parts.append(
+                    "=== TEXTBOOK / OVERVIEW (StatPearls / NCBI Bookshelf — full chapters) ===\n"
+                    + _format_monographs(d.book_monographs, ref_map)
+                )
 
         elif query_type == "complex":
             # Complex multi-condition queries: drug data, primary disease, per-comorbidity data

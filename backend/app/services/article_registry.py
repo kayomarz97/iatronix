@@ -208,17 +208,32 @@ class ArticleRegistry:
     def mark_used(self, article: RegistryArticle) -> None:
         article.used_inline = True
 
-    def to_reference_list(self, max_uncited: int = 40) -> list[dict]:
+    def to_reference_list(self, max_uncited: int = 40,
+                          max_uncited_registrations: int = 5) -> list[dict]:
         """Return registry entries as plain dicts.
 
         Cited entries (used_inline=True) are ALWAYS kept. Retrieved-but-unused entries are
         capped at `max_uncited` (highest source-priority first) — without this cap a query that
         fetches thousands of articles (Semantic Scholar / books / broadened searches) would emit
         thousands of citations and bloat the response past JSON limits."""
+        # Ordered by CLINICAL EVIDENCE VALUE, which decides both display order and — because
+        # this key also drives the max_uncited cut — what survives when the list is capped.
+        #
+        # The original order put `clinical_trial` (4) ABOVE `pubmed` (5) and `ncbi_books` (6),
+        # which inverts the hierarchy twice over: a ClinicalTrials.gov entry is a trial
+        # REGISTRATION, not a result (no peer review, frequently no posted outcome), while a
+        # StatPearls chapter is peer-reviewed synthesis that carries 79% of this app's correct
+        # answers (RAGNOSIS_FINDINGS.md). Sorting chapters second-to-last meant they were
+        # dropped by the cap BEFORE trial registrations. A 2026-07-27 sweep found registrations
+        # were 35% of all references and outright dominated evidence-type queries.
         SOURCE_TYPE_PRIORITY = {
-            "guideline": 0, "nice": 1, "fda_label": 2, "dailymed": 3,
-            "clinical_trial": 4, "pubmed": 5, "ncbi_books": 6,
-            "medlineplus": 7, "semantic_scholar": 8,
+            "guideline": 0, "nice": 1,
+            "ncbi_books": 2,          # peer-reviewed textbook synthesis
+            "pubmed": 3,              # published literature
+            "fda_label": 4, "dailymed": 5,
+            "semantic_scholar": 6,
+            "medlineplus": 7,
+            "clinical_trial": 8,      # registration, not a result — last
         }
         def k(r: RegistryArticle) -> tuple:
             return (
@@ -228,10 +243,20 @@ class ArticleRegistry:
             )
         out: list[dict] = []
         uncited = 0
+        registrations = 0
         for r in sorted(self.items, key=k):
             if not r.used_inline:
                 if uncited >= max_uncited:
                     continue  # cap retrieved-but-unused references
+                # Separate, tighter bound on UNCITED trial registrations. They were 35% of all
+                # references in the 2026-07-27 sweep and outright dominated evidence queries,
+                # which makes an answer read like a literature search rather than a specialist's.
+                # Cited registrations are always kept — if the answer leans on one, show it.
+                if (settings.citation_integrity_fix_enabled
+                        and r.source_type == "clinical_trial"):
+                    if registrations >= max_uncited_registrations:
+                        continue
+                    registrations += 1
                 uncited += 1
             out.append({
                 "title": r.title,
@@ -388,6 +413,22 @@ def _walk_abstracts(obj: Any, origin: str, seen: set, items: list) -> None:
             _add(seen, items, a, st, f"{origin}.{list_attr}")
 
 
+def _walk_books(obj: Any, origin: str, seen: set, items: list) -> None:
+    """Register StatPearls / NCBI Bookshelf full chapters hanging off `obj`.
+
+    The real field on every *FetchResult is `book_monographs` (data_fetcher.py); `ncbi_books`
+    and `books` exist on no object and are kept only so the flag-off path stays byte-identical.
+    Must be applied to EVERY container that can hold a chapter — including the comparative-drug
+    and comorbidity lists, which previously walked abstracts only and so dropped their chapters.
+    """
+    book_attrs = ("book_monographs", "ncbi_books", "books") \
+        if settings.citation_integrity_fix_enabled else ("ncbi_books", "books")
+    for battr in book_attrs:
+        for book in (getattr(obj, battr, None) or []):
+            if isinstance(book, dict):
+                _add(seen, items, book, "ncbi_books", f"{origin}.{battr}")
+
+
 def build_article_registry(fetched_data: Any) -> ArticleRegistry:
     """Build the registry. Walks every source category in fetched_data."""
     if fetched_data is None:
@@ -417,13 +458,7 @@ def build_article_registry(fetched_data: Any) -> ArticleRegistry:
         # object, so this walk was a silent no-op and chapters never reached the reference
         # list. Kept behind a flag because it changes what the user sees. See
         # settings.citation_integrity_fix_enabled for the measurement.
-        _book_attrs = ("ncbi_books", "books")
-        if settings.citation_integrity_fix_enabled:
-            _book_attrs = ("book_monographs", "ncbi_books", "books")
-        for _battr in _book_attrs:
-            for book in (getattr(obj, _battr, None) or []):
-                if isinstance(book, dict):
-                    _add(seen, items, book, "ncbi_books", f"{attr}.{_battr}")
+        _walk_books(obj, attr, seen, items)
         # MedlinePlus topic page (single optional dict)
         ml = getattr(obj, "medlineplus_topic", None)
         if isinstance(ml, dict):
@@ -443,6 +478,7 @@ def build_article_registry(fetched_data: Any) -> ArticleRegistry:
     # 3. Comorbidity-cascade abstracts (list of DiseaseFetchResult)
     for i, com in enumerate(getattr(fetched_data, "comorbidity_data", None) or []):
         _walk_abstracts(com, f"comorbidity_data[{i}]", seen, items)
+        _walk_books(com, f"comorbidity_data[{i}]", seen, items)
         for rec in getattr(com, "nice_recommendations", None) or []:
             if isinstance(rec, dict):
                 _add(seen, items, {**rec, "source": "NICE"}, "nice", f"comorbidity_data[{i}].nice")
@@ -450,6 +486,7 @@ def build_article_registry(fetched_data: Any) -> ArticleRegistry:
     # 4. Comparative drug per-entity abstracts
     for i, cdr in enumerate(getattr(fetched_data, "comparative_drug_data", None) or []):
         _walk_abstracts(cdr, f"comparative_drug_data[{i}]", seen, items)
+        _walk_books(cdr, f"comparative_drug_data[{i}]", seen, items)
         cdr_label = getattr(cdr, "label_url", None)
         if cdr_label and is_safe_url(cdr_label):
             name = getattr(cdr, "brand_name", None) or getattr(cdr, "generic_name", None) or f"Drug {i+1}"

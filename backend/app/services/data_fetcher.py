@@ -877,6 +877,40 @@ async def _fetch_who_inn(client: httpx.AsyncClient, drug_name: str) -> tuple[str
     return None, 0.0
 
 
+# Condition-word markers used to keep a DISEASE entity out of the drug resolver. RxNorm's
+# approximateTerm always returns its best guess and never signals "this is not a drug": both
+# "chronic kidney disease" and "acute kidney injury" resolve to rxcui 891637,
+# "kidney bean allergenic extract" — a real allergenic-extract ingredient, so no output-side
+# check can catch it, and the API's own score is useless here (CKD scores 12.34, HIGHER than
+# metformin's 11.21). Lexical similarity cannot be used either: legitimate brand->generic
+# resolution has zero overlap (jardiance -> empagliflozin). So the guard must sit at the INPUT.
+# Conservative by design: a false "this is a condition" only skips a drug fetch, while the
+# disease/evidence fetches still run; a false negative just preserves today's behaviour.
+_CONDITION_WORDS = frozenset({
+    "disease", "diseases", "syndrome", "failure", "injury", "disorder", "disorders",
+    "deficiency", "insufficiency", "infection", "cancer", "carcinoma", "tumour", "tumor",
+    "malignancy", "fracture", "hemorrhage", "haemorrhage", "attack", "stroke", "arrest",
+    "shock", "sepsis", "trauma", "obesity", "hypertension", "diabetes",
+    "infarction", "infarct", "embolism", "aneurysm", "arrhythmia", "seizure",
+    "epilepsy", "asthma", "pneumonia", "dementia", "delirium", "ketoacidosis",
+})
+_CONDITION_SUFFIXES = ("itis", "emia", "aemia", "osis", "opathy", "pathy", "algia",
+                       "ectomy", "plasia", "trophy", "penia", "uria", "oma")
+
+
+def _looks_like_condition(name: str) -> bool:
+    """True when `name` reads as a clinical condition rather than a drug."""
+    toks = [t for t in re.split(r"[^A-Za-z]+", (name or "").lower()) if t]
+    if not toks:
+        return False
+    if any(t in _CONDITION_WORDS for t in toks):
+        return True
+    # Suffix test applies to the HEAD noun only, so "Ferrous fumarate" is unaffected while
+    # "cirrhosis"/"nephropathy"/"anemia" are caught.
+    return any(toks[-1].endswith(sfx) and len(toks[-1]) > len(sfx) + 1
+               for sfx in _CONDITION_SUFFIXES)
+
+
 async def _resolve_drug_name_online(client: httpx.AsyncClient, drug_name: str) -> dict:
     """Resolve a brand or misspelled drug name to its generic (salt) name.
 
@@ -3037,7 +3071,7 @@ async def _fetch_comorbidities(
     return [r for r in results if isinstance(r, DiseaseFetchResult)]
 
 
-async def fetch_evidence_data(query: str, *, extra_pubmed_terms: list[str] | None = None, extra_journal_filter: str | None = None) -> EvidenceFetchResult:
+async def fetch_evidence_data(query: str, *, extra_pubmed_terms: list[str] | None = None, extra_journal_filter: str | None = None, book_term: str | None = None) -> EvidenceFetchResult:
     """Fetch evidence for drug+condition questions (clinical trials + reviews).
 
     Speed optimization: parallel esearch → single batch efetch.
@@ -3058,6 +3092,16 @@ async def fetch_evidence_data(query: str, *, extra_pubmed_terms: list[str] | Non
     )
 
     async with _make_client() as client:
+        # COVERAGE lever: evidence queries carry a PHRASE ("metformin dose in chronic kidney
+        # disease"), which the concept-level title gate would reject — a chapter is titled
+        # "Metformin". The caller passes the primary ENTITY as `book_term` instead. Runs
+        # concurrently with the gather; shares the NCBI rate semaphore via _ncbi_eutils_get.
+        _book_task = None
+        if (book_term and settings.reference_first_enabled
+                and settings.reference_first_all_types_enabled):
+            _book_task = asyncio.ensure_future(
+                _fetch_book_monographs(client, book_term, max_chapters=1, char_cap=60000))
+
         # Phase 1: all esearch in parallel (guideline searches forced to pub_date sort for recency)
         _tasks = [
             _pubmed_esearch_throttled(client, trial_term, 12),
@@ -3137,10 +3181,25 @@ async def fetch_evidence_data(query: str, *, extra_pubmed_terms: list[str] | Non
             if "PubMed" not in result.data_sources:
                 result.data_sources.append("PubMed")
 
+        # Whole StatPearls chapter for the primary entity — never truncated.
+        if _book_task is not None:
+            try:
+                _monos = await _book_task
+            except Exception:
+                logger.debug("evidence book_monographs fetch failed for %r", book_term,
+                             exc_info=True)
+                _monos = []
+            if _monos:
+                result.book_monographs = _monos
+                if "StatPearls" not in result.data_sources:
+                    result.data_sources.append("StatPearls")
+
+    # A retrieved chapter is evidence in its own right (see the procedure/disease paths).
     result.fetch_success = bool(
         result.clinical_trial_abstracts
         or result.systematic_review_abstracts
         or result.guideline_abstracts
+        or result.book_monographs
     )
     return result
 
@@ -3343,23 +3402,35 @@ async def fetch_data_for_query(
             _fire_and_forget_index(fetched.procedure_data.guideline_abstracts)
 
         elif query_type == "evidence" and entities:
-            fetched.evidence_data = await fetch_evidence_data(" ".join(entities), extra_pubmed_terms=_all_terms if pubmed_expansion_terms else None, extra_journal_filter=_llm_journal_filter)
+            fetched.evidence_data = await fetch_evidence_data(" ".join(entities), extra_pubmed_terms=_all_terms if pubmed_expansion_terms else None, extra_journal_filter=_llm_journal_filter, book_term=entities[0])
             fetched.fallback_to_llm = not fetched.evidence_data.fetch_success
             _fire_and_forget_index(fetched.evidence_data.clinical_trial_abstracts)
 
         elif query_type in ("complex", "general") and entities:
             # entities[0] = drug/intervention; entities[1] = primary disease (when extractor found it).
             drug_name = entities[0]
+            # ...except the extractor frequently puts a CONDITION first ("drug of choice for CKD
+            # with T2DM and heart failure"), and the drug path then resolved "chronic kidney
+            # disease" -> "kidney bean allergenic extract" and fetched that label, its adverse
+            # events and its textbook chapter straight into the prompt. See _looks_like_condition.
+            _skip_drug = (settings.drug_entity_guard_enabled
+                          and _looks_like_condition(drug_name))
+            if _skip_drug:
+                logger.info("complex: entity %r reads as a condition — skipping drug fetch", drug_name)
             primary_disease = entities[1] if len(entities) >= 2 else (condition_context or "")
             comorbidities: list[str] = []
             # comorbidity_list is propagated through pubmed_expansion_terms by rag_pipeline.
             if pubmed_expansion_terms and isinstance(pubmed_expansion_terms.get("comorbidity_list"), list):
                 comorbidities = [c for c in pubmed_expansion_terms["comorbidity_list"] if isinstance(c, str) and c.strip()]
 
-            drug_task = fetch_drug_data(
-                drug_name,
-                extra_pubmed_terms=_guideline_terms if pubmed_expansion_terms else None,
-                extra_journal_filter=_llm_journal_filter,
+            drug_task = (
+                asyncio.sleep(0, result=None)
+                if _skip_drug
+                else fetch_drug_data(
+                    drug_name,
+                    extra_pubmed_terms=_guideline_terms if pubmed_expansion_terms else None,
+                    extra_journal_filter=_llm_journal_filter,
+                )
             )
             disease_task = (
                 fetch_disease_data(

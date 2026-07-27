@@ -272,6 +272,17 @@ class Settings(BaseSettings):
     # chapter fetched, so symptom queries ground on the candidate-disease chapters. Additive + safe:
     # a wrong candidate's chapter simply won't contain the fact → the pipeline abstains (never invents).
     candidate_chapters_enabled: bool = False
+    # Drug-entity guard (2026-07-27 PRECISION fix). The `complex`/`general` branch takes
+    # entities[0] as the drug, but the extractor often puts a CONDITION first ("drug of choice
+    # for CKD with T2DM and heart failure"). RxNorm's approximateTerm never signals "not a drug"
+    # — "chronic kidney disease" AND "acute kidney injury" both resolve to rxcui 891637,
+    # "kidney bean allergenic extract" — so the pipeline fetched that product's FDA label,
+    # adverse-event profile and (after the chapter lever) its textbook chapter straight into the
+    # prompt. The API's score cannot discriminate (CKD scores 12.34 vs metformin's 11.21) and
+    # lexical checks would break legitimate brand→generic resolution (jardiance→empagliflozin),
+    # so the guard sits on the INPUT. Dev true / prod false.
+    drug_entity_guard_enabled: bool = False
+
     # Whole-chapter retrieval for NON-disease query types (2026-07-27 COVERAGE lever).
     # `_fetch_book_monographs` (whole chapter, concept-gated title match, citable NBK URL) ran ONLY
     # inside fetch_disease_data. Procedure/drug/evidence queries instead hit `_fetch_pmc_statpearls`
