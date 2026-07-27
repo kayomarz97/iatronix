@@ -1976,6 +1976,51 @@ def _book_term_for_drug(resolved_name: str, original_name: str = "") -> str:
 async def _fetch_book_monographs(
     client: httpx.AsyncClient, term: str, *, max_chapters: int = 2, char_cap: int = 16000
 ) -> list[dict]:
+    """Redis-cached wrapper around the live chapter fetch.
+
+    StatPearls chapters are STATIC reference text, but every query re-fetched them through
+    NCBI's rate limit. A 2026-07-28 88-query sweep measured the cost: ~half of all
+    "no chapter" results were NCBI THROTTLING under burst, not a real coverage gap — retrying
+    the same terms spaced out recovered 5/10 (ibuprofen, tacrolimus, septic shock, psoriasis,
+    cirrhosis all have chapters). Because chapter presence drives correctness (~60% with a
+    chapter vs ~9% without), that throttling shows up to the user as the SAME query being good
+    one minute and thin the next. Caching removes the repeat fetch entirely, which is both a
+    quality fix and a latency/rate-limit win under concurrency.
+
+    Cached on (term, max_chapters, char_cap) so callers asking for different budgets do not
+    collide. 7-day TTL — StatPearls revises chapters slowly. Cache failures are non-fatal:
+    any Redis error falls through to the live fetch.
+    """
+    _key = f"books:v1:{(term or '').lower().strip()}:{max_chapters}:{char_cap}"
+    try:
+        import redis.asyncio as aioredis
+        _r = aioredis.from_url(settings.redis_url, decode_responses=True)
+        _hit = await _r.get(_key)
+        await _r.aclose()
+        if _hit is not None:
+            return json.loads(_hit)
+    except Exception:
+        pass
+
+    out = await _fetch_book_monographs_live(
+        client, term, max_chapters=max_chapters, char_cap=char_cap)
+
+    # Only cache HITS. Caching an empty result would freeze a throttled failure in place for a
+    # week — the exact intermittency this is meant to remove.
+    if out:
+        try:
+            import redis.asyncio as aioredis
+            _r2 = aioredis.from_url(settings.redis_url, decode_responses=True)
+            await _r2.setex(_key, 604800, json.dumps(out))
+            await _r2.aclose()
+        except Exception:
+            pass
+    return out
+
+
+async def _fetch_book_monographs_live(
+    client: httpx.AsyncClient, term: str, *, max_chapters: int = 2, char_cap: int = 16000
+) -> list[dict]:
     """Fetch FULL StatPearls / NCBI Bookshelf chapter text with citable NBK URLs.
 
     Returns a list of ``{title, url, text, source, nbk_id}`` — the ENTIRE chapter
@@ -2134,7 +2179,7 @@ async def _fetch_book_monographs(
             })
         return out
     except Exception:
-        logger.debug("_fetch_book_monographs failed for %r", term, exc_info=True)
+        logger.debug("_fetch_book_monographs_live failed for %r", term, exc_info=True)
         return []
 
 

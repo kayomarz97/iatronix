@@ -43,6 +43,23 @@ _LIMIT_MARKERS = re.compile(
 
 _EFFICACY = re.compile(r"\b(reduces?|improves?|lowers?|prevents?|is effective|efficacious|"
                        r"superior|benefit)\b", re.I)
+# A claim that EXPLICITLY refuses to treat a registration as evidence is the correct specialist
+# behaviour, not a violation — "...is NOT evidence that X is effective" must not trip R3. Without
+# this, the rubric penalised exactly the sentence it should reward (caught 2026-07-28 when an
+# independent generator wrote the ideal answer and scored 0 on R3).
+_NEGATED_EFFICACY = re.compile(
+    r"\b(not|cannot|can not|no|never|without)\b[^.]{0,80}?\b"
+    r"(evidence|establish|support|conclude|claim|prove|demonstrat)", re.I)
+
+
+def _asserts_efficacy(text: str) -> bool:
+    """True only when the claim ASSERTS efficacy, not when it disclaims it."""
+    if not _EFFICACY.search(text or ""):
+        return False
+    for sent in re.split(r"(?<=[.;])\s+", text or ""):
+        if _EFFICACY.search(sent) and not _NEGATED_EFFICACY.search(sent):
+            return True
+    return False
 
 _FILLER = re.compile(
     r"\b(great question|excellent question|as an ai|i hope this helps|it('s| is) worth noting|"
@@ -97,7 +114,7 @@ def judge(answer: dict, tier_by_token: dict[str, str], expected_sections: int = 
     # R3 — a registration must never back an efficacy claim
     bad_reg = [it for it in items
                if tier_by_token.get((it.get("ref_token") or "").upper()) == "R"
-               and _EFFICACY.search(it.get("text") or "")]
+               and _asserts_efficacy(it.get("text") or "")]
     scores["R3_no_registration_as_evidence"] = 0.0 if bad_reg else 1.0
     for it in bad_reg:
         fails.append(f"R3: efficacy claim cites a trial REGISTRATION: {(it.get('text') or '')[:70]}")

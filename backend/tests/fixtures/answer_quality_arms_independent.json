@@ -1,0 +1,248 @@
+{
+ "tier_by_token": {
+  "REF_1": "A",
+  "REF_2": "A",
+  "REF_3": "B",
+  "REF_4": "D",
+  "REF_5": "R",
+  "REF_6": "T"
+ },
+ "expected_sections": 3,
+ "off": {
+  "bluf": {
+   "headline": "Empagliflozin is indicated in HFrEF as part of guideline-directed medical therapy; monitor volume status, renal function, genital infection, and ketoacidosis risk.",
+   "body": "Across the sources retrieved, empagliflozin is described as a recommended therapy for heart failure with reduced ejection fraction. The 2022 AHA/ACC/HFSA heart failure guideline lists SGLT2 inhibitors among the core pillars of HFrEF treatment [REF_1], a systematic review and meta-analysis of SGLT2 inhibitors in HFrEF supports a consistent treatment benefit across the class [REF_2], and EMPEROR-Reduced tested empagliflozin specifically in HFrEF [REF_3]. Ongoing work in advanced heart failure is also registered [REF_5].",
+   "key_points": [
+    "SGLT2 inhibitors, including empagliflozin, are part of guideline-recommended therapy for HFrEF [REF_1].",
+    "Pooled trial data show a consistent benefit of SGLT2 inhibition in HFrEF [REF_2].",
+    "EMPEROR-Reduced evaluated empagliflozin directly in the HFrEF population [REF_3].",
+    "Watch for euglycaemic ketoacidosis, genital mycotic infection, volume depletion, and an early dip in eGFR [REF_4][REF_6].",
+    "Additional evidence in advanced heart failure is being generated [REF_5]."
+   ],
+   "caveats": [
+    "Initiation typically requires attention to baseline renal function and volume status before starting [REF_6].",
+    "Euglycaemic ketoacidosis can occur with normal or near-normal glucose, so glucose alone does not exclude it [REF_4].",
+    "The advanced heart failure population is less well characterised than the general HFrEF population [REF_5]."
+   ]
+  },
+  "sections": [
+   {
+    "title": "Indication and evidence for benefit",
+    "content_items": [
+     {
+      "text": "The 2022 AHA/ACC/HFSA heart failure guideline includes SGLT2 inhibitors as a recommended component of guideline-directed medical therapy for patients with heart failure with reduced ejection fraction.",
+      "source": "2022 AHA/ACC/HFSA guideline",
+      "ref_token": "REF_1",
+      "loe": "I"
+     },
+     {
+      "text": "A systematic review and meta-analysis of SGLT2 inhibitors in HFrEF found a consistent reduction in heart failure events across the pooled trial population, supporting a class effect rather than a single-agent finding.",
+      "source": "Systematic review and meta-analysis",
+      "ref_token": "REF_2",
+      "loe": "I"
+     },
+     {
+      "text": "EMPEROR-Reduced was a randomised controlled trial of empagliflozin in patients with HFrEF and provides the agent-specific randomised evidence underpinning its use in this population.",
+      "source": "EMPEROR-Reduced",
+      "ref_token": "REF_3",
+      "loe": "I"
+     },
+     {
+      "text": "A registered trial of empagliflozin in advanced heart failure indicates the drug is being extended into more severe disease, supporting its role across the HFrEF severity spectrum.",
+      "source": "NCT01234567",
+      "ref_token": "REF_5",
+      "loe": "II"
+     }
+    ]
+   },
+   {
+    "title": "Practical use and initiation",
+    "content_items": [
+     {
+      "text": "The empagliflozin drug chapter describes a fixed once-daily dose for the heart failure indication with no titration sequence, which simplifies initiation compared with other HFrEF pillars.",
+      "source": "StatPearls: Empagliflozin",
+      "ref_token": "REF_6",
+      "loe": "II"
+     },
+     {
+      "text": "The guideline situates SGLT2 inhibitor therapy alongside the other HFrEF drug classes rather than as a substitute for them, so it should be added to background therapy.",
+      "source": "2022 AHA/ACC/HFSA guideline",
+      "ref_token": "REF_1",
+      "loe": "I"
+     },
+     {
+      "text": "Because of the diuretic-like effect described for the class, concurrent loop diuretic dosing may need review at initiation to avoid excessive volume depletion.",
+      "source": "StatPearls: Empagliflozin",
+      "ref_token": "REF_6",
+      "loe": "II"
+     }
+    ]
+   },
+   {
+    "title": "Safety monitoring and adverse effects",
+    "content_items": [
+     {
+      "text": "Euglycaemic diabetic ketoacidosis has been reported in a patient taking empagliflozin, occurring without the marked hyperglycaemia clinicians typically use as a trigger to test for ketosis.",
+      "source": "Case report",
+      "ref_token": "REF_4",
+      "loe": "II"
+     },
+     {
+      "text": "The drug chapter lists genital mycotic infection, urinary tract infection, volume depletion and hypotension among the expected adverse effects requiring counselling and follow-up.",
+      "source": "StatPearls: Empagliflozin",
+      "ref_token": "REF_6",
+      "loe": "II"
+     },
+     {
+      "text": "An early, largely reversible decline in eGFR after initiation is described and should be distinguished from progressive renal injury before stopping the drug.",
+      "source": "StatPearls: Empagliflozin",
+      "ref_token": "REF_6",
+      "loe": "II"
+     },
+     {
+      "text": "Safety signals observed in the randomised HFrEF trial provide the population-level context against which individual adverse-event reports should be interpreted.",
+      "source": "EMPEROR-Reduced",
+      "ref_token": "REF_3",
+      "loe": "I"
+     }
+    ]
+   },
+   {
+    "title": "Populations needing extra care",
+    "content_items": [
+     {
+      "text": "Patients with advanced heart failure are the subject of a dedicated registered trial, so this group warrants closer haemodynamic monitoring when empagliflozin is started.",
+      "source": "NCT01234567",
+      "ref_token": "REF_5",
+      "loe": "II"
+     },
+     {
+      "text": "Patients undergoing surgery, fasting, or acute illness are at particular risk of the ketoacidosis presentation described, in which glucose may be normal.",
+      "source": "Case report",
+      "ref_token": "REF_4",
+      "loe": "II"
+     },
+     {
+      "text": "Renal function thresholds described in the drug chapter should guide whether initiation is appropriate and how often renal function is rechecked.",
+      "source": "StatPearls: Empagliflozin",
+      "ref_token": "REF_6",
+      "loe": "II"
+     }
+    ]
+   }
+  ]
+ },
+ "on": {
+  "bluf": {
+   "headline": "Yes - empagliflozin is guideline-recommended in HFrEF on Tier A/B evidence; the main watch-items rest on lower-tier sources and should be framed as monitoring, not as proven risk magnitudes.",
+   "body": "The strongest evidence here is Tier A: the 2022 AHA/ACC/HFSA heart failure guideline recommends SGLT2 inhibitors as part of guideline-directed medical therapy in HFrEF [REF_1], and a Tier A systematic review and meta-analysis shows a consistent class-level benefit [REF_2]. Agent-specific randomised support comes from EMPEROR-Reduced, a Tier B randomised controlled trial [REF_3]. Safety guidance is weaker in provenance: the adverse-effect profile comes from a Tier T textbook synthesis [REF_6], and the euglycaemic ketoacidosis warning rests on a single Tier D case report [REF_4] - real enough to monitor for, but not a quantified risk estimate. One retrieved item, NCT01234567, is a Tier R trial registration with protocol only and no posted results [REF_5]; it cannot be used as evidence that empagliflozin works in advanced heart failure.",
+   "key_points": [
+    "Tier A guideline: SGLT2 inhibitors are recommended therapy in HFrEF [REF_1].",
+    "Tier A meta-analysis: benefit is consistent across the SGLT2 inhibitor class in HFrEF [REF_2].",
+    "Tier B randomised trial: EMPEROR-Reduced provides empagliflozin-specific randomised evidence [REF_3].",
+    "Tier T textbook chapter: expected adverse effects are genital mycotic infection, volume depletion/hypotension, and an early eGFR dip [REF_6].",
+    "Tier D case report only: euglycaemic ketoacidosis - monitor for it, but a single case cannot establish incidence [REF_4].",
+    "Tier R registration only: the advanced heart failure trial has no posted results and supports no efficacy claim [REF_5]."
+   ],
+   "caveats": [
+    "The efficacy answer is well supported (Tier A/B); the safety answer is not evidence-matched to it - it rests mainly on Tier T synthesis and one Tier D case report.",
+    "No efficacy conclusion should be drawn for advanced heart failure: the only source addressing that population is a Tier R protocol registration with no results [REF_5].",
+    "Absolute effect sizes and monitoring intervals should be confirmed against the full Tier A guideline text rather than inferred from the lower-tier sources here."
+   ]
+  },
+  "sections": [
+   {
+    "title": "Indication - highest-tier evidence first",
+    "content_items": [
+     {
+      "text": "Tier A, and the anchor for this answer: the 2022 AHA/ACC/HFSA heart failure guideline recommends SGLT2 inhibitors as a component of guideline-directed medical therapy in heart failure with reduced ejection fraction.",
+      "source": "2022 AHA/ACC/HFSA guideline",
+      "ref_token": "REF_1",
+      "loe": "I"
+     },
+     {
+      "text": "Tier A: a systematic review and meta-analysis of SGLT2 inhibitors in HFrEF pools the randomised evidence and shows a consistent reduction in heart failure events, indicating the benefit is a class effect rather than a single-trial result.",
+      "source": "Systematic review and meta-analysis",
+      "ref_token": "REF_2",
+      "loe": "I"
+     },
+     {
+      "text": "Tier B: EMPEROR-Reduced is the randomised controlled trial of empagliflozin specifically in HFrEF; it supplies the agent-level randomised evidence that the Tier A sources synthesise.",
+      "source": "EMPEROR-Reduced",
+      "ref_token": "REF_3",
+      "loe": "I"
+     }
+    ]
+   },
+   {
+    "title": "What to watch for - and how firm each warning is",
+    "content_items": [
+     {
+      "text": "Tier T textbook synthesis: expected adverse effects include genital mycotic infection, urinary tract infection, volume depletion with hypotension, and an early decline in eGFR after initiation that is generally reversible. Peer-reviewed synthesis, appropriate for practical monitoring guidance but not primary evidence.",
+      "source": "StatPearls: Empagliflozin",
+      "ref_token": "REF_6",
+      "loe": "II"
+     },
+     {
+      "text": "Tier D, single case report: euglycaemic ketoacidosis has been described on empagliflozin, with ketosis occurring without marked hyperglycaemia. Clinically worth knowing - check ketones in an unwell patient even when glucose is normal - but one case establishes no incidence and must not be weighted like the Tier A/B efficacy evidence.",
+      "source": "Case report",
+      "ref_token": "REF_4",
+      "loe": "III"
+     },
+     {
+      "text": "Tier B: population-level safety and tolerability in HFrEF are best judged from the randomised trial data rather than from individual reports, which are subject to selective publication.",
+      "source": "EMPEROR-Reduced",
+      "ref_token": "REF_3",
+      "loe": "I"
+     }
+    ]
+   },
+   {
+    "title": "Initiation and monitoring in practice",
+    "content_items": [
+     {
+      "text": "Tier A: the guideline places SGLT2 inhibitor therapy alongside the other HFrEF drug classes as an addition to background therapy, not a replacement for it.",
+      "source": "2022 AHA/ACC/HFSA guideline",
+      "ref_token": "REF_1",
+      "loe": "I"
+     },
+     {
+      "text": "Tier T: the drug chapter describes fixed once-daily dosing for the heart failure indication without titration, and notes that concurrent loop diuretic dosing may need review at initiation.",
+      "source": "StatPearls: Empagliflozin",
+      "ref_token": "REF_6",
+      "loe": "II"
+     },
+     {
+      "text": "Tier T: baseline and follow-up renal function should be checked, with the expected early eGFR dip distinguished from progressive injury before the drug is stopped.",
+      "source": "StatPearls: Empagliflozin",
+      "ref_token": "REF_6",
+      "loe": "II"
+     }
+    ]
+   },
+   {
+    "title": "Evidence gaps - what these sources cannot answer",
+    "content_items": [
+     {
+      "text": "Tier R, trial registration only: NCT01234567 registers a trial of empagliflozin in advanced heart failure with a protocol and no posted results. It shows only that the question is under study and is not evidence that empagliflozin is effective or safe in advanced heart failure.",
+      "source": "NCT01234567",
+      "ref_token": "REF_5",
+      "loe": "III"
+     },
+     {
+      "text": "The ketoacidosis warning is supported only by Tier D evidence in this source set - stated plainly, there is no higher-tier source here quantifying how often it occurs.",
+      "source": "Case report",
+      "ref_token": "REF_4",
+      "loe": "III"
+     },
+     {
+      "text": "Tier A: for absolute benefit estimates, eligibility criteria, and monitoring intervals, the guideline and the pooled meta-analysis are the sources to consult.",
+      "source": "Systematic review and meta-analysis",
+      "ref_token": "REF_2",
+      "loe": "I"
+     }
+    ]
+   }
+  ]
+ }
+}

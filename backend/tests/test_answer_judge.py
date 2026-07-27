@@ -72,3 +72,51 @@ def test_filler_is_penalised():
          "sections": [{"title": "S", "content_items": [
              {"text": "Z works.", "source": "RCT", "ref_token": "REF_1", "loe": "I"}]}]}
     assert judge(a, {"REF_1": "B"}, 1)["scores"]["R6_no_filler"] == 0.0
+
+
+# ── Independent-generator arms (2026-07-28) ──────────────────────────────────
+
+INDEPENDENT = Path(__file__).parent / "fixtures" / "answer_quality_arms_independent.json"
+
+
+@pytest.fixture(scope="module")
+def indep():
+    return json.loads(INDEPENDENT.read_text())
+
+
+def test_independent_generation_still_favours_tier_labels(indep):
+    """Arms generated BLIND by a separate agent (it never saw the rubric).
+
+    This is the honest measurement. The hand-written arms scored 0.50 -> 1.00; independently
+    generated ones score 0.83 -> 1.00, because a competent model already uses strength words
+    when the source TITLES contain them ("randomised controlled trial", "meta-analysis").
+    The real, reproducible gain is LOE calibration (R2), not prose vocabulary.
+    """
+    tiers = indep["tier_by_token"]
+    off = judge(indep["off"], tiers, indep["expected_sections"])
+    on = judge(indep["on"], tiers, indep["expected_sections"])
+    assert on["overall"] > off["overall"]
+    assert off["scores"]["R2_loe_correct"] == 0.0   # registration + case report given LOE II
+    assert on["scores"]["R2_loe_correct"] == 1.0
+
+
+def test_disclaiming_a_registration_is_not_an_r3_violation():
+    """A claim that explicitly REFUSES to treat a registration as evidence is correct
+    specialist behaviour. The first version of R3 matched 'is effective' inside
+    '...is NOT evidence that X is effective' and penalised the ideal sentence."""
+    answer = {"bluf": {"headline": "Guideline-level evidence supports X (randomised)."},
+              "sections": [{"title": "Evidence gaps", "content_items": [
+                  {"text": "NCT01 registers a trial with no posted results. It is not evidence "
+                           "that X is effective in this population.",
+                   "source": "NCT01", "ref_token": "REF_1", "loe": "III"}]}]}
+    res = judge(answer, {"REF_1": "R"}, expected_sections=1)
+    assert res["scores"]["R3_no_registration_as_evidence"] == 1.0
+
+
+def test_asserted_efficacy_from_registration_still_caught():
+    answer = {"bluf": {"headline": "X works (randomised)."},
+              "sections": [{"title": "Efficacy", "content_items": [
+                  {"text": "X reduces mortality in advanced disease.",
+                   "source": "NCT01", "ref_token": "REF_1", "loe": "III"}]}]}
+    res = judge(answer, {"REF_1": "R"}, expected_sections=1)
+    assert res["scores"]["R3_no_registration_as_evidence"] == 0.0
