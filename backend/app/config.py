@@ -281,6 +281,17 @@ class Settings(BaseSettings):
     # reported trials, so no evidence is lost. Dev true / prod false.
     trials_with_results_only_enabled: bool = False
 
+    # Evidence-tier labels in the prompt (2026-07-28 ANSWER-SHAPE lever). The data block handed
+    # the model every source FLAT — title, journal, year, abstract — so a Cochrane meta-analysis,
+    # a practice guideline, a trial registration and a single case report were indistinguishable.
+    # ranking.py already computed study-type/recency scores for ORDERING and then discarded them
+    # before prompt assembly. When on, each source carries "Evidence: Tier A/B/C/D/R/T — ..." and
+    # the synthesis rules instruct the model to weight by tier, state the tier behind each
+    # recommendation, and never present Tier D/R as equivalent to Tier A/B. This is what makes an
+    # answer read like a specialist (organised by evidence strength) rather than a literature
+    # summary. Provider-agnostic — it is plain text in the prompt. Dev true / prod false.
+    evidence_tier_labels_enabled: bool = False
+
     # Drug-entity guard (2026-07-27 PRECISION fix). The `complex`/`general` branch takes
     # entities[0] as the drug, but the extractor often puts a CONDITION first ("drug of choice
     # for CKD with T2DM and heart failure"). RxNorm's approximateTerm never signals "not a drug"

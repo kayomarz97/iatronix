@@ -64,6 +64,33 @@ _CONTRADICTION_RULE = (
 def _maybe_contradiction_rule() -> str:
     return _CONTRADICTION_RULE if settings.contradiction_surfacing_enabled else ""
 
+# Specialist synthesis: a decades-deep clinician does not present all evidence as equal — the
+# answer is ORGANISED BY EVIDENCE STRENGTH, and the strength is stated, not implied. Paired with
+# the "Evidence: Tier ..." labels in the data block (settings.evidence_tier_labels_enabled).
+_EVIDENCE_TIER_RULE = (
+    "\n\nEVIDENCE WEIGHTING — write like a specialist, not like a literature search:\n"
+    "- Every source in the data block carries an `Evidence: Tier ...` line. Tier A = guideline / "
+    "systematic review / meta-analysis / regulatory label; B = randomised trial (or a trial with "
+    "POSTED results); C = cohort / observational; D = case report / case series / narrative "
+    "review; R = trial REGISTRATION (a protocol with NO results); T = textbook chapter.\n"
+    "- LEAD with the highest-tier evidence that answers the question. State the tier in the prose "
+    "where it changes how much weight the reader should give a statement (e.g. \"guideline-level\", "
+    "\"a single small observational study\").\n"
+    "- NEVER present Tier D or R as if it were Tier A or B. A trial REGISTRATION must never be "
+    "cited as evidence that something works — at most note that a trial is underway.\n"
+    "- Set `loe` from the tier: Tier A/B -> I, Tier C -> II, Tier D -> III. Set `confidence` "
+    "accordingly: high only for Tier A/B, moderate for C, low for D/R.\n"
+    "- When only low-tier evidence exists, SAY SO plainly in the BLUF rather than writing a "
+    "confident recommendation the evidence does not support. Naming the limit is what a "
+    "specialist does; padding around it is not.\n"
+    "- Where a source is >25 years old and flagged as such, do not present it as current practice "
+    "unless nothing newer addresses the point.\n"
+)
+
+
+def _maybe_evidence_tier_rule() -> str:
+    return _EVIDENCE_TIER_RULE if settings.evidence_tier_labels_enabled else ""
+
 # ====================================================================
 # Constants
 # ====================================================================
@@ -632,6 +659,14 @@ def _format_abstracts(abstracts: list[dict | str], ref_map: Optional[dict[str, d
             if token:
                 parts.append(f"[{token}]")
             parts.extend([label, f"Title: {title}", f"Source: {source} ({year})"])
+            # Evidence tier — without it the model sees a Cochrane meta-analysis, a practice
+            # guideline, a trial registration and a case report as identical, so it cannot
+            # weight them and the prose reads like a literature summary rather than a
+            # specialist's answer. ranking.py already computed this signal for ORDERING and
+            # then discarded it before prompt assembly.
+            if settings.evidence_tier_labels_enabled:
+                from app.services.ranking import evidence_tier_line
+                parts.append(evidence_tier_line(a, "clinical_trial" if nct_id else None))
             if pmid:
                 parts.append(f"PMID: {pmid}")
             if nct_id:
@@ -707,6 +742,12 @@ def _format_monographs(monos: list[dict], ref_map: Optional[dict[str, dict]] = N
         token = url_to_token.get(url)
         header = f"[{token}]\n" if token else ""
         header += f"[SOURCE: {title}]\nSource: {mono.get('source') or 'StatPearls'} (NCBI Bookshelf)"
+        # Tier T — the chapter is the highest-value source in the block (peer-reviewed
+        # synthesis; chapters carry 79% of this app's correct answers), so leaving it
+        # unlabelled while every abstract is labelled would understate it to the model.
+        if settings.evidence_tier_labels_enabled:
+            from app.services.ranking import evidence_tier_line
+            header += "\n" + evidence_tier_line(mono, "ncbi_books")
         if url:
             header += f"\nURL: {url}"
         blocks.append(f"{header}\n{text}")
@@ -1042,6 +1083,7 @@ def build_bluf_only_messages(
         f"{condition_block}"
         f"{_maybe_differential_guidance(query, raw_query)}"
         f"{_maybe_contradiction_rule()}"
+        f"{_maybe_evidence_tier_rule()}"
     )
 
     data_block = _build_adaptive_data_block(query_type, fetched_data, vector_results)
@@ -1110,7 +1152,8 @@ def build_section_messages(
         f"SECTION TO GENERATE: \"{section_title}\"\n"
         f"OTHER SECTIONS IN THIS RESPONSE (do NOT duplicate their content): {other_str}\n"
         f"ALIGNMENT — keep content consistent with this clinical summary: {bluf_text}{valid_tokens_str}"
-        f"{_maybe_contradiction_rule()}\n\n"
+        f"{_maybe_contradiction_rule()}"
+        f"{_maybe_evidence_tier_rule()}\n\n"
         f"Generate ONLY the content for the section \"{section_title}\"."
     )
 

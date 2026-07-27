@@ -309,3 +309,71 @@ def apply_topicality_gate(
     if not kept:
         return articles
     return kept + non_dicts
+
+
+# ── Evidence tier labels for prompt assembly (2026-07-28) ────────────────────
+# The data block previously handed the model every source FLAT — title, journal, year,
+# abstract — with no indication of evidence strength. A Cochrane meta-analysis, a practice
+# guideline, a trial registration and a single case report all looked identical, so the model
+# could not weight them and the prose read like a literature summary rather than a specialist's
+# answer. The scores below were already computed here for RANKING and then discarded before the
+# prompt; this exposes the same signal to the model.
+#
+# Tiers follow the standard clinical evidence hierarchy so an LOE assignment is derivable:
+#   A  guideline / meta-analysis / systematic review   -> LOE I
+#   B  randomised controlled trial                     -> LOE I
+#   C  cohort / case-control / observational           -> LOE II
+#   D  case series / case report / narrative review    -> LOE III
+#   R  trial REGISTRATION (no posted results)          -> not evidence; protocol only
+#   T  textbook chapter (peer-reviewed synthesis)      -> background/synthesis
+
+_TIER_BY_SCORE: tuple[tuple[float, str, str], ...] = (
+    (9.0, "A", "guideline"),
+    (8.0, "A", "systematic review / meta-analysis"),
+    (7.0, "B", "randomised controlled trial"),
+    (5.0, "C", "cohort / comparative study"),
+    (3.0, "C", "observational study"),
+    (1.0, "D", "case report / case series / narrative review"),
+)
+
+
+def evidence_tier(article: dict[str, Any], source_type: str | None = None) -> tuple[str, str]:
+    """Return (tier_letter, human_label) for one fetched article.
+
+    `source_type` is the registry's classification when known ("ncbi_books",
+    "clinical_trial", ...), which is more reliable than text sniffing for those two cases.
+    """
+    st = (source_type or "").lower()
+    if st == "ncbi_books":
+        return "T", "textbook chapter (peer-reviewed synthesis)"
+    if st in ("nice", "guideline"):
+        return "A", "guideline"
+    if st == "clinical_trial" or article.get("nct_id"):
+        # A registration is a protocol, not a result — unless outcomes were posted.
+        if article.get("has_results"):
+            return "B", "clinical trial with posted results"
+        return "R", "trial REGISTRATION — protocol only, no posted results"
+    if st in ("fda_label", "dailymed"):
+        return "A", "regulatory product label"
+
+    score = _score_study_type(article)
+    for threshold, tier, label in _TIER_BY_SCORE:
+        if score >= threshold:
+            return tier, label
+    return "D", "unclassified publication"
+
+
+def evidence_tier_line(article: dict[str, Any], source_type: str | None = None) -> str:
+    """One-line 'Evidence:' descriptor for the prompt data block, including recency."""
+    tier, label = evidence_tier(article, source_type)
+    year = article.get("year")
+    recency = ""
+    if isinstance(year, (int, str)) and str(year).isdigit():
+        age = datetime.now().year - int(year)
+        if age <= 5:
+            recency = ", recent"
+        elif age > 25:
+            recency = ", >25y old — verify still current"
+        elif age > 15:
+            recency = ", foundational/older"
+    return f"Evidence: Tier {tier} — {label}{recency}"

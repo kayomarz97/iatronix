@@ -1271,6 +1271,16 @@ def _parse_pubmed_xml(xml_text: str) -> list:
             pmcid_el = article.find(".//ArticleId[@IdType='pmc']")
             pmcid = pmcid_el.text if pmcid_el is not None else None
 
+            # PubMed's own PublicationType list — the authoritative study-type signal.
+            # It was never extracted, so ranking._score_study_type() had only title/abstract
+            # text to sniff and mislabelled genuine RCTs (e.g. a trial titled "COmbinatioN
+            # effect of FInerenone anD EmpaglifloziN..." scored as a case report). That
+            # silently degraded evidence RANKING too, not just the tier labels.
+            pub_types: list[str] = [
+                pt.text.strip() for pt in article.findall(".//PublicationType")
+                if pt is not None and pt.text and pt.text.strip()
+            ]
+
             # Extract cited PMIDs for reference snowballing
             ref_pmids: list[str] = []
             for _ref in article.findall(".//ReferenceList/Reference"):
@@ -1287,6 +1297,7 @@ def _parse_pubmed_xml(xml_text: str) -> list:
                     "journal": journal,
                     "doi": doi,
                     "pmcid": pmcid,
+                    "pub_types": pub_types,
                     "ref_pmids": ref_pmids,
                 }
             else:
@@ -1299,6 +1310,7 @@ def _parse_pubmed_xml(xml_text: str) -> list:
                     "journal": journal,
                     "doi": doi,
                     "pmcid": pmcid,
+                    "pub_types": pub_types,
                 }
 
             if title:
