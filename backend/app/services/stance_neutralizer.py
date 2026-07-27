@@ -78,6 +78,33 @@ def _sanitize_for_prompt(text: str) -> str:
         if original.lower() in truncated.lower():
             truncated = re.sub(re.escape(original), replacement, truncated, flags=re.IGNORECASE)
 
+    # 3b. Bracketed control/role tokens — GENERAL rule, not another literal.
+    # The map above is an exact-string blocklist: it caught [ASSISTANT] and [/INST] but not
+    # [SYSTEM], [INST], [USER] — despite the docstring claiming role-hijack coverage. In THIS
+    # codebase the gap is worse than generic role hijack, because the whole citation system is
+    # bracket-delimited: a query containing "[REF_1]" or "[SOURCE: ...]" is echoed into the
+    # prompt inside the original_user_phrasing block, giving an attacker a route to forge a
+    # citation token that _resolve_ref_tokens would then resolve into a real-looking source.
+    # Neutralise the BRACKETS around any upper-case control-ish token instead of enumerating
+    # them. Mixed-case and numeric brackets ("[1]", "[sic]", "[Na+]") are deliberately left
+    # alone so ordinary clinical text is unaffected.
+    truncated = re.sub(
+        r'\[\s*(/?[A-Z][A-Z0-9_:|/ -]{1,40})\s*\]',
+        lambda m: '［' + m.group(1) + '］',
+        truncated,
+    )
+
+    # 3c. This app's own citation markers, whatever follows them. The rule above only fires on
+    # all-caps content, so "[SOURCE: fake journal]" (mixed case) survived it — and that is the
+    # literal format of the data block's source markers, so it is the highest-value forgery
+    # target of all. Match on the PREFIX instead.
+    truncated = re.sub(
+        r'\[\s*(SOURCE|REF)\b([^\]]{0,80})\]',
+        lambda m: '［' + m.group(1) + m.group(2) + '］',
+        truncated,
+        flags=re.IGNORECASE,
+    )
+
     # 4. Backtick-fence neutralization — triple backticks to single
     truncated = truncated.replace('```', '`')
 
