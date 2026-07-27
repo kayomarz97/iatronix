@@ -512,8 +512,31 @@ def _truncate(text: Optional[str], max_chars: int) -> Optional[str]:
 
 
 def _cap_abstracts(abstracts: list, max_total_chars: int = 3000) -> list:
-    """Keep as many abstracts as fit within the total character budget (newest first)."""
-    sorted_abs = sorted(abstracts, key=lambda x: x.get("year") or 0, reverse=True)
+    """Keep as many abstracts as fit within the total character budget.
+
+    Ordering was RECENCY ONLY, so a 2024 case report displaced a 2021 systematic review from the
+    prompt budget — the composition problem behind "~half the retrieved evidence is Tier D/R"
+    (2026-07-28 sweep, n=53: Tier D 23%, R 26%). With `settings.evidence_tier_labels_enabled` the
+    sort becomes (evidence tier, then recency), so stronger study designs win the budget and
+    recency only breaks ties WITHIN a tier.
+
+    Deliberately a pure REORDERING: the same articles are considered, nothing is fetched, and
+    nothing is added — only which ones survive a fixed character budget changes. Recall is
+    untouched by construction, which is why this was preferred over adding a
+    publication-type-filtered esearch pass (that would breach the documented
+    "Limited to 4 esearch calls to avoid NCBI rate limits" bound — see PLAYBOOK on 429s).
+    Only meaningful because `pub_types` is now parsed from the efetch XML; before that,
+    _score_study_type could not tell a systematic review from a narrative one.
+    """
+    if settings.evidence_tier_labels_enabled:
+        from app.services.ranking import _score_study_type
+        sorted_abs = sorted(
+            abstracts,
+            key=lambda x: (_score_study_type(x), x.get("year") or 0),
+            reverse=True,
+        )
+    else:
+        sorted_abs = sorted(abstracts, key=lambda x: x.get("year") or 0, reverse=True)
     result, total = [], 0
     for a in sorted_abs:
         text = a.get("abstract", "") or ""

@@ -149,3 +149,52 @@ def test_rule_states_an_loe_for_every_tier(monkeypatch):
     assert "Tier T -> II" in rule, "Tier T has no stated loe — the model will guess"
     assert "Tier R -> III" in rule
     assert "Tier A/B -> I" in rule and "Tier C -> II" in rule and "Tier D -> III" in rule
+
+
+# ── Tier-aware abstract capping ───────────────────────────────────────────────
+
+def _abs(title, pts, year, n=900):
+    return {"title": title, "pub_types": pts, "year": year, "abstract": "x" * n}
+
+
+ABSTRACTS = [
+    _abs("Case report of X", ["Case Reports"], 2024),
+    _abs("Systematic review of X", ["Systematic Review"], 2021),
+    _abs("RCT of X", ["Randomized Controlled Trial"], 2020),
+    _abs("Narrative review", ["Review"], 2025),
+]
+
+
+def test_capping_prefers_stronger_designs_over_mere_recency(monkeypatch):
+    """_cap_abstracts sorted by RECENCY ONLY, so a 2024 case report displaced a 2021 systematic
+    review from the prompt budget — the composition problem behind "~half the retrieved evidence
+    is Tier D/R". Only meaningful because pub_types is now parsed from the efetch XML."""
+    monkeypatch.setattr(settings, "evidence_tier_labels_enabled", True)
+    from app.services.data_fetcher import _cap_abstracts
+    kept = {a["title"] for a in _cap_abstracts(ABSTRACTS, 1900)}
+    assert kept == {"Systematic review of X", "RCT of X"}, kept
+
+
+def test_capping_falls_back_to_recency_when_flag_off(monkeypatch):
+    monkeypatch.setattr(settings, "evidence_tier_labels_enabled", False)
+    from app.services.data_fetcher import _cap_abstracts
+    kept = {a["title"] for a in _cap_abstracts(ABSTRACTS, 1900)}
+    assert kept == {"Narrative review", "Case report of X"}, kept
+
+
+def test_capping_is_a_pure_reordering_no_articles_lost(monkeypatch):
+    """Recall must be untouched BY CONSTRUCTION — this is why tier-aware capping was chosen over
+    adding a [pt]-filtered esearch (which would breach the documented 4-call NCBI bound)."""
+    monkeypatch.setattr(settings, "evidence_tier_labels_enabled", True)
+    from app.services.data_fetcher import _cap_abstracts
+    out = _cap_abstracts(ABSTRACTS, 99999)
+    assert len(out) == len(ABSTRACTS)
+    assert {a["title"] for a in out} == {a["title"] for a in ABSTRACTS}
+
+
+def test_capping_survives_missing_pub_types(monkeypatch):
+    """Older cached articles predate the pub_types fix and have no such key."""
+    monkeypatch.setattr(settings, "evidence_tier_labels_enabled", True)
+    from app.services.data_fetcher import _cap_abstracts
+    legacy = [{"title": "No metadata", "year": 2022, "abstract": "y" * 100}]
+    assert _cap_abstracts(legacy, 9999)[0]["title"] == "No metadata"
