@@ -285,12 +285,21 @@ def enrich_references(data: dict, fetched_data=None) -> None:
         combined = f"{source} {title}".strip()
         source_lower = source.lower()
 
-        # Step 2: title match against fetched PMID index — ONLY for PubMed sources
+        # Step 2: title match against the fetched PMID index.
+        # The NON_PUBMED_SOURCES guard exists to stop us INVENTING a PubMed URL for a NICE/FDA
+        # source. But it also contains society names ("aha", "esc", "acc"), so a reference
+        # sourced to a society guideline had this step skipped even when that exact article was
+        # fetched FROM PubMed and its PMID is sitting in the index — and society guidelines are
+        # among the most-cited sources in cardiology, so each one silently lost its
+        # article-level link and rendered with no URL at all.
+        # An EXACT title match against a fetched abstract is positive evidence that the article
+        # is in PubMed, not a guess, so it is safe for any source. The guard is kept for the
+        # FUZZY prefix fallback, where a false positive really could mislink a NICE/FDA entry.
         is_non_pubmed = any(s in source_lower for s in NON_PUBMED_SOURCES)
-        if title and not is_non_pubmed:
+        if title:
             pmid = pmid_index.get(title.lower())
-            # Fuzzy fallback: strip punctuation and try prefix matching
-            if not pmid:
+            # Fuzzy fallback: strip punctuation and try prefix matching (PubMed-ish sources only)
+            if not pmid and not is_non_pubmed:
                 normalized = re.sub(r"[^\w\s]", "", title.lower()).split()
                 for idx_title, idx_pmid in pmid_index.items():
                     idx_words = re.sub(r"[^\w\s]", "", idx_title).split()

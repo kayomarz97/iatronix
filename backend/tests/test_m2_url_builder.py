@@ -51,6 +51,23 @@ class TestBuildPmidIndex:
         assert index == {}
 
 
+# ── Superseded contracts (2026-07-28) ────────────────────────────────────────
+# Skipped rather than left failing, because a red-by-default suite cannot catch a regression.
+# Each of these asserts behaviour that was DELIBERATELY removed, not behaviour that broke:
+#   * source-name -> HOMEPAGE URLs (FDA/NICE/Cochrane/ESC/WHO): the May 2026 cleanup deleted
+#     _SOURCE_URL_MAP because "homepages without article IDs are useless to clinicians"
+#     (see the note above Step 6 in url_builder). Article-level URLs are built from validated
+#     IDs instead.
+#   * trusting an INLINE "PMID:12345678" in LLM-written text: Step 3 now requires the PMID to
+#     be present in the fetched set, so a hallucinated PMID can never become a link. That
+#     anti-hallucination property is the point; the test asserts the pre-hardening contract.
+#   * JSON_CONTRACT_RULES: constant removed by the DSPy/adaptive refactor.
+_SUPERSEDED_URL = pytest.mark.skip(
+    reason="asserts pre-2026 URL behaviour deliberately removed (homepage URLs / trusting "
+           "inline PMIDs / JSON_CONTRACT_RULES); current behaviour covered by "
+           "test_citation_integrity and test/ref_integrity.py"
+)
+
 class TestEnrichReferences:
     def test_pmid_in_title_matched_from_fetched(self):
         from app.services.url_builder import enrich_references
@@ -66,6 +83,7 @@ class TestEnrichReferences:
         enrich_references(data, fetched)
         assert data["references"][0]["url"] == "https://pubmed.ncbi.nlm.nih.gov/12345678/"
 
+    @_SUPERSEDED_URL
     def test_pmid_inline_in_source_field(self):
         from app.services.url_builder import enrich_references
 
@@ -88,6 +106,7 @@ class TestEnrichReferences:
         enrich_references(data, None)
         assert data["references"][0]["url"] == "https://doi.org/10.1056/NEJMoa2023"
 
+    @_SUPERSEDED_URL
     def test_fda_source_gets_fda_url(self):
         from app.services.url_builder import enrich_references
 
@@ -96,6 +115,7 @@ class TestEnrichReferences:
         assert data["references"][0]["url"] is not None
         assert "fda.gov" in data["references"][0]["url"]
 
+    @_SUPERSEDED_URL
     def test_nice_source_gets_nice_url(self):
         from app.services.url_builder import enrich_references
 
@@ -104,6 +124,7 @@ class TestEnrichReferences:
         assert data["references"][0]["url"] is not None
         assert "nice.org.uk" in data["references"][0]["url"]
 
+    @_SUPERSEDED_URL
     def test_cochrane_source_gets_cochrane_url(self):
         from app.services.url_builder import enrich_references
 
@@ -152,6 +173,7 @@ class TestEnrichReferences:
         data = {"references": []}
         enrich_references(data, None)
 
+    @_SUPERSEDED_URL
     def test_esc_source_gets_esc_url(self):
         from app.services.url_builder import enrich_references
 
@@ -160,6 +182,7 @@ class TestEnrichReferences:
         assert data["references"][0]["url"] is not None
         assert "escardio.org" in data["references"][0]["url"]
 
+    @_SUPERSEDED_URL
     def test_who_source_gets_who_url(self):
         from app.services.url_builder import enrich_references
 
@@ -255,6 +278,7 @@ class TestCitationValidatorUrlWarnings:
 
 
 class TestPromptUrlRule:
+    @_SUPERSEDED_URL
     def test_json_contract_rules_contains_url_null_instruction(self):
         from app.services.prompt_engine import JSON_CONTRACT_RULES
 
@@ -296,3 +320,37 @@ def _fake_fetched(
             self.drug_data.guideline_abstracts = guideline_abstracts or []
 
     return _Fake()
+
+
+class TestSocietySourceKeepsArticleUrl:
+    """Regression: an exact title match against a FETCHED abstract must yield its PubMed URL
+    even when the reference's source is a society name.
+
+    NON_PUBMED_SOURCES contains "aha"/"esc"/"acc" to stop us INVENTING a PubMed URL for a
+    NICE/FDA entry. But it also skipped the title->PMID step for society guidelines that were
+    themselves fetched FROM PubMed, so each one rendered with NO link at all — and society
+    guidelines are among the most-cited sources in cardiology. An exact title match is positive
+    evidence, not a guess; the guard is retained for the FUZZY prefix fallback.
+    """
+
+    def test_society_source_exact_title_match_gets_pubmed_url(self):
+        from app.services.url_builder import enrich_references
+        fetched = _fake_fetched(guideline_abstracts=[
+            {"pmid": "12345678", "title": "Management of Hypertension AHA 2023"}])
+        for society in ("AHA", "ESC", "ACC"):
+            data = {"references": [{"source": society,
+                                    "title": "Management of Hypertension AHA 2023",
+                                    "year": 2023, "url": None}]}
+            enrich_references(data, fetched)
+            assert data["references"][0]["url"] == "https://pubmed.ncbi.nlm.nih.gov/12345678/", society
+
+    def test_fuzzy_match_still_blocked_for_non_pubmed_sources(self):
+        """The guard must survive where a false positive is actually possible."""
+        from app.services.url_builder import enrich_references
+        fetched = _fake_fetched(guideline_abstracts=[
+            {"pmid": "12345678", "title": "Management of Hypertension in Adults 2023 Update"}])
+        data = {"references": [{"source": "NICE",
+                                "title": "Management of Hypertension in Adults — NICE NG136",
+                                "year": 2023, "url": None}]}
+        enrich_references(data, fetched)
+        assert data["references"][0]["url"] != "https://pubmed.ncbi.nlm.nih.gov/12345678/"
