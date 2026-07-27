@@ -2137,19 +2137,34 @@ async def _fetch_clinicaltrials(
     dicts or None on failure. Each dict has: nct_id, title, summary, conditions,
     interventions, status, source='clinicaltrials.gov'.
     """
+    # A COMPLETED trial with no POSTED RESULTS is a registration, not evidence: no outcome data,
+    # no peer review. It still occupied a reference slot and read to the user like a citation
+    # (a 2026-07-27 sweep found trial registrations were ~35% of the whole reference corpus, and
+    # ~2 of every 5 returned trials had never reported). The server-side `aggFilters=results:with`
+    # was tried first and REJECTED: it changes which studies come back but still returns
+    # unreported ones (verified 3/5 reported with the filter on). `HasResults` on the search
+    # endpoint is authoritative, so we over-fetch and filter deterministically here instead.
+    _over = max_results * 3 if settings.trials_with_results_only_enabled else max_results
+    _params = {
+        "query.term": query,
+        "pageSize": _over,
+        "filter.overallStatus": "COMPLETED",
+        "fields": "NCTId,BriefTitle,BriefSummary,Condition,InterventionName,OverallStatus,HasResults",
+    }
     try:
         data = await _safe_get(
             client,
             "https://clinicaltrials.gov/api/v2/studies",
-            params={
-                "query.term": query,
-                "pageSize": max_results,
-                "filter.overallStatus": "COMPLETED",
-                "fields": "NCTId,BriefTitle,BriefSummary,Condition,InterventionName,OverallStatus",
-            },
+            params=_params,
         )
         if not data:
             return None
+        if settings.trials_with_results_only_enabled:
+            _all = data.get("studies") or []
+            _reported = [st for st in _all if st.get("hasResults")]
+            # Keep whatever exists when a topic has NO reported trials — never lose evidence
+            # outright; better a registration than an empty evidence base.
+            data = {**data, "studies": (_reported or _all)[:max_results]}
         studies = data.get("studies") or []
         results: list[dict] = []
         for s in studies:

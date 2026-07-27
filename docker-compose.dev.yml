@@ -58,6 +58,7 @@ services:
       CITATION_INTEGRITY_FIX_ENABLED: "true"
       REFERENCE_FIRST_ALL_TYPES_ENABLED: "true"
       DRUG_ENTITY_GUARD_ENABLED: "true"
+      TRIALS_WITH_RESULTS_ONLY_ENABLED: "true"
       GUNICORN_WORKERS: "2"
     volumes:
       - ./backend/firebase-adminsdk.json:/app/firebase-adminsdk.json:ro

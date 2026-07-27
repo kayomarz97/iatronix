@@ -272,6 +272,15 @@ class Settings(BaseSettings):
     # chapter fetched, so symptom queries ground on the candidate-disease chapters. Additive + safe:
     # a wrong candidate's chapter simply won't contain the fact → the pipeline abstains (never invents).
     candidate_chapters_enabled: bool = False
+    # ClinicalTrials.gov: only cite trials that actually REPORTED (2026-07-27 evidence-quality
+    # lever). A completed trial with no posted results has no outcome data and no peer review,
+    # yet it filled a reference slot and read like a citation. A 30-query sweep found trial
+    # registrations were 36% of the whole reference corpus, and a probe found 3 of 5 returned
+    # trials had hasResults=False. Uses `aggFilters=results:with` (verified to change the result
+    # set, not be silently ignored) and falls back to the unfiltered query when a topic has no
+    # reported trials, so no evidence is lost. Dev true / prod false.
+    trials_with_results_only_enabled: bool = False
+
     # Drug-entity guard (2026-07-27 PRECISION fix). The `complex`/`general` branch takes
     # entities[0] as the drug, but the extractor often puts a CONDITION first ("drug of choice
     # for CKD with T2DM and heart failure"). RxNorm's approximateTerm never signals "not a drug"
