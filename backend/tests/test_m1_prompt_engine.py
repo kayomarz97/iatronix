@@ -14,6 +14,23 @@ from pydantic import ValidationError
 # ──────────────────────────────────────────────
 
 
+# ── Superseded by the DSPy / adaptive refactor ───────────────────────────────
+# The classes marked below assert per-query-type prompt CONSTANTS
+# (DRUG_PROMPT, DISEASE_PROMPT, *_FORMAT_PROMPT, ...) that no longer exist:
+# every query type now produces an AdaptiveResponse with dynamic sections[], built by
+# prompt_engine.build_* functions — see AGENT_ARCHITECTURE "Response Schema (query.py)":
+#   "All query types produce AdaptiveResponse with dynamic sections[] — no separate
+#    per-type renderers."
+# They are skipped rather than deleted so the historical contract stays readable, and
+# rather than left failing because a suite that is RED BY DEFAULT cannot catch a
+# regression — which is precisely how the same mistake gets repeated. Current prompt
+# behaviour is covered by tests/test_evidence_tiers.py, tests/test_citation_integrity.py,
+# tests/test_reference_first_all_types.py and tests/test_citation_tokens.py.
+_SUPERSEDED = pytest.mark.skip(
+    reason="asserts per-type prompt constants removed by the DSPy/adaptive refactor; "
+           "current behaviour covered by test_evidence_tiers / test_citation_integrity"
+)
+
 class TestDiseaseResponseSchema:
     def test_bluf_field_exists_and_defaults_none(self):
         from app.schemas.query import DiseaseResponse, TreatmentSection
@@ -115,6 +132,7 @@ def get_prompt(name: str) -> str:
     return getattr(pe, name)
 
 
+@_SUPERSEDED
 class TestNoShorthands:
     @pytest.mark.parametrize("prompt_name", ALL_PROMPT_NAMES)
     @pytest.mark.parametrize("pattern", SHORTHAND_PATTERNS)
@@ -135,6 +153,7 @@ def _rendered(name: str) -> str:
     return raw
 
 
+@_SUPERSEDED
 class TestJsonContractRules:
     """Every prompt must contain the JSON CONTRACT RULES block (after render)."""
 
@@ -153,6 +172,7 @@ class TestJsonContractRules:
         )
 
 
+@_SUPERSEDED
 class TestDiseaseBLUF:
     def test_disease_prompt_contains_bluf_field(self):
         import app.services.prompt_engine as pe
@@ -179,6 +199,7 @@ class TestDiseaseBLUF:
         assert "MANDATORY CLINICAL ORDER" not in pe.DISEASE_FORMAT_PROMPT
 
 
+@_SUPERSEDED
 class TestEvidencePromptConstraints:
     def test_guideline_status_templates_in_evidence_prompt(self):
         import app.services.prompt_engine as pe
@@ -198,6 +219,7 @@ class TestEvidencePromptConstraints:
         assert "numeric" in pe.EVIDENCE_FORMAT_PROMPT.lower() or "PMID:" in pe.EVIDENCE_FORMAT_PROMPT
 
 
+@_SUPERSEDED
 class TestProcedureStepsConstraints:
     def test_procedure_steps_sequential_rule(self):
         import app.services.prompt_engine as pe
@@ -210,6 +232,7 @@ class TestProcedureStepsConstraints:
         assert "start at 1" in pe.PROCEDURE_PROMPT or "step_number\": 1" in pe.PROCEDURE_PROMPT
 
 
+@_SUPERSEDED
 class TestGeneralPromptConstraints:
     def test_key_points_no_markdown_rule(self):
         import app.services.prompt_engine as pe
@@ -222,6 +245,7 @@ class TestGeneralPromptConstraints:
         assert "generic" in pe.GENERAL_PROMPT.lower() or "brand" in pe.GENERAL_PROMPT.lower()
 
 
+@_SUPERSEDED
 class TestBuildPromptIntegration:
     """build_prompt returns a non-empty string for all query types."""
 
