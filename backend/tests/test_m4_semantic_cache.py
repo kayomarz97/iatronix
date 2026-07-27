@@ -134,7 +134,11 @@ class TestSemanticCacheServiceDisabled:
             mock_settings.embedding_dim = 384
 
             from app.services.semantic_cache import semantic_cache_get
-            result = asyncio.get_event_loop().run_until_complete(
+            # asyncio.run(), not get_event_loop().run_until_complete(): the latter reuses a
+            # module-global loop, so once any earlier test in the suite consumed or closed it
+            # these raised — passing alone and failing in a full run. An ordering-dependent
+            # test is worse than no test: it trains you to ignore the suite.
+            result = asyncio.run(
                 semantic_cache_get("metformin for diabetes", "drug", "claude-haiku")
             )
         assert result == (None, None, None)
@@ -151,6 +155,6 @@ class TestSemanticCacheServiceDisabled:
 
             from app.services.semantic_cache import semantic_cache_set
             # Must not raise
-            asyncio.get_event_loop().run_until_complete(
+            asyncio.run(
                 semantic_cache_set("metformin", "drug", "claude-haiku", {"drug_name": "metformin"})
             )

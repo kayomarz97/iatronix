@@ -62,6 +62,10 @@ services:
       # At threshold 0.88 a DIFFERENT clinical question can be served another question's
       # cached answer. Set explicitly here so dev matches documented intent.
       SEMANTIC_CACHE_ENABLED: "false"
+      # .env.dev/.env pin 0.88, BELOW the >=0.9 floor test_m4_semantic_cache asserts. Align dev
+      # to the config.py default (0.92) so that canary stays green and dev cannot silently drift
+      # back to loose similarity matching. PROD .env still holds 0.88 - owner decision.
+      SEMANTIC_CACHE_THRESHOLD: "0.92"
       TRIALS_WITH_RESULTS_ONLY_ENABLED: "true"
       EVIDENCE_TIER_LABELS_ENABLED: "true"
       GUNICORN_WORKERS: "2"
