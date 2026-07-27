@@ -281,6 +281,15 @@ class Settings(BaseSettings):
     # reported trials, so no evidence is lost. Dev true / prod false.
     trials_with_results_only_enabled: bool = False
 
+    # Overall character budget for the assembled data block (2026-07-28 context guard).
+    # Cerebras gpt-oss-120b — the DEFAULT provider — has a 32,768-token context. 80k chars is
+    # ~19.5k tokens, leaving room for the system prompt (~2.5k) and a 6144-token output budget
+    # with headroom. Chapters are filled LAST from whatever room remains and are ranked
+    # best-first, so only the least-relevant overflow chapter is trimmed; the top chapter is
+    # always whole. Raise only after re-measuring with test/ab_answer_shape.py-style token
+    # counts against the SMALLEST context among providers you support, not the largest.
+    prompt_data_block_char_budget: int = 88000
+
     # Evidence-tier labels in the prompt (2026-07-28 ANSWER-SHAPE lever). The data block handed
     # the model every source FLAT — title, journal, year, abstract — so a Cochrane meta-analysis,
     # a practice guideline, a trial registration and a single case report were indistinguishable.

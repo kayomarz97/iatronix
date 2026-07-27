@@ -704,7 +704,8 @@ def _format_nice_recs(recs: list[dict], ref_map: Optional[dict[str, dict]] = Non
     return "\n".join(lines)
 
 
-def _format_monographs(monos: list[dict], ref_map: Optional[dict[str, dict]] = None) -> str:
+def _format_monographs(monos: list[dict], ref_map: Optional[dict[str, dict]] = None,
+                       budget: Optional[int] = None) -> str:
     """Format StatPearls / NCBI Bookshelf FULL chapters for the data block.
 
     Prepends the matching [REF_N] token (matched by URL in ref_map) so the LLM
@@ -723,7 +724,11 @@ def _format_monographs(monos: list[dict], ref_map: Optional[dict[str, dict]] = N
             u = art_meta.get("url")
             if u:
                 url_to_token[u] = token_key
-    budget = getattr(settings, "book_monograph_char_budget", 90000)
+    # `budget` is the caller's REMAINING room (see _build_adaptive_data_block's context guard);
+    # fall back to the static per-answer chapter budget when unconstrained.
+    if budget is None:
+        budget = getattr(settings, "book_monograph_char_budget", 90000)
+    budget = max(budget, 0)
     blocks: list[str] = []
     used = 0
     for mono in monos or []:
@@ -839,12 +844,33 @@ def build_prompt(
     return prompt
 
 
+def _monograph_budget(parts: list[str]) -> int:
+    """Room left for chapter text after everything already in the block (see context guard)."""
+    used = sum(len(p) for p in parts)
+    overall = getattr(settings, "prompt_data_block_char_budget", 88000)
+    static = getattr(settings, "book_monograph_char_budget", 90000)
+    return max(0, min(static, overall - used))
+
+
 def _build_adaptive_data_block(
     query_type: str,
     fetched_data: "FetchedData | None",
     vector_results: "list[SearchResult] | None" = None,
 ) -> str:
-    """Build a formatted data block from fetched API data for injection into the adaptive prompt."""
+    """Build a formatted API data block for the adaptive prompt.
+
+    CONTEXT GUARD: Cerebras `gpt-oss-120b` (the default provider) has a 32,768-token context.
+    `book_monograph_char_budget` alone allows ~22.5k tokens of chapter text, and once the
+    2026-07-27 levers made chapters appear on procedure/drug/evidence/comparative queries too,
+    large blocks became the norm rather than the exception — measured worst case ~22.1k tokens,
+    leaving only ~6% headroom once the system prompt (~2.5k) and a 6144-token output budget are
+    added. config.py's "paid tier 32,768 context fits full pipeline unchanged" note predates
+    those levers. `_monograph_budget()` therefore gives chapters only the room left after the
+    higher-precision sources, so the block stays inside `prompt_data_block_char_budget`.
+    Chapters arrive ranked best-first and `_format_monographs` head-truncates only the LAST,
+    least-relevant overflow chapter — the top chapter is always whole, which is what the
+    never-truncate-a-chapter rule protects.
+    """
     parts: list[str] = []
 
     ref_map = build_ref_map(fetched_data) if (fetched_data and settings.citation_ref_tokens_enabled) else {}
@@ -862,7 +888,7 @@ def _build_adaptive_data_block(
             if getattr(fetched_data.drug_data, "book_monographs", None):
                 parts.append(
                     "=== TEXTBOOK / OVERVIEW (StatPearls / NCBI Bookshelf — full chapters) ===\n"
-                    + _format_monographs(fetched_data.drug_data.book_monographs, ref_map)
+                    + _format_monographs(fetched_data.drug_data.book_monographs, ref_map, _monograph_budget(parts))
                 )
             if fetched_data.condition_data:
                 cd = fetched_data.condition_data
@@ -885,7 +911,7 @@ def _build_adaptive_data_block(
             if getattr(d, "book_monographs", None):
                 parts.append(
                     "=== TEXTBOOK / OVERVIEW (StatPearls / NCBI Bookshelf — full chapters) ===\n"
-                    + _format_monographs(d.book_monographs, ref_map)
+                    + _format_monographs(d.book_monographs, ref_map, _monograph_budget(parts))
                 )
 
         elif query_type == "comparative" and fetched_data.comparative_drug_data:
@@ -905,7 +931,7 @@ def _build_adaptive_data_block(
                 if getattr(drug, "book_monographs", None):
                     parts.append(
                         f"=== DRUG {i} TEXTBOOK / OVERVIEW (StatPearls — full chapter) ===\n"
-                        + _format_monographs(drug.book_monographs, ref_map)
+                        + _format_monographs(drug.book_monographs, ref_map, _monograph_budget(parts))
                     )
             # Head-to-head comparative evidence (currently fetched but never injected)
             if fetched_data.comparative_evidence and fetched_data.comparative_evidence.fetch_success:
@@ -928,7 +954,7 @@ def _build_adaptive_data_block(
             if getattr(d, "book_monographs", None):
                 parts.append(
                     "=== TEXTBOOK / OVERVIEW (StatPearls / NCBI Bookshelf — full chapters) ===\n"
-                    + _format_monographs(d.book_monographs, ref_map)
+                    + _format_monographs(d.book_monographs, ref_map, _monograph_budget(parts))
                 )
 
         elif query_type == "evidence" and fetched_data.evidence_data and fetched_data.evidence_data.fetch_success:
@@ -943,7 +969,7 @@ def _build_adaptive_data_block(
             if getattr(d, "book_monographs", None):
                 parts.append(
                     "=== TEXTBOOK / OVERVIEW (StatPearls / NCBI Bookshelf — full chapters) ===\n"
-                    + _format_monographs(d.book_monographs, ref_map)
+                    + _format_monographs(d.book_monographs, ref_map, _monograph_budget(parts))
                 )
 
         elif query_type == "complex":
