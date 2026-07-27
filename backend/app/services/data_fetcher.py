@@ -268,6 +268,7 @@ class DrugFetchResult:
     fetch_success: bool = False
     data_sources: list = field(default_factory=list)
     label_url: Optional[str] = None  # human-readable label page URL from fetch (DailyMed or FDA)
+    book_monographs: list = field(default_factory=list)  # StatPearls full chapters: {title,url,text,source,nbk_id}
 
 
 @dataclass
@@ -291,6 +292,7 @@ class ProcedureFetchResult:
     practice_guideline_abstracts: list = field(default_factory=list)
     fetch_success: bool = False
     data_sources: list = field(default_factory=list)
+    book_monographs: list = field(default_factory=list)  # StatPearls full chapters: {title,url,text,source,nbk_id}
 
 
 @dataclass
@@ -300,6 +302,7 @@ class EvidenceFetchResult:
     guideline_abstracts: list = field(default_factory=list)
     fetch_success: bool = False
     data_sources: list = field(default_factory=list)
+    book_monographs: list = field(default_factory=list)  # StatPearls full chapters: {title,url,text,source,nbk_id}
 
 
 @dataclass
@@ -1896,6 +1899,34 @@ def _rank_book_monographs(monos: list[dict], signal_terms: list[str]) -> list[di
     return sorted(monos, key=_score, reverse=True)  # stable: equal scores keep insertion order
 
 
+# Salt / ester / hydrate forms that FDA label resolution appends but textbook chapter titles
+# never carry. "AMIODARONE HYDROCHLORIDE" and "WARFARIN SODIUM" are the correct names for an
+# FDA label lookup and the wrong ones for a StatPearls title match — the concept-level title
+# gate rejects them, so every salt-formulated drug (most of cardiology/anticoagulation) silently
+# lost its chapter. Strip to the base ingredient for book lookups only.
+_DRUG_SALT_TOKENS = frozenset({
+    "hydrochloride", "hcl", "sodium", "potassium", "calcium", "magnesium", "sulfate",
+    "sulphate", "tartrate", "bitartrate", "maleate", "mesylate", "besylate", "tosylate",
+    "succinate", "fumarate", "citrate", "acetate", "phosphate", "bromide", "chloride",
+    "nitrate", "gluconate", "lactate", "carbonate", "oxalate", "pamoate", "palmitate",
+    "valerate", "propionate", "dipropionate", "furoate", "xinafoate", "monohydrate",
+    "dihydrate", "anhydrous", "micronized", "hemihydrate", "hyclate", "erbumine",
+})
+
+
+def _book_term_for_drug(resolved_name: str, original_name: str = "") -> str:
+    """Base ingredient name suitable for a StatPearls chapter-title lookup.
+
+    Strips salt/ester/hydrate tokens from the FDA-resolved name. Falls back to the resolved
+    name when stripping would leave nothing (e.g. a combination product).
+    """
+    base = [t for t in (resolved_name or "").split()
+            if t.strip(",.").lower() not in _DRUG_SALT_TOKENS]
+    if base:
+        return " ".join(base)
+    return (original_name or resolved_name or "").strip()
+
+
 async def _fetch_book_monographs(
     client: httpx.AsyncClient, term: str, *, max_chapters: int = 2, char_cap: int = 16000
 ) -> list[dict]:
@@ -2273,6 +2304,16 @@ async def fetch_drug_data(drug_name: str, *, extra_pubmed_terms: list[str] | Non
         if resolution.get("rxcui"):
             result.rxcui = resolution["rxcui"]
 
+        # COVERAGE lever: whole StatPearls drug chapter (full text + citable NBK URL), run
+        # concurrently with the main gather. The existing `_fetch_ncbi_books(... pharmacology
+        # dosing)` result is truncated to 600 chars into mechanism_raw and carries no URL, so it
+        # can neither ground a deep fact nor be cited. See reference_first_all_types_enabled.
+        _book_task = None
+        if settings.reference_first_enabled and settings.reference_first_all_types_enabled:
+            _book_term = _book_term_for_drug(search_name, drug_name)
+            _book_task = asyncio.ensure_future(
+                _fetch_book_monographs(client, _book_term, max_chapters=1, char_cap=60000))
+
         # Build main search tasks
         _tasks = [
             _fetch_fda_label(client, search_name),
@@ -2403,6 +2444,18 @@ async def fetch_drug_data(drug_name: str, *, extra_pubmed_terms: list[str] | Non
             if "PMC (full text)" not in result.data_sources:
                 result.data_sources.append("PMC (full text)")
 
+        # Whole StatPearls drug chapter (full text + citable NBK URL) — never truncated.
+        if _book_task is not None:
+            try:
+                _monos = await _book_task
+            except Exception:
+                logger.debug("drug book_monographs fetch failed for %r", search_name, exc_info=True)
+                _monos = []
+            if _monos:
+                result.book_monographs = _monos
+                if "StatPearls" not in result.data_sources:
+                    result.data_sources.append("StatPearls")
+
         # NCBI Books drug content — append to StatPearls if available
         if isinstance(ncbi_books_drug, str) and ncbi_books_drug.strip():
             if result.mechanism_raw:
@@ -2442,6 +2495,10 @@ async def fetch_drug_data(drug_name: str, *, extra_pubmed_terms: list[str] | Non
             dm.systematic_review_abstracts = result.systematic_review_abstracts
             dm.top_adverse_events = result.top_adverse_events
             dm.data_sources = result.data_sources.copy()
+            # Carry the StatPearls chapter across the fallback — dm is a DIFFERENT result
+            # object, so without this the whole chapter is silently dropped whenever the
+            # FDA label lookup fails and DailyMed answers instead.
+            dm.book_monographs = result.book_monographs
             if "DailyMed" not in dm.data_sources:
                 dm.data_sources.append("DailyMed")
             return dm
@@ -2458,9 +2515,17 @@ async def fetch_drug_data(drug_name: str, *, extra_pubmed_terms: list[str] | Non
             mi.systematic_review_abstracts = result.systematic_review_abstracts
             mi.top_adverse_events = result.top_adverse_events
             mi.data_sources = result.data_sources.copy()
+            mi.book_monographs = result.book_monographs  # see the DailyMed note above
             if "Medindia" not in mi.data_sources:
                 mi.data_sources.append("Medindia")
             return mi
+
+        # Every label source failed, but a full StatPearls drug chapter is real evidence and
+        # answers most mechanism/monitoring/toxicity questions on its own. Counting it keeps
+        # `fallback_to_llm` false so the data block (and the chapter) survives, instead of
+        # discarding 30k+ chars of textbook and degrading to a no-evidence card.
+        if result.book_monographs:
+            result.fetch_success = True
 
     return result
 
@@ -2746,6 +2811,18 @@ async def fetch_procedure_data(procedure_name: str, *, extra_pubmed_terms: list[
     result = ProcedureFetchResult()
 
     async with _make_client() as client:
+        # COVERAGE lever: whole StatPearls chapter for the procedure. Kicked off CONCURRENTLY so it
+        # overlaps the main gather (no added critical path); its eUtils calls go through
+        # _ncbi_eutils_get, sharing the NCBI rate semaphore. This replaces the value that
+        # _fetch_pmc_statpearls was supposed to provide but could not: that path searches db=pmc
+        # (which "never matched" for disease — see the note in fetch_disease_data), returns a bare
+        # string, and is truncated to 600 chars below with no NBK URL, so it is neither groundable
+        # nor citable. See settings.reference_first_all_types_enabled.
+        _book_task = None
+        if settings.reference_first_enabled and settings.reference_first_all_types_enabled:
+            _book_task = asyncio.ensure_future(
+                _fetch_book_monographs(client, procedure_name, max_chapters=1, char_cap=60000))
+
         # Build main search tasks
         _tasks = [
             _fetch_pubmed_abstracts(client, procedure_name, "guideline", extra_journal_filter),
@@ -2822,6 +2899,20 @@ async def fetch_procedure_data(procedure_name: str, *, extra_pubmed_terms: list[
             result.data_sources.append("PubMed")
 
         result.practice_guideline_abstracts = []  # merged above
+
+        # Whole StatPearls chapter (full text + citable NBK URL) — never truncated.
+        if _book_task is not None:
+            try:
+                _monos = await _book_task
+            except Exception:
+                logger.debug("procedure book_monographs fetch failed for %r", procedure_name,
+                             exc_info=True)
+                _monos = []
+            if _monos:
+                result.book_monographs = _monos
+                if "StatPearls" not in result.data_sources:
+                    result.data_sources.append("StatPearls")
+
         if isinstance(statpearls, str) and statpearls:
             # Add StatPearls as a synthetic abstract entry
             result.guideline_abstracts.insert(0, {
@@ -2834,8 +2925,13 @@ async def fetch_procedure_data(procedure_name: str, *, extra_pubmed_terms: list[
             if "PMC (full text)" not in result.data_sources:
                 result.data_sources.append("PMC (full text)")
 
+    # A retrieved full chapter IS evidence — the disease path already counts it
+    # (`... or result.book_monographs`). Without this, an intermittently empty PubMed result
+    # marks the whole fetch failed, `fallback_to_llm` is set, and the data block is dropped —
+    # discarding a 42k-char StatPearls chapter that alone answers most procedure questions.
     result.fetch_success = bool(
         result.guideline_abstracts or result.practice_guideline_abstracts
+        or result.book_monographs
     )
     return result
 

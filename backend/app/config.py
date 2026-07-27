@@ -272,6 +272,20 @@ class Settings(BaseSettings):
     # chapter fetched, so symptom queries ground on the candidate-disease chapters. Additive + safe:
     # a wrong candidate's chapter simply won't contain the fact → the pipeline abstains (never invents).
     candidate_chapters_enabled: bool = False
+    # Whole-chapter retrieval for NON-disease query types (2026-07-27 COVERAGE lever).
+    # `_fetch_book_monographs` (whole chapter, concept-gated title match, citable NBK URL) ran ONLY
+    # inside fetch_disease_data. Procedure/drug/evidence queries instead hit `_fetch_pmc_statpearls`
+    # — a db=pmc search that the disease path's own comment records as "never matched" — whose
+    # string result was then **truncated to 600 chars** and stored with `pmid: ""`, so it could
+    # never become a citable reference (the registry drops entries with no resolvable URL).
+    # That is why a "central venous catheter insertion" query returned 1-2 references while a
+    # disease query returned 15-17. Probe (2026-07-27): 7 of 9 non-disease topics have a full
+    # StatPearls chapter available, 13k-42k chars each — including a 42k-char
+    # "Central Venous Catheter Insertion". Since correctness is ~60% when a chapter is retrieved
+    # vs ~9% when not (RAGNOSIS_FINDINGS.md), this is a pure coverage win.
+    # Requires reference_first_enabled. Dev true / prod false.
+    reference_first_all_types_enabled: bool = False
+
     # Total character budget for StatPearls/Bookshelf chapter text injected into ONE answer prompt.
     # With the candidate-chapter lever a query can carry up to 3 full chapters (~140k chars ≈ 35k tokens);
     # this bounds token cost and needle-in-haystack dilution. Chapters are ranked best-first (title match

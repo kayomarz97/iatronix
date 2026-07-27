@@ -816,6 +816,13 @@ def _build_adaptive_data_block(
     if fetched_data and not fetched_data.fallback_to_llm:
         if query_type == "drug" and fetched_data.drug_data and fetched_data.drug_data.fetch_success:
             parts.append("=== DRUG DATA (FDA/RxNorm) ===\n" + _format_drug_block(fetched_data.drug_data, ref_map))
+            # Whole StatPearls drug chapter (reference_first_all_types) — mechanism, monitoring and
+            # toxicity detail that the FDA label states tersely and PubMed abstracts omit.
+            if getattr(fetched_data.drug_data, "book_monographs", None):
+                parts.append(
+                    "=== TEXTBOOK / OVERVIEW (StatPearls / NCBI Bookshelf — full chapters) ===\n"
+                    + _format_monographs(fetched_data.drug_data.book_monographs, ref_map)
+                )
             if fetched_data.condition_data:
                 cd = fetched_data.condition_data
                 if hasattr(cd, "guideline_abstracts") and cd.guideline_abstracts:
@@ -867,6 +874,13 @@ def _build_adaptive_data_block(
                 parts.append("=== PROCEDURE GUIDELINES ===\n" + _format_abstracts(d.guideline_abstracts, ref_map))
             if d.practice_guideline_abstracts:
                 parts.append("=== PRACTICE GUIDELINES ===\n" + _format_abstracts(d.practice_guideline_abstracts, ref_map))
+            # Whole StatPearls chapter (reference_first_all_types) — the step-by-step technique,
+            # indications, contraindications and complications live here, not in trial abstracts.
+            if getattr(d, "book_monographs", None):
+                parts.append(
+                    "=== TEXTBOOK / OVERVIEW (StatPearls / NCBI Bookshelf — full chapters) ===\n"
+                    + _format_monographs(d.book_monographs, ref_map)
+                )
 
         elif query_type == "evidence" and fetched_data.evidence_data and fetched_data.evidence_data.fetch_success:
             d = fetched_data.evidence_data
