@@ -37,9 +37,18 @@ _WEIGHT_MARKERS = re.compile(
     r"high[- ]quality|limited evidence|insufficient evidence|expert opinion|"
     r"tier [ABCDRT]|level [I]{1,3}\b)", re.I)
 
+# Widened 2026-07-28: a blind multi-query run produced an ON answer that stated the limitation
+# about as plainly as possible ("usefulness is unproven here", "no confident recommendation ...
+# is justified", "no Tier A, B, or C evidence") and R4 still scored 0 — the marker list simply
+# did not contain those phrasings. Like the R3 negation bug, the defect was in the SCORER, not
+# the answer. Any rubric rule that fires on a fixed vocabulary needs its vocabulary tested
+# against text an independent generator actually writes.
 _LIMIT_MARKERS = re.compile(
-    r"\b(limited|insufficient|sparse|weak|low[- ]quality|no (randomi|controlled|direct)|"
-    r"not established|cannot be determined|uncertain|caution)\b", re.I)
+    r"\b(limited|insufficient|sparse|weak|low[- ]quality|low[- ]tier|no (randomi|controlled|direct)|"
+    r"not established|cannot be determined|uncertain|caution|unproven|not proven|"
+    r"no (confident|firm|graded) recommendation|cannot (be )?(support|justif|conclude|recommend)|"
+    r"not justified|hypothesis[- ]generating|no tier [abc]|absence of evidence|"
+    r"no (high|higher)[- ]tier)\b", re.I)
 
 _EFFICACY = re.compile(r"\b(reduces?|improves?|lowers?|prevents?|is effective|efficacious|"
                        r"superior|benefit)\b", re.I)

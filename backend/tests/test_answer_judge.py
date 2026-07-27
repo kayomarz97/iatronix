@@ -120,3 +120,57 @@ def test_asserted_efficacy_from_registration_still_caught():
                    "source": "NCT01", "ref_token": "REF_1", "loe": "III"}]}]}
     res = judge(answer, {"REF_1": "R"}, expected_sections=1)
     assert res["scores"]["R3_no_registration_as_evidence"] == 0.0
+
+
+# ── Multi-query blind generation (2026-07-28) ────────────────────────────────
+
+MULTI = Path(__file__).parent / "fixtures" / "answer_quality_multiquery.json"
+MULTI_TIERS = {
+    "weak_only":      {"REF_1": "D", "REF_2": "D", "REF_3": "R"},
+    "obsolete":       {"REF_1": "D", "REF_2": "T", "REF_3": "R"},
+    "conflict":       {"REF_1": "A", "REF_2": "C", "REF_3": "A"},
+    "textbook_only":  {"REF_1": "T"},
+    "label_vs_trial": {"REF_1": "A", "REF_2": "D", "REF_3": "B"},
+}
+
+
+@pytest.fixture(scope="module")
+def multi():
+    return json.loads(MULTI.read_text())
+
+
+def test_multiquery_tier_labels_never_hurt(multi):
+    """Across 5 blind-generated query pairs with varied evidence profiles the tier arm must
+    never score WORSE. The honest mean delta is small (+0.07) — far below the +0.50 the
+    hand-written arms suggested — but it is never negative."""
+    worse = []
+    for case, tiers in MULTI_TIERS.items():
+        off = judge(multi[case]["variant_1"], tiers, 2)
+        on = judge(multi[case]["variant_2"], tiers, 2)
+        if on["overall"] < off["overall"]:
+            worse.append((case, off["overall"], on["overall"]))
+    assert not worse, f"tier labels made these WORSE: {worse}"
+
+
+def test_weak_evidence_query_is_where_tiers_matter_most(multi):
+    """When every source is Tier D/R, the no-tier arm fails to state the limitation and
+    miscalibrates LOE. This is the clearest real-world win."""
+    tiers = MULTI_TIERS["weak_only"]
+    off = judge(multi["weak_only"]["variant_1"], tiers, 2)
+    on = judge(multi["weak_only"]["variant_2"], tiers, 2)
+    assert off["scores"]["R2_loe_correct"] == 0.0 and on["scores"]["R2_loe_correct"] == 1.0
+    assert off["scores"]["R4_calibrated_hedging"] == 0.0
+    assert on["scores"]["R4_calibrated_hedging"] == 1.0
+
+
+def test_r4_vocabulary_matches_what_a_generator_actually_writes():
+    """R4 originally scored 0 on an answer that said 'usefulness is unproven here' and
+    'no confident recommendation is justified'. The bug was in the SCORER's vocabulary."""
+    base = {"sections": [{"title": "E", "content_items": [
+        {"text": "Y may help.", "source": "Case report", "ref_token": "REF_1", "loe": "III"}]}]}
+    for phrasing in ("usefulness is unproven here",
+                     "no confident recommendation for or against its use is justified",
+                     "there is no Tier A, B, or C evidence in this set",
+                     "this is hypothesis-generating only"):
+        a = {**base, "bluf": {"headline": "Y", "body": phrasing}}
+        assert judge(a, {"REF_1": "D"}, 1)["scores"]["R4_calibrated_hedging"] == 1.0, phrasing

@@ -1,0 +1,599 @@
+{
+ "weak_only": {
+  "variant_1": {
+   "bluf": {
+    "headline": "IV magnesium in acute severe asthma: only uncontrolled reports and one registered trial are available here",
+    "body": "The three listed sources are a single case report, a four-patient case series, and a trial registration record. They describe clinicians giving intravenous magnesium to adults with severe acute asthma and reporting improvement, but none of them is a controlled comparison against standard therapy, so they cannot establish whether magnesium changes outcomes.",
+    "key_points": [
+     "A case report describes a dramatic response to IV magnesium in status asthmaticus (REF_1).",
+     "A case series of four emergency-department patients given IV magnesium is also available (REF_2).",
+     "A trial of IV magnesium in acute asthma is registered as NCT02222222 (REF_3); the record is a registration entry, not a result.",
+     "No comparative or controlled data appear in this source set, so no dosing or efficacy conclusion can be drawn from it."
+    ],
+    "caveats": [
+     "Case reports and small series are subject to selection and publication bias.",
+     "A registry entry describes an intended study; it does not report whether the intervention worked."
+    ]
+   },
+   "sections": [
+    {
+     "title": "What the clinical reports describe",
+     "content_items": [
+      {
+       "text": "A published case report describes a dramatic clinical response to intravenous magnesium in an adult with status asthmaticus.",
+       "source": "Case report",
+       "ref_token": "REF_1",
+       "loe": "III"
+      },
+      {
+       "text": "A case series of four patients given intravenous magnesium in the emergency department adds a small amount of uncontrolled clinical experience.",
+       "source": "Case series",
+       "ref_token": "REF_2",
+       "loe": "III"
+      },
+      {
+       "text": "Neither report includes a comparison group, so improvement cannot be separated from concurrent bronchodilator and corticosteroid therapy.",
+       "source": "Case series",
+       "ref_token": "REF_2",
+       "loe": "III"
+      }
+     ]
+    },
+    {
+     "title": "Research activity in this area",
+     "content_items": [
+      {
+       "text": "A trial of intravenous magnesium in acute asthma is registered as NCT02222222, indicating the question is being studied formally.",
+       "source": "NCT02222222",
+       "ref_token": "REF_3",
+       "loe": "II"
+      },
+      {
+       "text": "Until comparative results are available, the sources here support only that IV magnesium has been used and observed in severe attacks, not that it should be used routinely.",
+       "source": "Case report",
+       "ref_token": "REF_1",
+       "loe": "III"
+      }
+     ]
+    }
+   ]
+  },
+  "variant_2": {
+   "bluf": {
+    "headline": "No high-tier evidence here: the strongest source is a Tier D case report, so no recommendation on IV magnesium can be supported",
+    "body": "Everything in this source set is either one-patient or few-patient experience, or a record that a study has been registered. The highest tier available is Tier D (case report, case series); there is no Tier A, B, or C source. Tier R (registration) contributes no efficacy information at all. All statements below therefore carry LOE III.",
+    "key_points": [
+     "Highest available tier is Tier D - a case report and a four-patient case series.",
+     "REF_3 is a Tier R trial REGISTRATION (protocol only, no posted results) and must not be read as evidence that IV magnesium works.",
+     "Because only low-tier evidence exists in this set, the honest answer is that usefulness is unproven here.",
+     "Any decision to use IV magnesium would have to rest on evidence outside this source set."
+    ],
+    "caveats": [
+     "Tier D sources have no control group; apparent responses may reflect co-administered treatment.",
+     "Absence of high-tier evidence is not proof of absence of benefit - it is absence of evidence."
+    ]
+   },
+   "sections": [
+    {
+     "title": "Highest available evidence (Tier D - case-level only)",
+     "content_items": [
+      {
+       "text": "The strongest source in this set is a Tier D case report describing a dramatic response to intravenous magnesium in status asthmaticus; a single uncontrolled observation is hypothesis-generating only.",
+       "source": "Case report",
+       "ref_token": "REF_1",
+       "loe": "III"
+      },
+      {
+       "text": "A Tier D case series of four emergency-department patients cannot estimate effect size or support a dose recommendation.",
+       "source": "Case series",
+       "ref_token": "REF_2",
+       "loe": "III"
+      }
+     ]
+    },
+    {
+     "title": "What the trial registration does and does not tell us (Tier R)",
+     "content_items": [
+      {
+       "text": "NCT02222222 is a Tier R record - a trial registration with no posted results - so it establishes only that a study exists, and is not evidence of benefit, harm, or dose.",
+       "source": "NCT02222222",
+       "ref_token": "REF_3",
+       "loe": "III"
+      }
+     ]
+    },
+    {
+     "title": "Bottom line for practice",
+     "content_items": [
+      {
+       "text": "Stated plainly: within these sources there is no Tier A, B, or C evidence, so no confident recommendation for or against its use is justified.",
+       "source": "Case report",
+       "ref_token": "REF_1",
+       "loe": "III"
+      },
+      {
+       "text": "If a recommendation is needed, retrieval should be extended to randomised trials, meta-analyses, or current guidelines, none of which are present here.",
+       "source": "NCT02222222",
+       "ref_token": "REF_3",
+       "loe": "III"
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "obsolete": {
+  "variant_1": {
+   "bluf": {
+    "headline": "First-line H pylori treatment in these sources: combination antimicrobial therapy, described most currently by the StatPearls chapter",
+    "body": "The available sources are a 1994 review of bismuth-based triple therapy, a StatPearls chapter, and a registration record for a trial of a new quadruple regimen.",
+    "key_points": [
+     "A 1994 review describes bismuth triple therapy (REF_1).",
+     "The StatPearls chapter is the broadest source available (REF_2).",
+     "A new quadruple regimen is being studied under NCT03333333 (REF_3)."
+    ],
+    "caveats": [
+     "Antibiotic resistance patterns have changed substantially since the earliest of these sources was written.",
+     "None of the listed sources is a current society guideline."
+    ]
+   },
+   "sections": [
+    {
+     "title": "Regimens described in the sources",
+     "content_items": [
+      {
+       "text": "A 1994 review describes bismuth-based triple therapy as an approach to eradicating Helicobacter pylori.",
+       "source": "1994 review",
+       "ref_token": "REF_1",
+       "loe": "II"
+      },
+      {
+       "text": "The StatPearls chapter describes eradication as combination antimicrobial therapy with acid suppression.",
+       "source": "StatPearls",
+       "ref_token": "REF_2",
+       "loe": "II"
+      },
+      {
+       "text": "A new quadruple regimen for H pylori is registered for study as NCT03333333.",
+       "source": "NCT03333333",
+       "ref_token": "REF_3",
+       "loe": "II"
+      }
+     ]
+    },
+    {
+     "title": "After treatment",
+     "content_items": [
+      {
+       "text": "The chapter describes confirming eradication after therapy using a non-serological test.",
+       "source": "StatPearls",
+       "ref_token": "REF_2",
+       "loe": "II"
+      },
+      {
+       "text": "Treatment failure prompts a change of regimen taking prior antibiotic exposure into account.",
+       "source": "StatPearls",
+       "ref_token": "REF_2",
+       "loe": "II"
+      }
+     ]
+    }
+   ]
+  },
+  "variant_2": {
+   "bluf": {
+    "headline": "Only low-tier sources here: the Tier T textbook chapter is the only usable current synthesis, and the 1994 review must not be read as current practice",
+    "body": "The best of these is a textbook chapter, which summarises accepted practice but is not primary research. One source is more than 30 years old. Highest tier available is Tier T; the remaining sources are Tier D (>25 years old) and Tier R (registration, no posted results). No Tier A guideline, meta-analysis, or randomised trial is present.",
+    "key_points": [
+     "Tier T StatPearls chapter is the only source describing contemporary practice.",
+     "REF_1 is a Tier D narrative review from 1994, more than 25 years old; treat as historical background, not current first-line guidance.",
+     "REF_3 is a Tier R registration with no posted results - it cannot be cited as evidence that the regimen works.",
+     "Because only low-tier evidence is available, this describes what a textbook says rather than making a graded recommendation."
+    ],
+    "caveats": [
+     "Resistance-driven regimen choice is exactly the point on which a 1994 source is least reliable.",
+     "A textbook chapter is not a substitute for a current guideline (Tier A), none of which appears here."
+    ]
+   },
+   "sections": [
+    {
+     "title": "Best available source: Tier T textbook synthesis",
+     "content_items": [
+      {
+       "text": "The StatPearls chapter (Tier T) describes first-line management as multi-drug antimicrobial therapy with acid suppression, selected by local resistance.",
+       "source": "StatPearls",
+       "ref_token": "REF_2",
+       "loe": "III"
+      },
+      {
+       "text": "The same chapter describes confirming eradication with a non-serological test and selecting a different regimen if treatment fails.",
+       "source": "StatPearls",
+       "ref_token": "REF_2",
+       "loe": "III"
+      },
+      {
+       "text": "Because this is a textbook synthesis rather than a guideline, it should be checked against a current society guideline before being applied as policy.",
+       "source": "StatPearls",
+       "ref_token": "REF_2",
+       "loe": "III"
+      }
+     ]
+    },
+    {
+     "title": "Historical source - not current practice (Tier D, >25 years old)",
+     "content_items": [
+      {
+       "text": "A 1994 narrative review (Tier D) describes bismuth-based triple therapy; at over 30 years old it is historical context only and should not be taken as today's first-line regimen.",
+       "source": "1994 review",
+       "ref_token": "REF_1",
+       "loe": "III"
+      }
+     ]
+    },
+    {
+     "title": "Registered but unproven (Tier R)",
+     "content_items": [
+      {
+       "text": "NCT03333333 is a Tier R trial registration with no posted results; it provides no evidence of efficacy, tolerability, or superiority over existing therapy.",
+       "source": "NCT03333333",
+       "ref_token": "REF_3",
+       "loe": "III"
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "conflict": {
+  "variant_1": {
+   "bluf": {
+    "headline": "Sources conflict: guideline and systematic review favour continuing beta-blockade, while one cohort links continuation to worse short-term outcomes",
+    "body": "The 2021 ESC guideline advises continuing beta-blockade where haemodynamically tolerated, and a systematic review associates withdrawal with higher mortality. An observational cohort points the other way.",
+    "key_points": [
+     "2021 ESC guideline: continue beta-blockade where haemodynamically tolerated (REF_1).",
+     "Systematic review: withdrawal is associated with higher mortality (REF_3).",
+     "An observational cohort reports worse short-term outcomes with continuation (REF_2)."
+    ],
+    "caveats": [
+     "The cohort finding is observational and may reflect that sicker patients are the ones in whom clinicians continue or stop therapy."
+    ]
+   },
+   "sections": [
+    {
+     "title": "Sources favouring continuation",
+     "content_items": [
+      {
+       "text": "The 2021 ESC heart failure guideline recommends continuing beta-blockade during decompensation where haemodynamically tolerated.",
+       "source": "ESC guideline",
+       "ref_token": "REF_1",
+       "loe": "I"
+      },
+      {
+       "text": "A systematic review found that withdrawal of beta-blocker therapy was associated with higher mortality.",
+       "source": "Systematic review",
+       "ref_token": "REF_3",
+       "loe": "I"
+      }
+     ]
+    },
+    {
+     "title": "The conflicting signal",
+     "content_items": [
+      {
+       "text": "An observational cohort found that beta-blocker continuation was associated with worse short-term outcomes.",
+       "source": "Observational cohort",
+       "ref_token": "REF_2",
+       "loe": "II"
+      },
+      {
+       "text": "Because the cohort is non-randomised, the association may be confounded by the severity of decompensation.",
+       "source": "Observational cohort",
+       "ref_token": "REF_2",
+       "loe": "II"
+      }
+     ]
+    }
+   ]
+  },
+  "variant_2": {
+   "bluf": {
+    "headline": "Two Tier A sources support continuing beta-blockade where haemodynamically tolerated; the opposing signal is a lower-tier Tier C cohort",
+    "body": "The strongest sources - a recent guideline and a systematic review - both support continuation where tolerated, because stopping is linked to more deaths. A single observational study disagrees, but that design cannot separate the drug's effect from how sick the patient was. REF_1 (Tier A) and REF_3 (Tier A) concur and carry LOE I; REF_2 (Tier C) carries LOE II and is subject to confounding by indication.",
+    "key_points": [
+     "Tier A guideline: continue beta-blockade where haemodynamically tolerated.",
+     "Tier A systematic review: withdrawal is associated with higher mortality - concordant with the guideline.",
+     "Tier C cohort associates continuation with worse short-term outcomes; as observational data it does not overturn concordant Tier A evidence.",
+     "Continue unless the patient is not haemodynamically tolerating it."
+    ],
+    "caveats": [
+     "'Haemodynamically tolerated' is the operative condition; it does not endorse continuation in shock.",
+     "The Tier C cohort is a genuine safety signal worth monitoring - downweighted, not dismissed."
+    ]
+   },
+   "sections": [
+    {
+     "title": "Highest-tier evidence (Tier A) - both sources agree",
+     "content_items": [
+      {
+       "text": "The 2021 ESC guideline is Tier A and recent: continue beta-blockade during decompensation where haemodynamically tolerated.",
+       "source": "ESC guideline",
+       "ref_token": "REF_1",
+       "loe": "I"
+      },
+      {
+       "text": "A Tier A systematic review found withdrawal associated with higher mortality; the two highest-tier sources are concordant.",
+       "source": "Systematic review",
+       "ref_token": "REF_3",
+       "loe": "I"
+      }
+     ]
+    },
+    {
+     "title": "The dissenting source and how much weight it deserves (Tier C)",
+     "content_items": [
+      {
+       "text": "A Tier C observational cohort reports worse short-term outcomes with continuation; one tier below the concordant Tier A sources, it is not sufficient to reverse the recommendation.",
+       "source": "Observational cohort",
+       "ref_token": "REF_2",
+       "loe": "II"
+      },
+      {
+       "text": "The most likely explanation is confounding by indication, precisely the bias that Tier A designs mitigate.",
+       "source": "Observational cohort",
+       "ref_token": "REF_2",
+       "loe": "II"
+      }
+     ]
+    },
+    {
+     "title": "Resolution for practice",
+     "content_items": [
+      {
+       "text": "Weighting by tier: continue beta-blockade when haemodynamics permit, per the Tier A guideline.",
+       "source": "ESC guideline",
+       "ref_token": "REF_1",
+       "loe": "I"
+      },
+      {
+       "text": "Reserve withdrawal for patients not tolerating it, recognising the Tier A review's mortality association.",
+       "source": "Systematic review",
+       "ref_token": "REF_3",
+       "loe": "I"
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "textbook_only": {
+  "variant_1": {
+   "bluf": {
+    "headline": "Acute angle-closure glaucoma is an ocular emergency treated by urgent intraocular pressure reduction followed by laser iridotomy",
+    "body": "The StatPearls chapter describes it as a sight-threatening emergency. Management is immediate medical lowering of intraocular pressure with urgent ophthalmology involvement, followed by definitive laser peripheral iridotomy.",
+    "key_points": [
+     "Treat as an emergency: urgent ophthalmology referral alongside immediate pressure-lowering therapy.",
+     "Laser peripheral iridotomy is the definitive treatment.",
+     "The fellow eye is at risk and is usually treated prophylactically."
+    ],
+    "caveats": [
+     "Systemic agents such as acetazolamide and mannitol have contraindications.",
+     "The chapter is a textbook synthesis rather than trial data."
+    ]
+   },
+   "sections": [
+    {
+     "title": "Immediate medical management",
+     "content_items": [
+      {
+       "text": "Acute angle-closure glaucoma requires immediate intraocular pressure reduction and urgent ophthalmology involvement.",
+       "source": "StatPearls",
+       "ref_token": "REF_1",
+       "loe": "II"
+      },
+      {
+       "text": "Medical therapy includes topical aqueous-suppressing agents, a topical carbonic anhydrase inhibitor, systemic acetazolamide, and hyperosmotic therapy.",
+       "source": "StatPearls",
+       "ref_token": "REF_1",
+       "loe": "II"
+      },
+      {
+       "text": "Pilocarpine is used to break the pupillary block once pressure has fallen enough.",
+       "source": "StatPearls",
+       "ref_token": "REF_1",
+       "loe": "II"
+      }
+     ]
+    },
+    {
+     "title": "Definitive treatment and the fellow eye",
+     "content_items": [
+      {
+       "text": "Laser peripheral iridotomy is the definitive treatment, performed once corneal clarity allows.",
+       "source": "StatPearls",
+       "ref_token": "REF_1",
+       "loe": "II"
+      },
+      {
+       "text": "Prophylactic iridotomy of the fellow eye is described as standard practice.",
+       "source": "StatPearls",
+       "ref_token": "REF_1",
+       "loe": "II"
+      }
+     ]
+    }
+   ]
+  },
+  "variant_2": {
+   "bluf": {
+    "headline": "Only a Tier T textbook chapter is available: it describes urgent pressure-lowering then laser iridotomy, but this is synthesis, not primary evidence",
+    "body": "This answer comes from a single textbook chapter. Textbooks summarise accepted standard care but are not trials or guidelines, so nothing here can be graded as strong evidence. The sole source is Tier T; there is no Tier A guideline, Tier B trial, or Tier C comparative study, so every statement is presented as accepted practice rather than demonstrated efficacy.",
+    "key_points": [
+     "Tier T source only - treat as orienting standard-of-care description, not graded evidence.",
+     "The chapter describes an ocular emergency requiring immediate pressure reduction.",
+     "Laser peripheral iridotomy is described as definitive, with prophylactic treatment of the fellow eye."
+    ],
+    "caveats": [
+     "Stated plainly: with only low-tier (Tier T) evidence available, no comparative claim can be made about which agent or sequence is best.",
+     "A current ophthalmology guideline (Tier A) should be sought before this content is used to set protocol."
+    ]
+   },
+   "sections": [
+    {
+     "title": "Evidence standing of this answer",
+     "content_items": [
+      {
+       "text": "The only source retrieved is a Tier T textbook chapter - a peer-reviewed synthesis rather than primary research - so management below is reported as conventional care, not an evidence-graded recommendation.",
+       "source": "StatPearls",
+       "ref_token": "REF_1",
+       "loe": "III"
+      }
+     ]
+    },
+    {
+     "title": "Immediate management as described (Tier T)",
+     "content_items": [
+      {
+       "text": "The chapter describes an ophthalmic emergency: intraocular pressure must be lowered immediately and ophthalmology involved urgently.",
+       "source": "StatPearls",
+       "ref_token": "REF_1",
+       "loe": "III"
+      },
+      {
+       "text": "Medical therapy comprises topical aqueous suppressants, a topical carbonic anhydrase inhibitor, systemic acetazolamide, and hyperosmotic therapy; pilocarpine once pressure falls.",
+       "source": "StatPearls",
+       "ref_token": "REF_1",
+       "loe": "III"
+      }
+     ]
+    },
+    {
+     "title": "Definitive treatment and the fellow eye (Tier T)",
+     "content_items": [
+      {
+       "text": "Laser peripheral iridotomy is described as the definitive treatment.",
+       "source": "StatPearls",
+       "ref_token": "REF_1",
+       "loe": "III"
+      },
+      {
+       "text": "Prophylactic iridotomy of the unaffected fellow eye is described; note this is textbook-level (Tier T) guidance, not a trial-supported claim.",
+       "source": "StatPearls",
+       "ref_token": "REF_1",
+       "loe": "III"
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "label_vs_trial": {
+  "variant_1": {
+   "bluf": {
+    "headline": "Single IV doses of ondansetron above 16 mg are not recommended because of dose-dependent QT prolongation",
+    "body": "The FDA product label sets the dose ceiling: the 32 mg single intravenous dose was withdrawn because of dose-related QT interval prolongation. A case report of torsades de pointes illustrates the arrhythmia risk, and a randomised trial addresses what doses are actually needed.",
+    "key_points": [
+     "Avoid single IV doses above 16 mg in adults (REF_1).",
+     "The 32 mg single IV dose was withdrawn for QT prolongation (REF_1).",
+     "Torsades de pointes has been reported after high-dose IV ondansetron (REF_2).",
+     "Trial data inform the doses actually required for effect (REF_3)."
+    ],
+    "caveats": [
+     "Risk is higher with electrolyte abnormalities, congenital long QT, and other QT-prolonging drugs."
+    ]
+   },
+   "sections": [
+    {
+     "title": "The dose ceiling",
+     "content_items": [
+      {
+       "text": "The FDA product label states that single intravenous doses greater than 16 mg should no longer be used.",
+       "source": "FDA label",
+       "ref_token": "REF_1",
+       "loe": "I"
+      },
+      {
+       "text": "The label identifies risk factors including electrolyte abnormalities and congenital long QT syndrome.",
+       "source": "FDA label",
+       "ref_token": "REF_1",
+       "loe": "I"
+      }
+     ]
+    },
+    {
+     "title": "Supporting clinical data",
+     "content_items": [
+      {
+       "text": "A case report documents torsades de pointes following high-dose intravenous ondansetron.",
+       "source": "Case report",
+       "ref_token": "REF_2",
+       "loe": "III"
+      },
+      {
+       "text": "A randomised controlled trial of ondansetron dosing in postoperative nausea provides comparative data on the doses required.",
+       "source": "RCT",
+       "ref_token": "REF_3",
+       "loe": "I"
+      }
+     ]
+    }
+   ]
+  },
+  "variant_2": {
+   "bluf": {
+    "headline": "Tier A regulatory label sets the ceiling: no single IV dose above 16 mg; the 32 mg single dose was withdrawn for QT prolongation",
+    "body": "The drug's official label is the authoritative source here. A randomised trial supports what doses are actually needed, and a single case report is consistent with the warning but is not itself the reason for the limit. REF_1 is Tier A and REF_3 is Tier B, both LOE I; REF_2 is Tier D, LOE III, hypothesis-supporting only.",
+    "key_points": [
+     "Tier A label: single IV doses >16 mg are not recommended; the 32 mg dose was withdrawn for dose-dependent QT prolongation.",
+     "Tier A label flags the risk modifiers - electrolyte abnormality, congenital long QT, concomitant QT-prolonging drugs.",
+     "Tier B RCT informs the effective dose range, showing the ceiling does not compromise efficacy.",
+     "Tier D case report is corroborating but should not be presented as the evidentiary basis for the limit."
+    ],
+    "caveats": [
+     "The maximum differs by indication and route; the Tier A label is the reference.",
+     "A single Tier D case report cannot quantify risk - it establishes that the harm can occur, not how often."
+    ]
+   },
+   "sections": [
+    {
+     "title": "Highest-tier source: the regulatory label (Tier A)",
+     "content_items": [
+      {
+       "text": "The FDA product label - Tier A regulatory evidence - states that single intravenous doses greater than 16 mg should no longer be used, the 32 mg dose having been withdrawn for dose-dependent QT prolongation.",
+       "source": "FDA label",
+       "ref_token": "REF_1",
+       "loe": "I"
+      },
+      {
+       "text": "The same Tier A source specifies the populations in whom QT risk is amplified, where ECG and electrolyte monitoring is warranted.",
+       "source": "FDA label",
+       "ref_token": "REF_1",
+       "loe": "I"
+      }
+     ]
+    },
+    {
+     "title": "Trial evidence on dose requirements (Tier B)",
+     "content_items": [
+      {
+       "text": "A recent randomised controlled trial (Tier B) provides comparative data on doses needed for antiemetic effect, supporting that control is achievable within the label's ceiling.",
+       "source": "RCT",
+       "ref_token": "REF_3",
+       "loe": "I"
+      }
+     ]
+    },
+    {
+     "title": "Corroborating low-tier signal (Tier D)",
+     "content_items": [
+      {
+       "text": "A Tier D case report describes torsades de pointes after high-dose intravenous ondansetron; consistent with the Tier A warning but on its own cannot establish incidence and must not be weighted as trial or regulatory evidence.",
+       "source": "Case report",
+       "ref_token": "REF_2",
+       "loe": "III"
+      }
+     ]
+    }
+   ]
+  }
+ }
+}
