@@ -803,6 +803,24 @@ def _escape_json_string(value: str) -> str:
     )
 
 
+def _entities_line(entities) -> str:
+    """Render the entity list defensively.
+
+    This was a bare `", ".join(entities)`. If `entities` ever arrived as None or as a single
+    string the join raised TypeError mid-prompt-build, which takes the WHOLE answer down — an
+    expensive failure for a cosmetic line. A bare string would also have been split into
+    comma-separated characters.
+    """
+    if not entities:
+        return ""
+    if isinstance(entities, str):
+        return entities
+    try:
+        return ", ".join(str(e) for e in entities if e)
+    except TypeError:
+        return str(entities)
+
+
 def build_prompt(
     query: str,
     query_type: str,
@@ -848,7 +866,7 @@ def build_prompt(
         f"{data_block}\n"
         f"---\n"
         f"Query: {query}\n"
-        f"Entities: {', '.join(entities)}\n"
+        f"Entities: {_entities_line(entities)}\n"
         f"\nRespond in markdown with evidence-based claims supported by the provided data."
     )
     return prompt
