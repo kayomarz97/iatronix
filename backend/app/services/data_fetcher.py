@@ -2074,7 +2074,12 @@ async def _fetch_book_monographs(
     collide. 7-day TTL — StatPearls revises chapters slowly. Cache failures are non-fatal:
     any Redis error falls through to the live fetch.
     """
-    _key = f"books:v1:{(term or '').lower().strip()}:{max_chapters}:{char_cap}"
+    # KEY VERSION — bump whenever chapter SELECTION logic changes.
+    # This caches the *outcome* of selection, so without a version bump a selection fix stays
+    # invisible for up to the 7-day TTL per term: after the 2026-07-28 scope guard shipped, a
+    # live probe still returned "Vancomycin-Resistant Enterococci" and "Ocular Manifestations of
+    # Preeclampsia" — the pre-fix picks, served from cache. v2 = scope guard.
+    _key = f"books:v2:{(term or '').lower().strip()}:{max_chapters}:{char_cap}"
     try:
         import redis.asyncio as aioredis
         _r = aioredis.from_url(settings.redis_url, decode_responses=True)
