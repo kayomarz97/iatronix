@@ -361,6 +361,19 @@ class Settings(BaseSettings):
     # Dev true / prod false — promote deliberately.
     citation_integrity_fix_enabled: bool = False
 
+    # CHAPTER SCOPE GUARD (2026-07-28). Chapter selection scored only how much of the QUERY a
+    # chapter title covers, never what the TITLE adds — so "Vancomycin" and "Vancomycin-Resistant
+    # Enterococci" tied on the single shared token and NCBI relevance order picked the winner.
+    # A dev-vs-main sweep measured ~8-10 of 55 imported chapters as narrower or differently
+    # scoped than the question ("Ocular Manifestations of Preeclampsia" for preeclampsia,
+    # "Urinary Tract Infection in Pregnancy" for confusion in an ELDERLY patient), and at
+    # 25-60k characters per chapter the wrong one dominates the entire prompt.
+    # Implemented as a tie-break ONLY — it re-orders the same candidate set and never rejects a
+    # chapter, so coverage cannot fall. (The rejecting variant was tried and reverted on
+    # 2026-07-28: correct 8/8 on unit cases, recovered 0/7 on real data.)
+    # Dev true / prod false — promote deliberately.
+    chapter_scope_guard_enabled: bool = False
+
     # Smart PubMed expansion + snowballing
     pubmed_expansion_enabled: bool = True
     snowball_enabled: bool = True

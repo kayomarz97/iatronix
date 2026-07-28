@@ -68,6 +68,7 @@ services:
       SEMANTIC_CACHE_THRESHOLD: "0.92"
       TRIALS_WITH_RESULTS_ONLY_ENABLED: "true"
       EVIDENCE_TIER_LABELS_ENABLED: "true"
+      CHAPTER_SCOPE_GUARD_ENABLED: "true"
       GUNICORN_WORKERS: "2"
     volumes:
       - ./backend/firebase-adminsdk.json:/app/firebase-adminsdk.json:ro

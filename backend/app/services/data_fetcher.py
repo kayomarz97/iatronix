@@ -1941,6 +1941,66 @@ _GENERIC_TITLE_TOKENS: frozenset[str] = frozenset({
 })
 
 
+# Structural/function words only. Deliberately NOT `_GENERIC_TITLE_TOKENS`, which contains
+# "adult", "child", "infant" — population words are exactly the qualifiers the scope guard must
+# catch ("Chest Tube Insertion in the Neonate"), so excusing them would defeat the check.
+_STRUCTURAL_TITLE_TOKENS: frozenset[str] = frozenset({
+    "and", "the", "for", "with", "from", "its", "into", "onto", "via", "per",
+    "due", "not", "non", "after", "before", "during", "when", "who", "than",
+})
+
+
+# Tokens that narrow scope HARD — a different population, side, or acuity is a different
+# clinical entity, not an elaboration. Weighted x2 because a raw token count gets the ordering
+# backwards: for the query "heart failure" the plain count preferred "Right Heart Failure"
+# (1 extra token) over "Heart Failure and Ejection Fraction" (2), yet right heart failure is a
+# distinct entity (cor pulmonale) while ejection fraction is heart failure's primary
+# classification axis. Caught by the CONTROL arm of ab_chapter_scope.py, 2026-07-28.
+# LATERALITY ONLY — a closed anatomical set, deliberately nothing else.
+#
+# The first attempt also weighted population ("adult", "pediatric") and acuity, and the live
+# CONTROL arm falsified it immediately: "Pediatric Bronchiolitis" lost to "Bronchiolitis
+# OBLITERANS" (a different disease) and "Adult Diabetic Ketoacidosis" lost to "EUGLYCEMIC
+# Diabetic Ketoacidosis" (a rare variant). Population words usually mark the CANONICAL chapter
+# — bronchiolitis is a paediatric disease, DKA chapters split adult/paediatric by convention —
+# which is why `_GENERIC_TITLE_TOKENS` already treats adult/child/infant as generic. It is the
+# VARIANT word that signals a different entity, and variant words are an open set that cannot
+# be enumerated without overfitting to whatever sample is in front of you.
+# Laterality is different: it is closed, and "right heart failure" (cor pulmonale) really is a
+# distinct entity from "heart failure".
+_SCOPE_NARROWING_TOKENS: frozenset[str] = frozenset({
+    "left", "right", "upper", "lower", "anterior", "posterior", "bilateral", "unilateral",
+})
+
+
+def _chapter_scope_extra(term: str, title: str) -> int:
+    """How many QUALIFIER tokens a chapter title adds that the query never asked for.
+
+    The chapter selector scores `len(term_tokens & title_tokens)` — how much of the QUERY the
+    title covers — and never looks at what the TITLE adds. That is one-directional, so for the
+    term "vancomycin" the chapters *Vancomycin* and *Vancomycin-Resistant Enterococci* score
+    identically (1) and the tie falls to NCBI's relevance order, which often prefers the
+    qualified one. A 2026-07-28 dev-vs-main sweep measured the cost: ~8-10 of 55 imported
+    chapters were narrower or differently scoped than the question
+    ("Ocular Manifestations of Preeclampsia", "Urinary Tract Infection in Pregnancy",
+    "Chest Tube Insertion in the Neonate") — and since a chapter carries 25-60k characters, the
+    wrong one then dominates the whole prompt.
+
+    Used ONLY as a tie-breaker, never as a filter: a chapter is never rejected for scoring
+    badly here. That is what separates this from the subset guard reverted on 2026-07-28, which
+    rejected chapters and recovered 0/7 on real data because the unqualified chapters do not
+    exist. Re-ranking cannot reduce coverage; rejection can.
+    """
+    import re as _re
+    tt = {t for t in _re.findall(r"[a-z0-9]+", (title or "").lower()) if len(t) > 2}
+    qt = {t for t in _re.findall(r"[a-z0-9]+", (term or "").lower()) if len(t) > 2}
+    extra = tt - qt - _STRUCTURAL_TITLE_TOKENS
+    # A narrowing qualifier counts double — see _SCOPE_NARROWING_TOKENS. Note a token the QUERY
+    # already contains is never "extra" at all, so asking about "acute pancreatitis" is not
+    # penalised for matching a chapter that says "acute".
+    return sum(2 if t in _SCOPE_NARROWING_TOKENS else 1 for t in extra)
+
+
 def _rank_book_monographs(monos: list[dict], signal_terms: list[str]) -> list[dict]:
     """Order chapters best-first by how well their title matches the query signal (disease name +
     candidate diagnoses). A chapter titled after a query concept leads, so it survives the downstream
@@ -2152,7 +2212,18 @@ async def _fetch_book_monographs_live(
         if not scored:
             return []
         # Best title-overlap first; break ties by original relevance rank.
-        scored.sort(key=lambda x: (-x[0], x[1]))
+        #
+        # SCOPE GUARD: title-overlap alone is one-directional — it cannot tell *Vancomycin*
+        # from *Vancomycin-Resistant Enterococci* (both share the single query token), so the
+        # tie fell to NCBI relevance order and a differently-scoped chapter often won. Inserting
+        # `_chapter_scope_extra` BEFORE the rank tie-break prefers the chapter that adds fewest
+        # qualifiers the query never asked for, while leaving the primary overlap ordering
+        # untouched. Strictly a re-ranking of the SAME candidate set: no candidate is dropped,
+        # so chapter coverage cannot fall (see test_scope_guard_is_never_lossy).
+        if settings.chapter_scope_guard_enabled:
+            scored.sort(key=lambda x: (-x[0], _chapter_scope_extra(term, x[3]), x[1]))
+        else:
+            scored.sort(key=lambda x: (-x[0], x[1]))
         # Require a real title match so we never surface a chapter that merely shares
         # one word. Precise [title] hits are already correct (min 1); the broad
         # fallback must clear at least half the disease's title tokens.
