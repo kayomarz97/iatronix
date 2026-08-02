@@ -784,6 +784,55 @@ def compute_evidence_confidence(
     }
 
 
+def subject_anchor(
+    fetched_data: "FetchedData | None",
+    entities: list[str] | None,
+    query_type: str = "",
+    original_query: str = "",
+    query_text: str = "",
+    candidate_diagnoses: list[str] | None = None,
+    condition_context: str | None = None,
+) -> list[str]:
+    """The SUBJECT anchor: what the answer is ABOUT, never the symptom/effect.
+
+    Prefer the resolved drug name; comparative and differential-diagnosis queries anchor on ALL
+    entities (the finding / both compared agents); otherwise the first entity.
+
+    Single source of truth, shared by three consumers that MUST agree — the relevance floor (F1),
+    the topicality gate (F2), and the reference publication gate. It previously lived inline in
+    _rank_fetched_abstracts, so anything else needing it had to copy it and could silently drift.
+
+    `candidate_diagnoses` matters ONLY for the publication gate on a differential query. The
+    correct references there are the DIFFERENTIALS ("Acute Pulmonary Embolism", "Pericarditis"),
+    and by definition their titles do not contain the presenting complaint's tokens — anchoring
+    on the complaint alone would drop exactly the chapters the ddx feature exists to retrieve.
+    Measured as a false-positive class in test/results/CITATION_RELEVANCE_2026-08-02.md §1.
+    """
+    anchor: list[str]
+    d = getattr(fetched_data, "drug_data", None) if fetched_data is not None else None
+    drug_names = [
+        n for n in (getattr(d, "generic_name", None), getattr(d, "brand_name", None)) if n
+    ] if d else []
+    if query_type == "comparative" or is_differential_query(original_query or query_text):
+        anchor = list(entities or [])                   # finding / both compared agents: keep all
+    elif drug_names:
+        anchor = drug_names + (list(entities[:1]) if entities else [])
+    else:
+        anchor = list(entities[:1]) if entities else []
+    for c in (candidate_diagnoses or []):
+        if isinstance(c, str) and c.strip():
+            anchor.append(c.strip())
+    # The CONDITION belongs in the publication anchor for a drug-in-condition query: the
+    # condition-scoped chapter and reviews ("Chronic Kidney Disease" for metformin-in-CKD,
+    # "Pregnancy Medications" for labetalol-in-pregnancy) are legitimate references, and
+    # anchoring on the drug alone dropped exactly those — measured 2026-08-02, 5 chapters lost.
+    # It is deliberately NOT added for the floor/gate callers, which pass no condition_context:
+    # widening the RETRIEVAL anchor would re-admit the condition-only noise this change removes.
+    if isinstance(condition_context, str) and condition_context.strip():
+        anchor.append(condition_context.strip())
+    return anchor
+
+
 def _rank_fetched_abstracts(
     fetched_data: "FetchedData",
     entities: list[str],
@@ -804,20 +853,10 @@ def _rank_fetched_abstracts(
     _min_keep = settings.relevance_floor_min_keep
     _gate = settings.topicality_gate_enabled
 
-    # SUBJECT anchor = the thing the answer is about, never the symptom/effect. Prefer the resolved
-    # drug name; comparative & differential-diagnosis queries anchor on ALL entities (the finding);
-    # else the first entity. Shared by the floor (F1) and the topicality gate (F2).
-    _is_ddx = is_differential_query(original_query or query_text)
-    _anchor: list[str] = []
-    if _floor or _gate:
-        d = getattr(fetched_data, "drug_data", None)
-        drug_names = [n for n in (getattr(d, "generic_name", None), getattr(d, "brand_name", None)) if n] if d else []
-        if query_type == "comparative" or _is_ddx:
-            _anchor = list(entities or [])              # finding / both compared agents: keep all
-        elif drug_names:
-            _anchor = drug_names + (entities[:1] if entities else [])
-        else:
-            _anchor = (entities[:1] if entities else [])
+    _anchor: list[str] = (
+        subject_anchor(fetched_data, entities, query_type, original_query, query_text)
+        if (_floor or _gate) else []
+    )
 
     def _rerank(lst: list | None) -> list:
         if not lst:
@@ -4185,7 +4224,31 @@ async def process_query(
         from app.services.prompt_engine import build_ref_map
 
         ref_map = build_ref_map(fetched_data) if (fetched_data and settings.citation_ref_tokens_enabled) else {}
-        registry = build_article_registry(fetched_data) if (fetched_data and settings.citation_ref_tokens_enabled) else ArticleRegistry()
+        # Subject anchor for the PUBLICATION gate. Computed with the same helper the relevance
+        # floor and topicality gate use, so all three agree on what the answer is about. The
+        # analyzer's candidate diagnoses are threaded in because on a differential query the
+        # correct references ARE the differentials, whose titles never contain the presenting
+        # complaint. None when the flag is off → registry scores stay "not evaluated" and
+        # to_reference_list behaves exactly as before.
+        _pub_anchor = (
+            subject_anchor(
+                fetched_data,
+                routing.entities if routing else (analysis_entities or []),
+                query_type,
+                request.query,
+                candidate_diagnoses=(
+                    pubmed_expansion_terms.get("candidate_diagnoses")
+                    if isinstance(pubmed_expansion_terms, dict) else None
+                ),
+                condition_context=condition_context,
+            )
+            if (fetched_data and settings.reference_publication_gate_enabled) else None
+        )
+        registry = build_article_registry(
+            fetched_data,
+            subject_anchor=_pub_anchor,
+            use_synonyms=settings.relevance_synonyms_enabled,
+        ) if (fetched_data and settings.citation_ref_tokens_enabled) else ArticleRegistry()
 
         _resolve_ref_tokens(parsed, ref_map, registry)    # 1. Resolve [REF_N] tokens; mark registry used_inline
         _title_rescue_pass(parsed, registry)              # 1b. Rescue free-form titles (Cerebras etc.)

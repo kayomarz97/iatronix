@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from app.config import settings
+from app.services.ranking import publication_tokens, subject_presence
 from app.services.url_builder import is_safe_url
 
 
@@ -121,6 +122,13 @@ class RegistryArticle:
     year: Optional[Any]
     origin_section: str
     used_inline: bool = False
+    # Subject-relevance of this entry, scored ONCE at registry-build time by
+    # ranking._score_relevance against the query's subject anchor. -1.0 means "not evaluated"
+    # (no anchor supplied, or the publication gate is off) and is treated as publishable, so the
+    # flag-off path stays byte-identical. 3.0+ = subject in the TITLE; 2.0 = abstract-only
+    # mention; 0.0 = absent. Read by to_reference_list() to decide PUBLICATION only — never
+    # retrieval, never grounding.
+    publish_score: float = -1.0
 
 
 @dataclass
@@ -241,11 +249,38 @@ class ArticleRegistry:
                 SOURCE_TYPE_PRIORITY.get(r.source_type, 99),
                 r.ref_token,
             )
+        def _emit(r: RegistryArticle) -> dict:
+            return {
+                "title": r.title,
+                "source": r.source,
+                "source_type": r.source_type,
+                "pmid": r.pmid,
+                "nct_id": r.nct_id,
+                "doi": r.doi,
+                "url": r.url,
+                "year": r.year,
+                "ref_token": r.ref_token,
+                "used_inline": r.used_inline,
+            }
+
+        # True only when the gate actually judged these entries. Guards the safeguard below so
+        # it can never fire on the flag-off / no-anchor path.
+        subject_scored = any(r.publish_score >= 0.0 for r in self.items)
+
         out: list[dict] = []
         uncited = 0
         registrations = 0
         for r in sorted(self.items, key=k):
             if not r.used_inline:
+                # PUBLICATION GATE — an UNCITED entry must be ABOUT the subject to be printed.
+                # Reached only when the answer never cited it (cited entries skip this whole
+                # block and are always kept). publish_score < 0 means "not evaluated" — no
+                # anchor or gate off — and always publishes, keeping the flag-off path
+                # byte-identical. See settings.reference_publication_gate_enabled for the
+                # measurement this exists to fix.
+                if (settings.reference_publication_gate_enabled
+                        and 0.0 <= r.publish_score < settings.reference_publication_min_score):
+                    continue
                 if uncited >= max_uncited:
                     continue  # cap retrieved-but-unused references
                 # Separate, tighter bound on UNCITED trial registrations. They were 35% of all
@@ -258,18 +293,23 @@ class ArticleRegistry:
                         continue
                     registrations += 1
                 uncited += 1
-            out.append({
-                "title": r.title,
-                "source": r.source,
-                "source_type": r.source_type,
-                "pmid": r.pmid,
-                "nct_id": r.nct_id,
-                "doi": r.doi,
-                "url": r.url,
-                "year": r.year,
-                "ref_token": r.ref_token,
-                "used_inline": r.used_inline,
-            })
+            out.append(_emit(r))
+
+        # NEVER-EMPTY SAFEGUARD. Measured 2026-08-02: the gate alone blanked the reference list
+        # on 4 of 20 queries (SGLT2i in HF, cricothyrotomy, a complex CKD+T2DM+HF case, and the
+        # non-medical control). A clinician reading an answer with NO references is a worse
+        # failure than one tangential reference, so when the gate would publish nothing at all
+        # from a non-empty registry, fall back to the best `reference_publication_min_keep`
+        # entries in the same clinical-value order used above.
+        #
+        # This is a deliberately BOUNDED fail-open, and it is not the per-list step-aside this
+        # whole change exists to fix: that one silently returned EVERY article of EVERY list
+        # whenever a list had no on-subject member; this fires once per query, only when the
+        # alternative is an empty list, and is capped at 3.
+        if (settings.reference_publication_gate_enabled and subject_scored
+                and not out and self.items):
+            out = [_emit(r) for r in sorted(self.items, key=k)[
+                :max(0, settings.reference_publication_min_keep)]]
         return out
 
     def attach_orphans_to_references(self, parsed: dict) -> None:
@@ -396,6 +436,11 @@ def _add(seen: set, items: list, entry: dict, source_type: str, origin: str) -> 
         "url": url,
         "year": entry.get("year"),
         "origin_section": origin,
+        # Transient, popped in build_article_registry before RegistryArticle construction.
+        # Carried because _score_relevance must see the ABSTRACT to tell "about the subject"
+        # (title match, 3.0) from "merely mentions it" (abstract-only, 2.0) — a title-only
+        # verdict would over-reject articles whose title is uninformative ("The Lost Airway").
+        "_abstract": entry.get("abstract") or "",
     })
 
 
@@ -429,8 +474,22 @@ def _walk_books(obj: Any, origin: str, seen: set, items: list) -> None:
                 _add(seen, items, book, "ncbi_books", f"{origin}.{battr}")
 
 
-def build_article_registry(fetched_data: Any) -> ArticleRegistry:
-    """Build the registry. Walks every source category in fetched_data."""
+def build_article_registry(
+    fetched_data: Any,
+    subject_anchor: list[str] | None = None,
+    use_synonyms: bool = False,
+) -> ArticleRegistry:
+    """Build the registry. Walks every source category in fetched_data.
+
+    `subject_anchor` is what the answer is ABOUT — the resolved drug, the disease, both agents
+    of a comparative, or the finding plus its candidate diagnoses for a differential. When it is
+    supplied AND settings.reference_publication_gate_enabled, every entry is scored once against
+    it and the score stored on `RegistryArticle.publish_score`, which to_reference_list() uses to
+    decide PUBLICATION. Retrieval, ranking and grounding are untouched.
+
+    Omit the anchor (or leave the flag off) and every score stays -1.0 "not evaluated", which
+    to_reference_list treats as publishable — so the flag-off path is byte-identical to before.
+    """
     if fetched_data is None:
         return ArticleRegistry()
 
@@ -505,8 +564,19 @@ def build_article_registry(fetched_data: Any) -> ArticleRegistry:
 
     items.sort(key=sort_key)
 
+    # Score each entry ONCE against the subject anchor. Scoring here rather than in _add keeps
+    # every call site of _add unchanged and guarantees one consistent yardstick for all sources.
+    _gate_on = bool(settings.reference_publication_gate_enabled and subject_anchor)
+    # No confident 5+-char stem => nothing to judge against => every score stays -1.0 and the
+    # gate is a no-op, exactly like apply_topicality_gate on an unjudgeable query.
+    _tokens = publication_tokens(subject_anchor or [], use_synonyms) if _gate_on else set()
     registry = ArticleRegistry()
     for i, e in enumerate(items, start=1):
+        _abstract = e.pop("_abstract", "")
+        _score = (
+            subject_presence({"title": e["title"], "abstract": _abstract}, _tokens)
+            if _gate_on else -1.0
+        )
         ra = RegistryArticle(
             ref_token=f"REF_{i}",
             title=e["title"],
@@ -518,6 +588,7 @@ def build_article_registry(fetched_data: Any) -> ArticleRegistry:
             url=e["url"],
             year=e["year"],
             origin_section=e["origin_section"],
+            publish_score=_score,
         )
         registry.items.append(ra)
         registry.by_token[ra.ref_token] = ra

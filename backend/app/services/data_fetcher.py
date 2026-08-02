@@ -1027,6 +1027,22 @@ async def _resolve_drug_name_online(client: httpx.AsyncClient, drug_name: str) -
 # ------------------------------------------------------------------
 
 
+def _broad_scope_field() -> str:
+    """Search field for the BROAD free-text fallback terms — and ONLY those.
+
+    The broad terms carry no [pt] filter, so `[Title/Abstract]` lets a passing MENTION in for
+    any paper containing the word "guideline"/"review" anywhere: a CKD query returns the ACC/AHA
+    HYPERTENSION guideline, a pregnancy query returns an acne guideline. `[Title]` restricts
+    them to papers actually ABOUT the entity. The strict [pt]-filtered terms and the journal
+    terms are deliberately left on [Title/Abstract] — probing showed those are already clean,
+    and narrowing them would cost recall for nothing.
+
+    Flag-gated so the OFF path is byte-identical.
+    See settings.broad_term_title_scope_enabled for the measurement.
+    """
+    return "[Title]" if settings.broad_term_title_scope_enabled else "[Title/Abstract]"
+
+
 async def _fetch_pubmed_abstracts(
     client: httpx.AsyncClient, entity: str, pub_type: str = "guideline", extra_journal_filter: str | None = None
 ) -> tuple[list, set[str]]:
@@ -1040,18 +1056,19 @@ async def _fetch_pubmed_abstracts(
     from datetime import datetime as _dt
     cur_year = _dt.now().year
 
+    _bs = _broad_scope_field()
     if pub_type == "guideline":
         pt_filter = "(Practice Guideline[pt] OR Guideline[pt])"
         retmax = 16
         broad_fallback = (
-            f"{entity}[Title/Abstract] AND (guideline OR consensus OR recommendation) "
+            f"{entity}{_bs} AND (guideline OR consensus OR recommendation) "
             f"AND {_EVIDENCE_SEARCH_START_YEAR}:{cur_year}[dp]"
         )
     else:
         pt_filter = "(Systematic Review[pt] OR Meta-Analysis[pt])"
         retmax = 12
         broad_fallback = (
-            f"{entity}[Title/Abstract] AND (systematic review OR meta-analysis OR review) "
+            f"{entity}{_bs} AND (systematic review OR meta-analysis OR review) "
             f"AND 2010:{cur_year}[dp]"
         )
 
@@ -2775,11 +2792,14 @@ async def fetch_disease_data(disease_name: str, *, extra_pubmed_terms: list[str]
     classification_term = (
         f"{disease_name} classification[Title/Abstract] AND {_EVIDENCE_SEARCH_START_YEAR}:{cur_year}[dp]"
     )
+    # BROAD terms only — the [pt]-filtered and journal terms above keep [Title/Abstract].
+    # See settings.broad_term_title_scope_enabled for the live probe this is based on.
+    _broad_scope = _broad_scope_field()
     broad_guideline_term = (
-        f"{disease_name}[Title/Abstract] AND (guideline OR consensus OR recommendation) AND {_EVIDENCE_SEARCH_START_YEAR}:{cur_year}[dp]"
+        f"{disease_name}{_broad_scope} AND (guideline OR consensus OR recommendation) AND {_EVIDENCE_SEARCH_START_YEAR}:{cur_year}[dp]"
     )
     broad_review_term = (
-        f"{disease_name}[Title/Abstract] AND (systematic review OR meta-analysis OR review) AND {_EVIDENCE_SEARCH_START_YEAR}:{cur_year}[dp]"
+        f"{disease_name}{_broad_scope} AND (systematic review OR meta-analysis OR review) AND {_EVIDENCE_SEARCH_START_YEAR}:{cur_year}[dp]"
     )
     journal_term = (
         f"{disease_name}[Title/Abstract] AND {journal_filter} AND {_EVIDENCE_SEARCH_START_YEAR}:{cur_year}[dp]"
@@ -2997,7 +3017,7 @@ async def fetch_disease_data(disease_name: str, *, extra_pubmed_terms: list[str]
 
     # Fallback: if no PubMed results, retry without [pt] filter
     if not result.guideline_abstracts and not result.systematic_review_abstracts:
-        fallback_term = f"{disease_name}[Title/Abstract] AND (guideline OR consensus OR recommendation) AND 2005:{_dt.now().year}[dp]"
+        fallback_term = f"{disease_name}{_broad_scope_field()} AND (guideline OR consensus OR recommendation) AND 2005:{_dt.now().year}[dp]"
         async with _make_client() as client:
             fallback_ids = await _pubmed_esearch_throttled(client, fallback_term, 8)
             if fallback_ids:

@@ -69,6 +69,10 @@ services:
       TRIALS_WITH_RESULTS_ONLY_ENABLED: "true"
       EVIDENCE_TIER_LABELS_ENABLED: "true"
       CHAPTER_SCOPE_GUARD_ENABLED: "true"
+      # Irrelevant-citation fixes (2026-08-02) — see
+      # test/results/CITATION_RELEVANCE_2026-08-02.md. Retrieval-side + publication-side.
+      BROAD_TERM_TITLE_SCOPE_ENABLED: "true"
+      REFERENCE_PUBLICATION_GATE_ENABLED: "true"
       GUNICORN_WORKERS: "2"
     volumes:
       - ./backend/firebase-adminsdk.json:/app/firebase-adminsdk.json:ro

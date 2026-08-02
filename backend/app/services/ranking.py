@@ -286,6 +286,50 @@ def _article_on_subject(article: dict[str, Any], subject_tokens: set[str]) -> bo
     return any(w.startswith(st) for st in subject_tokens for w in words)
 
 
+def publication_tokens(entities: list[str], use_synonyms: bool = False) -> set[str]:
+    """Subject stems for the PUBLICATION gate. Like _subject_tokens, but splits on
+    [^a-z0-9] instead of [^a-z] so alphanumeric drug/class names survive.
+
+    _subject_tokens drops digits, so "SGLT2 inhibitors" reduces to {'inhibi'} — the 4-char
+    'sglt' falls under the 5-char confidence floor and the only surviving stem is a generic
+    one that matches any inhibitor paper. Keeping digits yields {'sglt2', 'inhibi'}, which is
+    what actually identifies the class. Same 6-char prefix stemming and stop list otherwise.
+    """
+    toks: set[str] = set()
+    for e in _expand_entities(entities, use_synonyms):
+        for w in re.split(r"[^a-z0-9]+", e):
+            if len(w) >= 5 and w not in _TOPICALITY_STOP:
+                toks.add(w[:6])
+    return toks
+
+
+def subject_presence(article: dict[str, Any], subject_tokens: set[str]) -> float:
+    """Where does the subject appear? 3.0 = TITLE, 2.0 = abstract head, 0.0 = absent.
+
+    Used by the reference PUBLICATION gate to separate "this article is ABOUT the subject"
+    from "this article MENTIONS the subject". Deliberately built on the same 6-char prefix
+    stems as _article_on_subject rather than on _score_relevance, because _score_relevance
+    matches the entity as an exact SUBSTRING and that is brittle on real titles:
+
+        anchor "SGLT2 inhibitors" vs "Sodium-Glucose Transport 2 (SGLT2) Inhibitors"
+            _score_relevance -> 0.0   (the literal substring is absent — a perfect chapter
+                                       match rejected outright; measured 2026-08-02)
+            subject_presence -> 3.0   (stem 'sglt2' is a title token)
+
+    Same failure class as the fixed-vocabulary scorer bugs in .claude/rules/mistakes.md:
+    a matcher that only recognises the phrasing it anticipated will silently reject correct data.
+    """
+    if not subject_tokens:
+        return -1.0                                   # nothing confident to judge against
+    title_words = set(re.split(r"[^a-z0-9]+", (article.get("title") or "").lower()))
+    if any(w.startswith(st) for st in subject_tokens for w in title_words):
+        return 3.0
+    abs_words = set(re.split(r"[^a-z0-9]+", (article.get("abstract") or "")[:500].lower()))
+    if any(w.startswith(st) for st in subject_tokens for w in abs_words):
+        return 2.0
+    return 0.0
+
+
 def apply_topicality_gate(
     articles: list[dict[str, Any]],
     subject_entities: list[str] | None,

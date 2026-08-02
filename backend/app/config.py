@@ -374,6 +374,56 @@ class Settings(BaseSettings):
     # Dev true / prod false — promote deliberately.
     chapter_scope_guard_enabled: bool = False
 
+    # REFERENCE PUBLICATION GATE (2026-08-02). Measured over 48 queries —
+    # test/results/CITATION_RELEVANCE_2026-08-02.md. AFTER the relevance floor and topicality
+    # gate have both run, 69 of 323 published references (21% by the machine test, ~10% after
+    # hand-audit) are still not about the question. Three mechanisms, none of them retrieval:
+    #   (a) BOTH existing safety valves FAIL OPEN. apply_topicality_gate() steps aside and
+    #       returns the list untouched when NOTHING matches (ranking.py:309), and
+    #       rank_article_list() re-admits up to relevance_floor_min_keep entity-absent articles
+    #       (ranking.py:248). Because the step-aside is evaluated PER LIST, a list in which
+    #       100% of articles are off-subject is passed through 100% INTACT — the gate removes
+    #       nothing precisely when there is nothing worth keeping. Measured: the condition_data
+    #       lists ran 92-100% off-subject with 0-2 removed.
+    #   (b) _rank_fetched_abstracts filters six containers; build_article_registry walks more.
+    #       book_monographs (55 refs) and comparative_drug_data[*] (16 refs) measured
+    #       `removed = 0` across all 48 queries — the filter never reaches them at all.
+    #   (c) to_reference_list publishes up to max_uncited retrieved-but-never-cited articles.
+    # This gate governs PUBLICATION ONLY. An article that fails it is still fetched, still
+    # ranked, and still grounds the model — it just cannot appear in the reference list. A
+    # CITED reference is ALWAYS kept, unconditionally: the gate can never break a citation the
+    # answer relies on, which is the property that makes it safe to run aggressively.
+    # Threshold 3.0 == ranking._score_relevance's TITLE-match score (the article is ABOUT the
+    # subject); an abstract-only mention scores 2.0 and is grounding-only. That title/abstract
+    # distinction is already computed today and thrown away by the floor's `> 0` test.
+    # Dev true / prod false — promote deliberately.
+    reference_publication_gate_enabled: bool = False
+    reference_publication_min_score: float = 3.0
+    # Never-empty safeguard: the fewest references to publish when the gate would otherwise
+    # leave the list completely blank. Measured need — the gate alone blanked 4 of 20 queries.
+    reference_publication_min_keep: int = 3
+
+    # BROAD-TERM TITLE SCOPE (2026-08-02). The retrieval-side half of the same defect.
+    # Every PubMed fetch runs a STRICT term (filtered by [pt] — Practice Guideline, Systematic
+    # Review …) and a BROAD free-text fallback with NO publication-type filter:
+    #     {entity}[Title/Abstract] AND (guideline OR consensus OR recommendation)
+    # `[Title/Abstract]` matches a passing MENTION, so the broad term returns any paper that
+    # contains the word "guideline" anywhere and names the entity anywhere. Probed live
+    # (2026-08-02) — the STRICT terms are clean; the BROAD ones are the noise source:
+    #   "chronic kidney disease" broad → "2024 update in heart failure", the 2017 ACC/AHA
+    #        HYPERTENSION guideline, the 2019 ACC/AHA primary-prevention guideline
+    #   "pregnancy" broad → thyroid guidelines, an STI update, a PCOS guideline, EULAR
+    #        antiphospholipid syndrome
+    # Restricting the BROAD terms (only — the [pt]-filtered and journal terms are untouched) to
+    # [Title] returns papers actually ABOUT the entity: ACOG bulletins for pregnancy, KDIGO and
+    # ESPEN kidney guidelines for CKD. This adds NO esearch calls — it re-scopes existing ones,
+    # which matters because un-throttled NCBI calls have already cost this repo weeks of empty
+    # data (see .claude/rules/mistakes.md, 2026-07-28).
+    # Recall safety: the strict [pt] term, the journal term, NICE, MedlinePlus, StatPearls and
+    # Semantic Scholar all still run unchanged, so a rare entity whose name is absent from
+    # titles is still covered. Dev true / prod false — promote deliberately.
+    broad_term_title_scope_enabled: bool = False
+
     # Smart PubMed expansion + snowballing
     pubmed_expansion_enabled: bool = True
     snowball_enabled: bool = True
