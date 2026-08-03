@@ -33,12 +33,73 @@ jobs:
 
       - name: Deploy backend
         run: |
+          # ─────────────────────────────────────────────────────────────────────────────
+          # PRODUCTION ENVIRONMENT — this list IS the prod feature-flag set.
+          #
+          # `--set-env-vars` REPLACES the whole environment on every deploy, so a flag
+          # absent from this list is OFF in production no matter what dev runs. That is
+          # not hypothetical: between 2026-07 and 2026-08 more than twenty shipped fixes
+          # sat here disabled, including CITATION_INTEGRITY_FIX_ENABLED — with it off,
+          # article_registry walks ("ncbi_books","books"), field names that exist nowhere
+          # in the codebase, so production registered ZERO StatPearls chapters, the source
+          # of ~79% of correct answers.
+          #
+          # RULE: this list must track the `environment:` block in docker-compose.dev.yml.
+          # When you add a flag there, add it here in the same piece of work, or write down
+          # why prod deliberately differs. Broken out one-per-line so a diff is readable.
+          # ─────────────────────────────────────────────────────────────────────────────
+          ENV_VARS="\
+          DSPY_ENABLED=true@\
+          MODEL_ROUTING_ENABLED=true@\
+          API_FETCH_ENABLED=true@\
+          DEEP_SEARCH_ENABLED=true@\
+          ADAPTIVE_SECOND_PASS_ENABLED=true@\
+          MULTI_VARIATION_SEARCH_ENABLED=true@\
+          PARALLEL_SECTIONS_ENABLED=true@\
+          RESUMABLE_STREAM_ENABLED=true@\
+          SECTION_REFETCH_ENABLED=true@\
+          ADAPTIVE_CROSS_STRATEGY_FALLBACK_ENABLED=true@\
+          NON_MEDICAL_GUARD_ENABLED=true@\
+          CLASSIFY_HEURISTIC_BACKSTOP_ENABLED=true@\
+          CLASSIFICATION_CACHE_ENABLED=true@\
+          RELEVANCE_FLOOR_ENABLED=true@\
+          RELEVANCE_SYNONYMS_ENABLED=true@\
+          QUERY_SENSE_FRAMING_ENABLED=true@\
+          ANALYSIS_TRUNCATION_FIX_ENABLED=true@\
+          DIFFERENTIAL_DX_ENABLED=true@\
+          TOPICALITY_GATE_ENABLED=true@\
+          INTENT_FRAMING_ENABLED=true@\
+          REFERENCE_FIRST_ENABLED=true@\
+          REFERENCE_FIRST_ALL_TYPES_ENABLED=true@\
+          CONTRADICTION_SURFACING_ENABLED=true@\
+          CANDIDATE_CHAPTERS_ENABLED=true@\
+          CITATION_INTEGRITY_FIX_ENABLED=true@\
+          DRUG_ENTITY_GUARD_ENABLED=true@\
+          TRIALS_WITH_RESULTS_ONLY_ENABLED=true@\
+          EVIDENCE_TIER_LABELS_ENABLED=true@\
+          CHAPTER_SCOPE_GUARD_ENABLED=true@\
+          BROAD_TERM_TITLE_SCOPE_ENABLED=true@\
+          REFERENCE_PUBLICATION_GATE_ENABLED=true@\
+          INLINE_CITATIONS_ENABLED=true@\
+          FAIL_CLOSED_EVIDENCE_ONLY=false@\
+          PROMPT_VERSION=5@\
+          SEMANTIC_CACHE_ENABLED=false@\
+          SEMANTIC_CACHE_THRESHOLD=0.92@\
+          GCS_ARCHIVE_BUCKET=iatronix-med-search-v1-archive@\
+          GUNICORN_WORKERS=4@\
+          FLUSH_REDIS=0@\
+          OPENROUTER_CALLBACK_BASE=https://med.kayomarz.com@\
+          ALLOWED_ORIGINS=https://med.kayomarz.com,https://www.med.kayomarz.com"
+          # Strip the indentation the YAML block adds to each continued line.
+          ENV_VARS="$(printf '%s' "$ENV_VARS" | sed 's/[[:space:]]//g')"
+          echo "Deploying with $(printf '%s' "$ENV_VARS" | tr '@' '\n' | wc -l) env vars"
+
           gcloud run deploy iatronix-backend \
             --source ./backend --region "$REGION" --project "$PROJECT" \
             --port 8000 --min-instances 0 --max-instances 4 \
             --cpu 2 --memory 2Gi --timeout 300 --concurrency 40 \
             --allow-unauthenticated --service-account "$RUNTIME_SA" \
-            --set-env-vars '^@^DSPY_ENABLED=true@MODEL_ROUTING_ENABLED=true@API_FETCH_ENABLED=true@DEEP_SEARCH_ENABLED=true@ADAPTIVE_SECOND_PASS_ENABLED=true@MULTI_VARIATION_SEARCH_ENABLED=true@PARALLEL_SECTIONS_ENABLED=true@RESUMABLE_STREAM_ENABLED=true@SECTION_REFETCH_ENABLED=true@FAIL_CLOSED_EVIDENCE_ONLY=false@PROMPT_VERSION=3@SEMANTIC_CACHE_THRESHOLD=0.88@GCS_ARCHIVE_BUCKET=iatronix-med-search-v1-archive@GUNICORN_WORKERS=4@FLUSH_REDIS=0@OPENROUTER_CALLBACK_BASE=https://med.kayomarz.com@ALLOWED_ORIGINS=https://med.kayomarz.com,https://www.med.kayomarz.com' \
+            --set-env-vars "^@^$ENV_VARS" \
             --set-secrets DATABASE_URL=DATABASE_URL:latest,REDIS_URL=REDIS_URL:latest,ENCRYPTION_KEY=ENCRYPTION_KEY:latest,IATRONIX_API_KEY=IATRONIX_API_KEY:latest,PUBMED_API_KEY=PUBMED_API_KEY:latest,SENTRY_DSN=SENTRY_DSN:latest \
             --quiet
 
