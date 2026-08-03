@@ -201,6 +201,22 @@ class AdaptiveSourceRef(BaseModel):
     url: Optional[str] = None
 
 
+class InlineCitation(BaseModel):
+    """One [REF_N] token resolved from inside a claim's text.
+
+    `token` is the canonical marker left in `text` (e.g. "[REF_3]") so the renderer can
+    locate it; `index` is its document-global display number in first-appearance order.
+    Only tokens present in the prompt's ref_map ever become an InlineCitation — an
+    unknown token is stripped from the text rather than rendered.
+    """
+    token: str
+    index: int
+    title: Optional[str] = None
+    source: Optional[str] = None
+    pmid: Optional[str] = None
+    url: Optional[str] = None
+
+
 class AdaptiveContentItem(BaseModel):
     text: str
     loe: Optional[str] = None
@@ -208,6 +224,10 @@ class AdaptiveContentItem(BaseModel):
     source: Optional[str] = None
     pmid: Optional[str] = None
     url: Optional[str] = None
+    # Per-claim citations parsed out of `text` (INLINE_CITATIONS_ENABLED). Empty when the
+    # flag is off, so the renderer falls back to the single `source` chip and flag-off
+    # output stays byte-identical.
+    citations: list[InlineCitation] = []
     # Multi-token citations ("[REF_3, REF_4]") — _resolve_ref_tokens has always populated
     # this, but without a field here pydantic silently discarded it, so every claim citing
     # two articles rendered as citing only the first. Frontend already types it

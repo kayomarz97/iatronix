@@ -92,6 +92,44 @@ _EVIDENCE_TIER_RULE = (
 def _maybe_evidence_tier_rule() -> str:
     return _EVIDENCE_TIER_RULE if settings.evidence_tier_labels_enabled else ""
 
+
+# Per-claim citation + specialist prose (settings.inline_citations_enabled).
+#
+# Lives in the DYNAMIC system block, never the static prefix, so the byte-identical cached
+# prompt prefix used by every section agent is unchanged (this app is run on Cerebras for
+# cost, so the prefix cache is worth protecting).
+#
+# It has to say "SUPERSEDES" explicitly: FORMATTING_RULES in the static prefix above caps
+# paragraphs at 3 sentences and pushes bullets, which is the opposite of what a specialist
+# answer reads like. Rather than fork the cached prefix, the dynamic block overrides it.
+_INLINE_CITATION_RULE = (
+    "\n\nPER-CLAIM CITATIONS — this is the most important rule in this prompt:\n"
+    "- Place the citation INSIDE the `text`, immediately after the claim it supports, as a "
+    "bracketed token: `[REF_3]`. Not at the end of the paragraph — after the SENTENCE.\n"
+    "- EVERY factual sentence gets one. A sentence carrying a number (dose, rate, hazard "
+    "ratio, percentage, interval) without a token immediately after it is a defect.\n"
+    "- Two sources for one claim: `[REF_3][REF_4]`. Use the tokens listed in the data block "
+    "and NOTHING else — a token you invent is deleted before the reader sees it, and the "
+    "claim it was attached to loses its support.\n"
+    "- Still fill the item-level `source` field as instructed. The inline tokens are in "
+    "ADDITION to it, not a replacement.\n"
+    "\nPROSE — SUPERSEDES the paragraph-length and bullet rules stated above:\n"
+    "- Write connected clinical prose. Explain mechanism and reasoning, not just findings: "
+    "what the evidence shows, how strong it is, and what it means at the bedside.\n"
+    "- Paragraphs may run as long as the argument needs. Do NOT chop reasoning into "
+    "one-line bullets.\n"
+    "- Reserve bullets and tables for genuinely enumerable data — dose regimens, diagnostic "
+    "criteria, adverse-effect lists, head-to-head comparisons.\n"
+    "- Because every sentence is cited inline, you can write at length without losing "
+    "traceability. Length is not the goal; a fully-sourced line of reasoning is.\n"
+    "- The `text` length guidance above is raised to 120-350 words per item for explanatory "
+    "content. Keep enumerable items short.\n"
+)
+
+
+def _maybe_inline_citation_rule() -> str:
+    return _INLINE_CITATION_RULE if settings.inline_citations_enabled else ""
+
 # ====================================================================
 # Constants
 # ====================================================================
@@ -1207,7 +1245,8 @@ def build_section_messages(
         f"OTHER SECTIONS IN THIS RESPONSE (do NOT duplicate their content): {other_str}\n"
         f"ALIGNMENT — keep content consistent with this clinical summary: {bluf_text}{valid_tokens_str}"
         f"{_maybe_contradiction_rule()}"
-        f"{_maybe_evidence_tier_rule()}\n\n"
+        f"{_maybe_evidence_tier_rule()}"
+        f"{_maybe_inline_citation_rule()}\n\n"
         f"Generate ONLY the content for the section \"{section_title}\"."
     )
 
@@ -1401,6 +1440,7 @@ def build_complex_section_messages(
         + (f"  3. If evidence is from lower tiers (case_report/drug_class), note it in the text:\n"
            f"     'Based on limited evidence from {tier.replace('_', ' ')}. Verify against local guidelines.'\n"
            if tier in ("case_report", "drug_class") else "")
+        + _maybe_inline_citation_rule()
     )
 
     data_block = _build_adaptive_data_block("complex", fetched_data, vector_results)

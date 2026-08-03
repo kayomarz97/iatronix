@@ -28,6 +28,17 @@ export interface DegradedResponse {
 
 // --- Adaptive (DSPy) ---
 
+export interface InlineCitation {
+  /** Canonical marker left in `text`, e.g. "[REF_3]". */
+  token: string;
+  /** Document-global display number, in first-appearance order. */
+  index: number;
+  title?: string;
+  source?: string;
+  pmid?: string;
+  url?: string;
+}
+
 export interface AdaptiveContentItem {
   text: string;
   loe?: string;
@@ -36,6 +47,12 @@ export interface AdaptiveContentItem {
   pmid?: string;
   url?: string;
   additional_sources?: { title?: string; source?: string; pmid?: string; url?: string }[];
+  /**
+   * Per-claim citations parsed out of `text` (backend INLINE_CITATIONS_ENABLED).
+   * Empty/absent when the flag is off — the renderer then falls back to the single
+   * source chip, so flag-off output is unchanged.
+   */
+  citations?: InlineCitation[];
 }
 
 export interface AdaptiveReference {

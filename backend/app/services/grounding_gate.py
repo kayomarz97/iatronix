@@ -46,12 +46,38 @@ GENERIC_OR_UNGROUNDED: frozenset[str] = frozenset(
 )
 
 
+def _has_inline_citation(item: dict) -> bool:
+    """True iff the claim carries at least one RESOLVED inline [REF_N] citation.
+
+    ``citations`` is populated only by ``_resolve_inline_citations``, and only from tokens
+    that were present in the prompt's ref_map — a forged token is stripped and never
+    becomes an entry. So a non-empty list is proof of real, retrieved backing, and this
+    module stays a pure function with no settings import: when INLINE_CITATIONS_ENABLED is
+    off the list is always empty and behaviour is byte-identical to before.
+
+    This is what turns a missed item-level source from a DELETION into a demotion. The
+    generator (Cerebras ``gpt-oss-120b``) frequently cites correctly mid-sentence while
+    leaving the item-level ``source`` generic; previously that cost the reader the whole
+    paragraph.
+    """
+    cites = item.get("citations")
+    if not isinstance(cites, list):
+        return False
+    for c in cites:
+        if isinstance(c, dict) and (c.get("pmid") or c.get("url") or c.get("title")):
+            return True
+    return False
+
+
 def _is_grounded(item: object) -> bool:
     """True iff a content item is backed by a real, attributable source."""
     if not isinstance(item, dict):
         return False
     # A resolvable identifier or URL is definitive grounding.
     if item.get("pmid") or item.get("nct_id") or item.get("doi") or item.get("url"):
+        return True
+    # A resolved per-claim inline citation is equally definitive grounding.
+    if _has_inline_citation(item):
         return True
     # Otherwise a *specific* named source counts; generic/sourceless does not.
     source = (item.get("source") or "").strip().lower()

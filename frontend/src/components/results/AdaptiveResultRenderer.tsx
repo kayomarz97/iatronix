@@ -12,6 +12,7 @@ import type {
   AdaptiveReference,
   AdaptiveBLUF,
   AdaptiveImage,
+  InlineCitation,
 } from "@/lib/types";
 import { ResultHero, ResultMetaCard, ResultSection } from "./ResultChrome";
 import { FlowchartRenderer } from "./FlowchartRenderer";
@@ -90,20 +91,80 @@ function EvidenceBadge({
 }
 
 // ── Soft markdown normalizer (safety net when LLM ignores formatting rules) ──
-function normalizeMd(text: string): string {
+function normalizeMd(text: string, preserveProse = false): string {
   if (!text) return text;
   // Convert * bullets to - bullets
   let out = text.replace(/^\* /gm, "- ");
   // Single newlines between non-bullet lines → double newline (paragraph break)
   out = out.replace(/([^\n])\n([^\n\-*#>])/g, "$1\n\n$2");
-  // If text is wall-of-prose (many sentences, no bullets/headings), convert to bullets
+  // If text is wall-of-prose (many sentences, no bullets/headings), convert to bullets.
+  //
+  // `preserveProse` switches this OFF. The shredder was written when a long paragraph
+  // meant an undifferentiated wall of text, but it fires on ANY paragraph over four
+  // sentences and mechanically splits connected clinical reasoning into one-line bullets
+  // — client-side, so no backend prompt can beat it. It is a third force (with the
+  // static FORMATTING_RULES and the one-source-per-item schema) working against answers
+  // that read like a specialist wrote them.
+  //
+  // Gated on the claim carrying resolved inline citations, which happens only when the
+  // backend INLINE_CITATIONS_ENABLED flag is on. Flag off ⇒ no citations ⇒ byte-identical
+  // legacy behaviour, with no frontend flag plumbing needed.
   const sentenceCount = (out.match(/\. /g) || []).length;
   const hasBullets = /\n[-*1]/.test(out);
   const hasHeadings = /\n#+/.test(out);
-  if (sentenceCount > 4 && !hasBullets && !hasHeadings) {
+  if (!preserveProse && sentenceCount > 4 && !hasBullets && !hasHeadings) {
     out = out.replace(/([^.!?]+[.!?])\s+/g, "- $1\n");
   }
   return out;
+}
+
+// ── Inline citation markers ──────────────────────────────────────────────────
+// The backend leaves each resolved citation in the text as a canonical "[REF_3]" and
+// ships the resolved article in item.citations. Rewrite those markers into ordinary
+// markdown links with a recognisable `cite:N` label, so they flow through ReactMarkdown
+// (and its existing link handling) instead of needing a custom AST walk. The `a`
+// component below detects the label and renders a superscript.
+//
+// Any "[REF_N]" without a matching entry in item.citations is dropped rather than shown:
+// the backend already strips forged tokens, and this is the same posture at the edge.
+function linkifyCitations(text: string, citations: InlineCitation[]): string {
+  if (!text) return text;
+  const byToken = new Map(citations.map(c => [c.token.toUpperCase(), c]));
+  let dropped = false;
+  const out = text.replace(/\[\s*REF[\s_]?(\d+)\s*\]/gi, (_m, num: string) => {
+    const c = byToken.get(`[REF_${num}]`);
+    if (!c) { dropped = true; return ""; }
+    const href = safeHttpUrl(c.url) ?? getSourceFallbackUrl(c.source, c.pmid) ?? "";
+    const title = (c.title ?? "").replace(/"/g, "'");
+    // `<>` is the explicit CommonMark empty-destination form. Writing `( "Title")` instead
+    // parses the TITLE as the destination (verified against remark-parse), which would put
+    // the article title into the href.
+    const dest = href || "<>";
+    return `[cite:${c.index}](${dest} "${title}")`;
+  });
+  // Tidy the gap a dropped marker leaves ("source ." → "source."). Mirrors
+  // _tidy_stripped_text in rag_pipeline.py, and is equally conservative about
+  // line-leading whitespace so markdown indentation is never disturbed.
+  return dropped ? out.replace(/[ \t]+([.,;:!?])/g, "$1") : out;
+}
+
+const CITE_LABEL = /^cite:(\d+)$/;
+
+function CitationSup({ index, href, title }: { index: number; href: string; title?: string }) {
+  const label = title ? `${index}. ${title}` : `Source ${index}`;
+  const cls =
+    "text-[10px] align-super leading-none px-[3px] py-[1px] ml-[1px] rounded " +
+    "bg-primary/10 text-primary font-medium no-underline";
+  // Re-check the destination after the markdown round-trip rather than trusting it — same
+  // posture as every other href in this file. Anything not http(s) renders unlinked.
+  const safe = safeHttpUrl(href);
+  return safe ? (
+    <a href={safe} target="_blank" rel="noopener noreferrer" title={label} className={`${cls} hover:bg-primary/20`}>
+      {index}
+    </a>
+  ) : (
+    <span title={label} className={cls}>{index}</span>
+  );
 }
 
 // ── ReactMarkdown components — apply direct Tailwind utilities so bullets and
@@ -155,6 +216,38 @@ function ClaimRow({ item, fetchSources }: { item: AdaptiveContentItem; fetchSour
 
   const displaySource = item.source?.replace(/^\[SOURCE:\s*/i, "").replace(/\]$/, "") ?? null;
 
+  // Per-claim inline citations (backend INLINE_CITATIONS_ENABLED). When absent, everything
+  // below collapses to the previous single-chip behaviour.
+  const citations = item.citations ?? [];
+  const hasInline = citations.length > 0;
+  const bodyMd = hasInline
+    ? linkifyCitations(normalizeMd(item.text, true), citations)
+    : normalizeMd(item.text);
+
+  // A per-item components map so the `a` renderer can see this claim's citations. Only
+  // built when needed, so the shared module-level map stays the fast path.
+  const components = React.useMemo(() => {
+    if (!hasInline) return mdComponents;
+    return {
+      ...mdComponents,
+      a: ({ href, title, children }: { href?: string; title?: string; children?: React.ReactNode }) => {
+        const label = React.Children.toArray(children).join("");
+        const m = CITE_LABEL.exec(label);
+        if (m) return <CitationSup index={Number(m[1])} href={href ?? ""} title={title} />;
+        return (
+          <a href={href} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+            {children}
+          </a>
+        );
+      },
+    };
+  }, [hasInline]);
+
+  // Extra sources behind a multi-source claim. _resolve_ref_tokens has populated this
+  // since Citation Hardening v3 and the schema has carried it since the citation-integrity
+  // fix, but nothing ever rendered it — so a claim citing two articles displayed one.
+  const extraSources = item.additional_sources ?? [];
+
   const badgeAndSource = (
     <>
       <EvidenceBadge loe={item.loe ?? undefined} cor={item.cor ?? undefined} compact />
@@ -175,6 +268,12 @@ function ClaimRow({ item, fetchSources }: { item: AdaptiveContentItem; fetchSour
           Unverified
         </span>
       )}
+      {extraSources.length > 0 && (
+        <span className="text-[10px] text-muted-foreground text-right leading-tight"
+              title={extraSources.map(s => s.title ?? s.source ?? "").filter(Boolean).join(" · ")}>
+          +{extraSources.length} more
+        </span>
+      )}
     </>
   );
 
@@ -182,7 +281,7 @@ function ClaimRow({ item, fetchSources }: { item: AdaptiveContentItem; fetchSour
     <div className="py-3 border-b border-border/40 last:border-0">
       <div className="flex gap-2 items-start">
         <div className="flex-1 text-sm" style={{ color: "var(--text-primary)" }}>
-          <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>{normalizeMd(item.text)}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>{bodyMd}</ReactMarkdown>
         </div>
         {/* Badge beside text on sm+ screens */}
         <div className="hidden sm:flex flex-col items-end gap-1 shrink-0 pt-0.5">

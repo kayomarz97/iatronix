@@ -424,6 +424,30 @@ class Settings(BaseSettings):
     # titles is still covered. Dev true / prod false — promote deliberately.
     broad_term_title_scope_enabled: bool = False
 
+    # INLINE PER-CLAIM CITATIONS (2026-08-02). Retrieval was never the bottleneck for
+    # "every claim should carry a citation" — the citation CHANNEL was:
+    #   (a) _resolve_ref_tokens matched [REF_N] in content_items.source and references.*
+    #       ONLY. A token written inside content_items.text was never resolved, so it
+    #       reached the clinician as the literal string "[REF_3]". There was no working
+    #       way to cite a sentence.
+    #   (b) The section schema gives each 100-200-word item a SINGLE `source`, so citation
+    #       granularity was a paragraph — four claims shared one citation by construction.
+    #   (c) grounding_gate.strip_ungrounded DELETES an item whose one source failed to
+    #       resolve, so a single missed token silently removed good prose (and, when a
+    #       section lost every item, the whole section). Answers read thin as a result.
+    # When enabled: the section prompt asks for [REF_N] immediately after each claim
+    # INSIDE the text; _resolve_inline_citations resolves those tokens against ref_map,
+    # records them in AdaptiveContentItem.citations, marks each article used_inline (so it
+    # is exempt from the to_reference_list uncited cap), and STRIPS any token absent from
+    # ref_map — model output has never been forgery-hardened before (3d55a89 covers user
+    # input only, and opening this channel makes model-written tokens trusted).
+    # _is_grounded then counts an item with >=1 resolved inline citation as grounded even
+    # when `source` is generic, so a miss demotes to the Unverified badge instead of
+    # deleting the prose. Deliberate trade: more low-confidence text reaches the clinician
+    # than today, badged, instead of vanishing silently. Owner decision, 2026-08-02.
+    # Dev true / prod false — promote deliberately.
+    inline_citations_enabled: bool = False
+
     # Smart PubMed expansion + snowballing
     pubmed_expansion_enabled: bool = True
     snowball_enabled: bool = True

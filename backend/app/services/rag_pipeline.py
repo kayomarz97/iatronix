@@ -1585,6 +1585,114 @@ def _filter_expert_references(refs: list) -> list:
     ]
 
 
+# Inline citation tokens written INSIDE a claim's text. Brackets are REQUIRED here — unlike
+# the lenient source-field regexes below, this pattern runs over clinical prose, where a bare
+# "REF 3" could plausibly be real text. Matches "[REF_3]" and the multi form "[REF_3, REF_4]".
+_INLINE_TEXT_TOKEN = re.compile(
+    r'\[\s*(REF[\s_]?\d+(?:\s*,\s*REF[\s_]?\d+)*)\s*\]',
+    re.IGNORECASE,
+)
+_INLINE_TEXT_NUM = re.compile(r'REF[\s_]?(\d+)', re.IGNORECASE)
+
+
+def _tidy_stripped_text(text: str) -> str:
+    """Clean the whitespace a stripped forged token leaves behind.
+
+    Deliberately conservative: the space-run collapse only fires after a non-space char, so
+    line-leading indentation (nested markdown lists, code blocks) is never touched.
+    """
+    text = re.sub(r'(?<=\S)[ \t]{2,}', ' ', text)
+    text = re.sub(r'[ \t]+([.,;:!?])', r'\1', text)
+    return text
+
+
+def _resolve_inline_citations(
+    parsed: dict, ref_map: dict, registry: "ArticleRegistry | None" = None
+) -> tuple[int, int]:
+    """Resolve [REF_N] tokens written INSIDE content_items.text (INLINE_CITATIONS_ENABLED).
+
+    This is the channel that did not previously exist. `_resolve_ref_tokens` matches only
+    content_items.source and references.source/title, so a token placed mid-sentence was
+    never resolved and rendered to the clinician as the literal string "[REF_3]".
+
+    For each item: every token present in `ref_map` is recorded in ``item["citations"]``
+    with a document-global display index (first-appearance order) and its article metadata,
+    and the matched span is normalised to the canonical ``[REF_N]`` form so the renderer can
+    locate it. Each resolved article is marked ``used_inline`` so it is grouped under "Cited
+    in this answer" and keeps its exemption from ``to_reference_list(max_uncited=...)``.
+
+    Tokens NOT in ``ref_map`` are STRIPPED from the text, never rendered. Model output has
+    never been forgery-hardened before — 3d55a89 covers user input only — and opening this
+    channel is exactly what makes a model-written token trusted. A forged "[REF_99]" must
+    not survive as visible text, and must never mint a citation.
+
+    Returns ``(resolved, stripped)`` token counts for audit logging.
+    """
+    if not settings.inline_citations_enabled or not ref_map:
+        return (0, 0)
+
+    numbering: dict[str, int] = {}   # token -> document-global display index
+    resolved_total = 0
+    stripped_total = 0
+
+    def _mark(key: str) -> None:
+        if registry is not None:
+            ra = registry.lookup_token(key)
+            if ra is not None:
+                ra.used_inline = True
+
+    for section in parsed.get("sections", []):
+        if not isinstance(section, dict):
+            continue
+        for item in section.get("content_items", []):
+            if not isinstance(item, dict):
+                continue
+            text = item.get("text")
+            if not isinstance(text, str) or not text:
+                continue
+
+            item_citations: list[dict] = []
+            seen_in_item: set[str] = set()
+            stripped_here = 0
+
+            def _replace(match: "re.Match[str]") -> str:
+                nonlocal resolved_total, stripped_total, stripped_here
+                out: list[str] = []
+                for num in _INLINE_TEXT_NUM.findall(match.group(1)):
+                    key = f"REF_{num}"
+                    art = ref_map.get(key)
+                    if not art:
+                        # Forged or hallucinated token — strip it entirely.
+                        stripped_total += 1
+                        stripped_here += 1
+                        continue
+                    if key not in numbering:
+                        numbering[key] = len(numbering) + 1
+                    if key not in seen_in_item:
+                        seen_in_item.add(key)
+                        item_citations.append({
+                            "token": f"[{key}]",
+                            "index": numbering[key],
+                            "title": art.get("title"),
+                            "source": art.get("source"),
+                            "pmid": art.get("pmid"),
+                            "url": art.get("url"),
+                        })
+                    _mark(key)
+                    resolved_total += 1
+                    out.append(f"[{key}]")
+                return "".join(out)
+
+            new_text = _INLINE_TEXT_TOKEN.sub(_replace, text)
+            if stripped_here:
+                new_text = _tidy_stripped_text(new_text)
+            item["text"] = new_text
+            if item_citations:
+                item["citations"] = item_citations
+
+    return (resolved_total, stripped_total)
+
+
 def _resolve_ref_tokens(parsed: dict, ref_map: dict, registry: "ArticleRegistry | None" = None) -> None:
     """Replace [REF_N] tokens with real article metadata. Must run BEFORE sanitize_response_pmids.
 
@@ -1760,6 +1868,24 @@ def _quarantine_sourceless_items(
             has_url = bool(item.get("url"))
             has_pmid = bool(item.get("pmid"))
             if not (has_real_source or has_url or has_pmid):
+                # Last chance before demotion: the claim may carry a RESOLVED inline
+                # citation even though its item-level `source` field failed to resolve —
+                # a common gpt-oss-120b shape (cites correctly mid-sentence, leaves the
+                # structured field generic). Adopt the first inline citation as the
+                # primary source instead of demoting the whole claim to Expert opinion.
+                _cites = item.get("citations") or []
+                _primary = next(
+                    (c for c in _cites
+                     if isinstance(c, dict) and (c.get("title") or c.get("pmid") or c.get("url"))),
+                    None,
+                )
+                if _primary is not None:
+                    item["source"] = _primary.get("title") or _primary.get("source")
+                    if _primary.get("pmid"):
+                        item["pmid"] = _primary["pmid"]
+                    if _primary.get("url"):
+                        item["url"] = _primary["url"]
+                    continue
                 # Demote: set to expert opinion with low confidence
                 item["source"] = "Expert opinion"
                 item["confidence"] = "low"
@@ -4250,6 +4376,15 @@ async def process_query(
             use_synonyms=settings.relevance_synonyms_enabled,
         ) if (fetched_data and settings.citation_ref_tokens_enabled) else ArticleRegistry()
 
+        # 0.9 Resolve per-claim [REF_N] tokens inside content_items.text, and STRIP any token
+        #     absent from ref_map. Runs first so forged tokens are gone before any later step
+        #     reads claim text (_backfill_from_registry matches on it).
+        _inline_ok, _inline_forged = _resolve_inline_citations(parsed, ref_map, registry)
+        if settings.inline_citations_enabled:
+            logger.info(
+                "inline_citations: %d resolved, %d forged/unknown stripped, type=%s",
+                _inline_ok, _inline_forged, query_type,
+            )
         _resolve_ref_tokens(parsed, ref_map, registry)    # 1. Resolve [REF_N] tokens; mark registry used_inline
         _title_rescue_pass(parsed, registry)              # 1b. Rescue free-form titles (Cerebras etc.)
         sanitize_response_pmids(parsed, fetched_data)     # 2. Validate PMIDs
